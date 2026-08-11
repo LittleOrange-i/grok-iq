@@ -411,6 +411,11 @@ export type RuntimeSettings = {
   changed?: string[]
 }
 
+export type EditableRuntimeSettings = RuntimeSettings & {
+  grok2apiAdminPassword: string
+  grokRegisterWebhookToken: string
+}
+
 export type SecretSettingName =
   | 'grok2apiAdminPassword'
   | 'grokRegisterWebhookToken'
@@ -477,6 +482,31 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       value.registerProbeProxyTargets ?? [{ kind: 'direct', id: null }],
     degradationTps: value.degradationTps ?? value.softTps ?? 500,
     strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 1000,
+  }
+}
+
+async function loadEditableRuntimeSettings(): Promise<EditableRuntimeSettings> {
+  const settings = normalizeRuntimeSettings(
+    await request<RuntimeSettingsWire>('/settings')
+  )
+  const [adminPassword, registerToken] = await Promise.all([
+    settings.grok2apiAdminPasswordConfigured
+      ? request<{ value: string }>(
+          '/settings/secrets/grok2apiAdminPassword',
+          { cache: 'no-store' }
+        )
+      : Promise.resolve({ value: '' }),
+    settings.grokRegisterWebhookTokenConfigured
+      ? request<{ value: string }>(
+          '/settings/secrets/grokRegisterWebhookToken',
+          { cache: 'no-store' }
+        )
+      : Promise.resolve({ value: '' }),
+  ])
+  return {
+    ...settings,
+    grok2apiAdminPassword: adminPassword.value,
+    grokRegisterWebhookToken: registerToken.value,
   }
 }
 
@@ -904,8 +934,11 @@ export const api = {
     }),
   settings: () =>
     request<RuntimeSettingsWire>('/settings').then(normalizeRuntimeSettings),
+  editableSettings: loadEditableRuntimeSettings,
   revealSettingSecret: (name: SecretSettingName) =>
-    request<{ value: string }>(`/settings/secrets/${name}`),
+    request<{ value: string }>(`/settings/secrets/${name}`, {
+      cache: 'no-store',
+    }),
   updateSettings: (body: RuntimeSettingsUpdate) =>
     request<RuntimeSettingsWire>('/settings', {
       method: 'PUT',

@@ -32,6 +32,7 @@ import {
 import { toast } from 'sonner'
 import {
   api,
+  type EditableRuntimeSettings,
   type RuntimeSettings,
   type RuntimeSettingsUpdate,
   type SecretSettingName,
@@ -118,7 +119,10 @@ function registerWebhookUrl() {
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
-  const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  const settings = useQuery({
+    queryKey: ['settings', 'editor'],
+    queryFn: api.editableSettings,
+  })
   const health = useQuery({
     queryKey: ['health'],
     queryFn: api.health,
@@ -145,14 +149,29 @@ export function SettingsPage() {
   }, [settings.data])
 
   const saveMutation = useMutation({
-    mutationFn: () => {
-      if (!form) throw new Error('设置尚未加载')
-      validateSettings(form)
-      return api.updateSettings(buildSettingsPayload(form, clearSecrets))
+    mutationFn: async () => {
+      if (!form || !settings.data) throw new Error('设置尚未加载')
+      const submittedForm = form
+      const submittedClearSecrets = [...clearSecrets]
+      validateSettings(submittedForm)
+      const value = await api.updateSettings(
+        buildSettingsPayload(
+          submittedForm,
+          submittedClearSecrets,
+          settings.data
+        )
+      )
+      return { value, submittedForm, submittedClearSecrets }
     },
-    onSuccess: (value) => {
+    onSuccess: ({ value, submittedForm, submittedClearSecrets }) => {
+      const editableValue = mergeEditableSettings(
+        value,
+        submittedForm,
+        submittedClearSecrets
+      )
       queryClient.setQueryData(['settings'], value)
-      setForm(toSettingsForm(value))
+      queryClient.setQueryData(['settings', 'editor'], editableValue)
+      setForm(toSettingsForm(editableValue))
       setClearSecrets([])
       toast.success('运行时设置已保存并热应用')
       void queryClient.invalidateQueries({ queryKey: ['health'] })
@@ -163,10 +182,10 @@ export function SettingsPage() {
 
   const testMutation = useMutation({
     mutationFn: async () => {
-      if (!form) throw new Error('设置尚未加载')
+      if (!form || !settings.data) throw new Error('设置尚未加载')
       validateSettings(form)
       const value = await api.updateSettings(
-        buildSettingsPayload(form, clearSecrets)
+        buildSettingsPayload(form, clearSecrets, settings.data)
       )
       queryClient.setQueryData(['settings'], value)
       return api.testGrok2api()
@@ -1067,13 +1086,13 @@ export function SettingsPage() {
   )
 }
 
-function toSettingsForm(settings: RuntimeSettings): SettingsForm {
+function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
   return {
     grok2apiBaseUrl: settings.grok2apiBaseUrl,
     grok2apiAdminUsername: settings.grok2apiAdminUsername,
-    grok2apiAdminPassword: '',
+    grok2apiAdminPassword: settings.grok2apiAdminPassword,
     grok2apiHttpImpersonate: settings.grok2apiHttpImpersonate,
-    grokRegisterWebhookToken: '',
+    grokRegisterWebhookToken: settings.grokRegisterWebhookToken,
     initialProbeOnRegister: settings.initialProbeOnRegister,
     registerProbeProfileIds: settings.registerProbeProfileIds,
     registerProbeExecutionMode: settings.registerProbeExecutionMode,
@@ -1103,7 +1122,8 @@ function toSettingsForm(settings: RuntimeSettings): SettingsForm {
 
 function buildSettingsPayload(
   form: SettingsForm,
-  clearSecrets: SecretSettingName[]
+  clearSecrets: SecretSettingName[],
+  original: EditableRuntimeSettings
 ): RuntimeSettingsUpdate {
   const payload: RuntimeSettingsUpdate = {
     grok2apiBaseUrl: form.grok2apiBaseUrl.trim(),
@@ -1134,13 +1154,39 @@ function buildSettingsPayload(
     quarantineMinutes: form.quarantineMinutes,
     clearSecrets,
   }
-  if (form.grok2apiAdminPassword.trim()) {
+  if (
+    !clearSecrets.includes('grok2apiAdminPassword') &&
+    form.grok2apiAdminPassword.trim() &&
+    form.grok2apiAdminPassword !== original.grok2apiAdminPassword
+  ) {
     payload.grok2apiAdminPassword = form.grok2apiAdminPassword
   }
-  if (form.grokRegisterWebhookToken.trim()) {
+  if (
+    !clearSecrets.includes('grokRegisterWebhookToken') &&
+    form.grokRegisterWebhookToken.trim() &&
+    form.grokRegisterWebhookToken !== original.grokRegisterWebhookToken
+  ) {
     payload.grokRegisterWebhookToken = form.grokRegisterWebhookToken
   }
   return payload
+}
+
+function mergeEditableSettings(
+  settings: RuntimeSettings,
+  form: SettingsForm,
+  clearSecrets: SecretSettingName[]
+): EditableRuntimeSettings {
+  return {
+    ...settings,
+    grok2apiAdminPassword: clearSecrets.includes('grok2apiAdminPassword')
+      ? ''
+      : form.grok2apiAdminPassword,
+    grokRegisterWebhookToken: clearSecrets.includes(
+      'grokRegisterWebhookToken'
+    )
+      ? ''
+      : form.grokRegisterWebhookToken,
+  }
 }
 
 function validateSettings(form: SettingsForm) {
@@ -1561,7 +1607,10 @@ function SecretField({
   }
 
   return (
-    <Field label={metadata.label} hint='点击显示图标可按需读取已保存值；留空会保留当前值'>
+    <Field
+      label={metadata.label}
+      hint='已保存值会以密码形式载入；点击显示图标查看，留空会保留当前值'
+    >
       <div className='flex gap-2'>
         <div className='relative min-w-0 flex-1'>
           <Input
