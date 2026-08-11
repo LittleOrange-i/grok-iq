@@ -99,3 +99,19 @@ async def test_same_status_does_not_repeat_notification():
 
     assert result == {"sent": 0, "skipped": "unchanged"}
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_manual_task_can_force_notification_for_an_already_abnormal_account():
+    _, client, service = build_service()
+
+    result = await service.notify_account_transition(
+        account={"id": 7},
+        previous={"monitor_status": "quarantined"},
+        current={"monitor_status": "quarantined", "risk_score": 90},
+        source="manual",
+        force=True,
+    )
+
+    assert result["sent"] == 1
+    assert len(client.calls) == 1

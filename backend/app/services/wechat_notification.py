@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -27,11 +28,16 @@ STATUS_COLORS = {
 }
 SOURCE_LABELS = {
     "probe": "自动探针",
+    "manual": "任务中心",
+    "retry": "任务重试",
+    "cron": "定时计划",
+    "register": "grok-register",
     "grok-register": "grok-register",
     "test": "配置测试",
 }
 DEFAULT_NOTIFICATION_TITLE = "账号异常提醒"
 DEFAULT_NOTIFICATION_REMARK = "请登录监控后台查看样本证据并及时处理。"
+logger = logging.getLogger(__name__)
 
 
 def _compact(value: Any, limit: int) -> str:
@@ -60,6 +66,8 @@ class WeChatAccountNotificationService:
     def should_notify(
         previous: dict[str, Any] | None,
         current: dict[str, Any],
+        *,
+        force: bool = False,
     ) -> bool:
         current_rank = ABNORMAL_STATUS_RANK.get(
             str(current.get("monitor_status") or ""), 0
@@ -67,7 +75,7 @@ class WeChatAccountNotificationService:
         previous_rank = ABNORMAL_STATUS_RANK.get(
             str((previous or {}).get("monitor_status") or ""), 0
         )
-        return current_rank > 0 and current_rank > previous_rank
+        return current_rank > 0 and (force or current_rank > previous_rank)
 
     @staticmethod
     def _account_text(account: dict[str, Any]) -> str:
@@ -135,18 +143,44 @@ class WeChatAccountNotificationService:
         previous: dict[str, Any] | None,
         current: dict[str, Any],
         source: str,
+        force: bool = False,
     ) -> dict[str, Any]:
+        account_id = int(account.get("id") or account.get("account_id") or 0)
+        status = str(current.get("monitor_status") or "")
         if not self.settings.wechat_notification_enabled:
+            logger.info(
+                "wechat notification skipped account=%s status=%s source=%s reason=disabled",
+                account_id,
+                status,
+                source,
+            )
             return {"sent": 0, "skipped": "disabled"}
-        if not self.should_notify(previous, current):
-            return {"sent": 0, "skipped": "unchanged"}
-        return await self.client.send_to_recipient(
+        if not self.should_notify(previous, current, force=force):
+            reason = "healthy" if status not in ABNORMAL_STATUS_RANK else "unchanged"
+            logger.info(
+                "wechat notification skipped account=%s status=%s source=%s reason=%s",
+                account_id,
+                status,
+                source,
+                reason,
+            )
+            return {"sent": 0, "skipped": reason}
+        result = await self.client.send_to_recipient(
             template_data=self.build_template_data(
                 account=account,
                 current=current,
                 source=source,
             ),
         )
+        logger.info(
+            "wechat notification sent account=%s status=%s source=%s force=%s sent=%s",
+            account_id,
+            status,
+            source,
+            force,
+            result.get("sent", 0),
+        )
+        return result
 
     async def send_test(self) -> dict[str, Any]:
         if not self.settings.wechat_notification_enabled:
@@ -171,4 +205,5 @@ class WeChatAccountNotificationService:
                 source="test",
             ),
         )
+        logger.info("wechat test notification sent sent=%s", result.get("sent", 0))
         return {**result, "templateId": self.settings.wechat_template_id}

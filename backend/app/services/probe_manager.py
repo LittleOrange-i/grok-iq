@@ -987,6 +987,12 @@ class ProbeManager:
                 )
             if self.notifications is not None:
                 try:
+                    trigger = str(run.get("trigger") or "probe")
+                    force_notification = (
+                        trigger in {"manual", "retry"}
+                        and str(finished.get("status") or "")
+                        in {"completed", "completed_with_errors"}
+                    )
                     await self.notifications.notify_account_transition(
                         account={
                             "id": account_id,
@@ -995,7 +1001,8 @@ class ProbeManager:
                         },
                         previous=previous_assessment,
                         current=assessment,
-                        source="probe",
+                        source=trigger,
+                        force=force_notification,
                     )
                 except Exception:
                     logger.exception(
