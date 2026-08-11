@@ -153,7 +153,66 @@ Grok Account Monitor 将日常账号巡检集中到一个界面中：从账号�
 - **风险标记**：按连续异常、跨出口结果和预期内容匹配情况计算账号状态。
 - **任务控制**：查看队列和 Worker，支持停止、重试、删除以及批量操作。
 - **结果回看**：从账号、任务或样本详情里直接看指标和原始输出，长内容按需展开。
-- **注册联动**：接收 grok-register 的 Webhook，账号导入后可自动创建探针任务。
+- **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可自动创建探针任务。
+
+## 和 grok-register 联动
+
+配套注册项目：[kaibush/grok-register](https://github.com/kaibush/grok-register)
+
+```text
+grok-register 注册完成
+  -> grok_build 导入 Grok2API 成功
+  -> Webhook 通知本项目
+  -> 匹配 Grok2API 账号
+  -> 记录注册风险 / 可选自动创建探针
+```
+
+只有 `grok_build` 已被 Grok2API 接收后才会发送事件。注册成功但导入失败时不会提前触发监控。
+
+### 怎么接
+
+1. 在本项目打开“系统设置 → 联动与启动项”。
+2. 设置 `grok-register` 联动令牌，复制页面生成的完整 Webhook 地址。
+3. 按需开启“注册后自动探针”，并选择方案、执行模式、轮次和出口。
+4. 在 `grok-register` 打开“系统设置 → Grok2API”，开启账号监控联动。
+5. 粘贴 Webhook 地址和同一个 Token，保存即可。
+
+独立部署时，Webhook 地址必须能从 `grok-register` 进程或容器访问。统一 Compose 中使用内部地址：
+
+```text
+http://monitor-backend:8090/api/integrations/grok-register/account-imported
+```
+
+请求使用 `x-monitor-token`，两边填写的 Token 必须一致。
+
+### 投递行为
+
+- `grok-register` 先把事件写入本地 Outbox，再由后台线程投递；网络错误或非 `2xx` 会自动退避重试。
+- 每个注册结果使用稳定的 `event_id`。本项目按事件 ID 去重，重复投递不会重复创建探针。
+- Webhook 返回 `2xx` 只表示本项目已接收。后续账号匹配、排队和探针执行由本项目继续处理。
+- 如果账号暂时还没出现在 Grok2API，本项目会继续重试匹配；关闭自动探针时仍会保留导入事件。
+- `grok-register` 的账号详情会显示投递状态、尝试次数、接收时间和最近错误，方便查联动问题。
+
+### 三个服务一起跑
+
+`grok-register` 仓库已经提供 `compose.monitor.yaml`，可以一起启动注册机、监控后端和监控前端：
+
+```bash
+git clone https://github.com/kaibush/grok-register.git
+cd grok-register
+cp .env.example .env
+
+# 编辑 .env，至少设置：
+# MONITOR_GROK2API_BASE_URL
+# MONITOR_GROK2API_ADMIN_USERNAME
+# MONITOR_GROK2API_ADMIN_PASSWORD
+# MONITOR_WEBHOOK_TOKEN
+
+docker compose -f compose.yaml -f compose.monitor.yaml pull
+docker compose -f compose.yaml -f compose.monitor.yaml up -d
+```
+
+默认端口：`grok-register` 使用 `8787`，本项目 Web 页面使用 `8091`。探针配置只在本项目维护，注册机只负责在导入成功后发送事件。
 
 ## grok2api 运行依赖
 
