@@ -480,8 +480,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     registerProbeRounds: value.registerProbeRounds ?? 3,
     registerProbeProxyTargets:
       value.registerProbeProxyTargets ?? [{ kind: 'direct', id: null }],
-    degradationTps: value.degradationTps ?? value.softTps ?? 500,
-    strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 1000,
+    degradationTps: value.degradationTps ?? value.softTps ?? 150,
+    strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 500,
   }
 }
 

@@ -73,8 +73,8 @@ class Settings(BaseSettings):
     probe_diagnostic_priority: int = Field(default=-1_000_000, ge=-2_000_000_000, le=0)
 
     analysis_window_hours: int = Field(default=168, ge=1, le=24 * 365)
-    degradation_tps: float = Field(default=500, gt=0)
-    strong_degradation_tps: float = Field(default=1000, gt=0)
+    degradation_tps: float = Field(default=150, gt=0)
+    strong_degradation_tps: float = Field(default=500, gt=0)
     consecutive_anomalies: int = Field(default=3, ge=2, le=20)
     cross_egress_min: int = Field(default=2, ge=1, le=20)
     buffer_first_token_share: float = Field(default=0.85, ge=0.5, le=0.99)

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 @dataclass(slots=True, frozen=True)
 class Thresholds:
-    degradation_tps: float = 500
-    strong_degradation_tps: float = 1000
+    degradation_tps: float = 150
+    strong_degradation_tps: float = 500
     minimum_output_tokens: int = 32
     buffer_first_token_share: float = 0.85
     min_generation_ms: int = 250

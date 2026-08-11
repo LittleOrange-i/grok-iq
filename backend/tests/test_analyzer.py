@@ -38,7 +38,7 @@ def test_lower_tps_interval_records_a_degradation_signal():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
-            output_tokens=600,
+            output_tokens=300,
             reasoning_tokens=0,
             first_token_ms=1000,
             duration_ms=2000,

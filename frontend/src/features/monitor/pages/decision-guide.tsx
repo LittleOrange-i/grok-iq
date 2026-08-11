@@ -63,8 +63,8 @@ type RuleCardProps = {
 
 const defaultThresholds: Thresholds = {
   analysisWindowHours: 168,
-  degradationTps: 500,
-  strongDegradationTps: 1000,
+  degradationTps: 150,
+  strongDegradationTps: 500,
   consecutiveAnomalies: 3,
   crossEgressMin: 2,
   bufferFirstTokenShare: 0.85,
