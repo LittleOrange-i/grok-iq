@@ -7,6 +7,7 @@ name = "grok-account-monitor-backend"
 version = "0.1.0"
 description = "Account-level quality probe and risk monitor for grok2api"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = [
   "alembic>=1.16,<2",
   "apscheduler>=3.11,<4",

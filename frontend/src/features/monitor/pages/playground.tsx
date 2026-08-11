@@ -63,6 +63,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/password-input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
@@ -1580,8 +1581,7 @@ function ProviderSettingsPanel({
                 />
               </Field>
               <Field label='API Key' className='sm:col-span-2'>
-                <Input
-                  type='password'
+                <PasswordInput
                   value={draft.apiKey}
                   onChange={(event) =>
                     setDraft((current) => ({

@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   Copy,
   Database,
+  Eye,
+  EyeOff,
   Gauge,
   Inbox,
   KeyRound,
@@ -109,6 +111,11 @@ const secretMetadata: Record<
 
 const REGISTER_WEBHOOK_PATH = '/api/integrations/grok-register/account-imported'
 
+function registerWebhookUrl() {
+  if (typeof window === 'undefined') return REGISTER_WEBHOOK_PATH
+  return new URL(REGISTER_WEBHOOK_PATH, window.location.origin).toString()
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
@@ -193,6 +200,7 @@ export function SettingsPage() {
   }
 
   const settingsValue = settings.data
+  const webhookUrl = registerWebhookUrl()
   const upstream = (health.data?.upstream ?? {}) as Record<string, unknown>
   const integration = (health.data?.integration ?? {}) as Record<
     string,
@@ -694,14 +702,14 @@ export function SettingsPage() {
                     />
                     <Field
                       label='Webhook 接收地址'
-                      hint='请求头：x-monitor-token'
+                      hint='复制完整地址到注册机；请求头：x-monitor-token'
                     >
                       <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
                         <code
                           className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
-                          title={REGISTER_WEBHOOK_PATH}
+                          title={webhookUrl}
                         >
-                          {REGISTER_WEBHOOK_PATH}
+                          {webhookUrl}
                         </code>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -711,20 +719,20 @@ export function SettingsPage() {
                               variant='ghost'
                               className='size-8 shrink-0 rounded-sm'
                               onClick={() =>
-                                void copyText(REGISTER_WEBHOOK_PATH)
+                                void copyText(webhookUrl)
                                   .then(() =>
-                                    toast.success('已复制 Webhook 路径')
+                                    toast.success('已复制完整 Webhook 地址')
                                   )
                                   .catch((error) =>
                                     toast.error(getErrorMessage(error))
                                   )
                               }
-                              aria-label='复制 Webhook 路径'
+                              aria-label='复制完整 Webhook 地址'
                             >
                               <Copy />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>复制路径</TooltipContent>
+                          <TooltipContent>复制完整地址</TooltipContent>
                         </Tooltip>
                       </div>
                     </Field>
@@ -1528,17 +1536,39 @@ function SecretField({
 }) {
   const metadata = secretMetadata[name]
   const configured = Boolean(settings[metadata.configuredKey])
+  const [visible, setVisible] = useState(false)
   return (
     <Field label={metadata.label} hint='密钥只写不回显，留空会保留已保存值'>
       <div className='flex gap-2'>
-        <Input
-          type='password'
-          value={value}
-          disabled={clearing}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={clearing ? '保存后清除当前值' : metadata.placeholder}
-          autoComplete='new-password'
-        />
+        <div className='relative min-w-0 flex-1'>
+          <Input
+            type={visible ? 'text' : 'password'}
+            value={value}
+            disabled={clearing}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={clearing ? '保存后清除当前值' : metadata.placeholder}
+            autoComplete='new-password'
+            className='pr-10'
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type='button'
+                size='icon'
+                variant='ghost'
+                disabled={clearing}
+                className='absolute inset-e-1 top-1/2 size-7 -translate-y-1/2 rounded-md text-muted-foreground'
+                onClick={() => setVisible((current) => !current)}
+                aria-label={visible ? '隐藏当前输入内容' : '显示当前输入内容'}
+              >
+                {visible ? <EyeOff /> : <Eye />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {visible ? '隐藏当前输入内容' : '显示当前输入内容'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <Button
           type='button'
           variant={clearing ? 'destructive' : 'outline'}

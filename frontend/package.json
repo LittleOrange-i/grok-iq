@@ -2,6 +2,7 @@
   "name": "grok-account-monitor-frontend",
   "private": false,
   "version": "2.2.1",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
