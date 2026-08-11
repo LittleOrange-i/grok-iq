@@ -1319,6 +1319,8 @@ function ProviderSettingsPanel({
   const [editingId, setEditingId] = useState<string | 'new' | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ProviderDraft>(() => emptyProviderDraft())
+  const [apiKeyVisible, setApiKeyVisible] = useState(false)
+  const [revealingApiKey, setRevealingApiKey] = useState(false)
   const editingProvider =
     editingId && editingId !== 'new'
       ? providers.find((provider) => provider.id === editingId)
@@ -1360,6 +1362,7 @@ function ProviderSettingsPanel({
         onProviderChange(provider.id)
       setEditingId(null)
       setDraft(emptyProviderDraft())
+      setApiKeyVisible(false)
       toast.success(wasNew ? '模型提供商已创建' : '模型提供商已更新')
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1389,11 +1392,42 @@ function ProviderSettingsPanel({
     setEditingId('new')
     setDeleteId(null)
     setDraft(emptyProviderDraft())
+    setApiKeyVisible(false)
   }
   const startEdit = (provider: ChatProvider) => {
     setEditingId(provider.id)
     setDeleteId(null)
     setDraft(providerDraft(provider))
+    setApiKeyVisible(false)
+  }
+
+  const changeApiKeyVisibility = (visible: boolean) => {
+    if (!visible) {
+      setApiKeyVisible(false)
+      return
+    }
+    if (draft.apiKey) {
+      setApiKeyVisible(true)
+      return
+    }
+    const providerId = editingProvider?.id
+    if (!providerId || !editingProvider.apiKeyConfigured) {
+      setApiKeyVisible(true)
+      return
+    }
+    setRevealingApiKey(true)
+    void api
+      .revealChatProviderApiKey(providerId)
+      .then((result) => {
+        setDraft((current) => ({
+          ...current,
+          apiKey: result.value,
+          clearApiKey: false,
+        }))
+        setApiKeyVisible(true)
+      })
+      .catch((error) => toast.error(getErrorMessage(error)))
+      .finally(() => setRevealingApiKey(false))
   }
 
   return (
@@ -1583,6 +1617,9 @@ function ProviderSettingsPanel({
               <Field label='API Key' className='sm:col-span-2'>
                 <PasswordInput
                   value={draft.apiKey}
+                  visible={apiKeyVisible}
+                  onVisibleChange={changeApiKeyVisibility}
+                  disabled={revealingApiKey}
                   onChange={(event) =>
                     setDraft((current) => ({
                       ...current,

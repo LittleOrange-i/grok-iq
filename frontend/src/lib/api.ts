@@ -904,6 +904,8 @@ export const api = {
     }),
   settings: () =>
     request<RuntimeSettingsWire>('/settings').then(normalizeRuntimeSettings),
+  revealSettingSecret: (name: SecretSettingName) =>
+    request<{ value: string }>(`/settings/secrets/${name}`),
   updateSettings: (body: RuntimeSettingsUpdate) =>
     request<RuntimeSettingsWire>('/settings', {
       method: 'PUT',
@@ -916,6 +918,8 @@ export const api = {
       grokBuild: Record<string, unknown>
     }>('/settings/test-grok2api', { method: 'POST' }),
   chatProviders: () => request<ChatProvider[]>('/chat/providers'),
+  revealChatProviderApiKey: (id: string) =>
+    request<{ value: string }>(`/chat/providers/${id}/api-key`),
   createChatProvider: (body: ChatProviderInput) =>
     request<ChatProvider>('/chat/providers', {
       method: 'POST',

@@ -560,6 +560,14 @@ def build_router(
     def runtime_settings() -> dict[str, Any]:
         return runtime_settings_service.public_view()
 
+    @protected_router.get("/settings/secrets/{secret_name}")
+    def reveal_runtime_secret(secret_name: str, response: Response) -> dict[str, str]:
+        _disable_auth_cache(response)
+        try:
+            return {"value": runtime_settings_service.reveal_secret(secret_name)}
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
     @protected_router.put("/settings")
     async def update_runtime_settings(payload: RuntimeSettingsInput) -> dict[str, Any]:
         try:
@@ -633,6 +641,17 @@ def build_router(
         except Exception as exc:
             raise _http_error(exc) from exc
         return Response(status_code=204)
+
+    @protected_router.get("/chat/providers/{provider_id}/api-key")
+    def reveal_chat_provider_api_key(
+        provider_id: str,
+        response: Response,
+    ) -> dict[str, str]:
+        _disable_auth_cache(response)
+        try:
+            return {"value": chat_service.reveal_provider_api_key(provider_id)}
+        except Exception as exc:
+            raise _http_error(exc) from exc
 
     @protected_router.post("/chat/providers/{provider_id}/sync-models")
     async def sync_chat_provider_models(provider_id: str) -> dict[str, Any]:

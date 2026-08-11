@@ -89,6 +89,12 @@ class ChatService:
         if not self.providers.delete(provider_id):
             raise ValueError("模型提供商不存在")
 
+    def reveal_provider_api_key(self, provider_id: str) -> str:
+        provider = self.providers.get(provider_id, reveal_secret=True)
+        if provider is None:
+            raise ValueError("模型提供商不存在")
+        return str(provider.get("api_key") or "")
+
     async def list_models(self, provider_id: str = "") -> list[dict[str, Any]]:
         provider = self._resolve(provider_id)
         models = self._normalize_models(provider.get("models", []))

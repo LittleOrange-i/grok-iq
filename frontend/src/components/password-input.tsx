@@ -8,15 +8,24 @@ type PasswordInputProps = Omit<
   'type'
 > & {
   ref?: React.Ref<HTMLInputElement>
+  visible?: boolean
+  onVisibleChange?: (visible: boolean) => void
 }
 
 export function PasswordInput({
   className,
   disabled,
   ref,
+  visible,
+  onVisibleChange,
   ...props
 }: PasswordInputProps) {
-  const [showPassword, setShowPassword] = React.useState(false)
+  const [uncontrolledVisible, setUncontrolledVisible] = React.useState(false)
+  const showPassword = visible ?? uncontrolledVisible
+  const setShowPassword = (next: boolean) => {
+    if (visible === undefined) setUncontrolledVisible(next)
+    onVisibleChange?.(next)
+  }
 
   return (
     <div className={cn('relative rounded-md', className)}>
@@ -33,7 +42,7 @@ export function PasswordInput({
         variant='ghost'
         disabled={disabled}
         className='absolute inset-e-1 top-1/2 h-6 w-6 -translate-y-1/2 rounded-md text-muted-foreground'
-        onClick={() => setShowPassword((prev) => !prev)}
+        onClick={() => setShowPassword(!showPassword)}
       >
         {showPassword ? <Eye size={18} /> : <EyeOff size={18} />}
         <span className='sr-only'>

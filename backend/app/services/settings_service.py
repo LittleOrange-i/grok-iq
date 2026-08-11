@@ -138,3 +138,14 @@ class RuntimeSettingsService:
                 "corsOrigins": s.cors_origin_list,
             },
         }
+
+    def reveal_secret(self, name: str) -> str:
+        """Return one persisted runtime secret for the authenticated settings UI."""
+
+        secrets = {
+            "grok2apiAdminPassword": self.settings.grok2api_admin_password,
+            "grokRegisterWebhookToken": self.settings.grok_register_webhook_token,
+        }
+        if name not in secrets:
+            raise ValueError("不支持读取该敏感设置")
+        return secrets[name]

@@ -1537,8 +1537,31 @@ function SecretField({
   const metadata = secretMetadata[name]
   const configured = Boolean(settings[metadata.configuredKey])
   const [visible, setVisible] = useState(false)
+  const [revealing, setRevealing] = useState(false)
+
+  const toggleVisibility = async () => {
+    if (visible) {
+      setVisible(false)
+      return
+    }
+    if (value || !configured) {
+      setVisible(true)
+      return
+    }
+    setRevealing(true)
+    try {
+      const secret = await api.revealSettingSecret(name)
+      onChange(secret.value)
+      setVisible(true)
+    } catch (error) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setRevealing(false)
+    }
+  }
+
   return (
-    <Field label={metadata.label} hint='密钥只写不回显，留空会保留已保存值'>
+    <Field label={metadata.label} hint='点击显示图标可按需读取已保存值；留空会保留当前值'>
       <div className='flex gap-2'>
         <div className='relative min-w-0 flex-1'>
           <Input
@@ -1556,9 +1579,9 @@ function SecretField({
                 type='button'
                 size='icon'
                 variant='ghost'
-                disabled={clearing}
+                disabled={clearing || revealing}
                 className='absolute inset-e-1 top-1/2 size-7 -translate-y-1/2 rounded-md text-muted-foreground'
-                onClick={() => setVisible((current) => !current)}
+                onClick={() => void toggleVisibility()}
                 aria-label={visible ? '隐藏当前输入内容' : '显示当前输入内容'}
               >
                 {visible ? <EyeOff /> : <Eye />}
