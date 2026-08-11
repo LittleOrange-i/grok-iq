@@ -94,6 +94,21 @@ class RuntimeSettingsService:
             raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
         candidate.register_probe_profile_ids = profile_ids
         candidate.register_probe_proxy_targets = targets
+
+        candidate.wechat_app_id = candidate.wechat_app_id.strip()
+        candidate.wechat_app_secret = candidate.wechat_app_secret.strip()
+        candidate.wechat_openid = candidate.wechat_openid.strip()
+        candidate.wechat_template_id = candidate.wechat_template_id.strip()
+        if candidate.wechat_notification_enabled:
+            required = {
+                "AppID": candidate.wechat_app_id,
+                "AppSecret": candidate.wechat_app_secret,
+                "OpenID": candidate.wechat_openid,
+                "模板 ID": candidate.wechat_template_id,
+            }
+            missing = [label for label, value in required.items() if not value]
+            if missing:
+                raise ValueError(f"开启微信异常推送前请填写：{'、'.join(missing)}")
         return candidate
 
     def public_view(self) -> dict[str, Any]:
@@ -109,6 +124,11 @@ class RuntimeSettingsService:
             "registerProbeExecutionMode": s.register_probe_execution_mode,
             "registerProbeRounds": s.register_probe_rounds,
             "registerProbeProxyTargets": s.register_probe_proxy_targets,
+            "wechatNotificationEnabled": s.wechat_notification_enabled,
+            "wechatAppId": s.wechat_app_id,
+            "wechatAppSecretConfigured": bool(s.wechat_app_secret),
+            "wechatOpenid": s.wechat_openid,
+            "wechatTemplateId": s.wechat_template_id,
             "schedulerEnabled": s.scheduler_enabled,
             "schedulerTimezone": s.scheduler_timezone,
             "schedulerMisfireGraceSeconds": s.scheduler_misfire_grace_seconds,
@@ -145,6 +165,7 @@ class RuntimeSettingsService:
         secrets = {
             "grok2apiAdminPassword": self.settings.grok2api_admin_password,
             "grokRegisterWebhookToken": self.settings.grok_register_webhook_token,
+            "wechatAppSecret": self.settings.wechat_app_secret,
         }
         if name not in secrets:
             raise ValueError("不支持读取该敏感设置")

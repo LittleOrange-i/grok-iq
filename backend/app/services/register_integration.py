@@ -10,6 +10,7 @@ from app.persistence.probe_repository import QueueFullError, RunStateError
 from app.persistence.register_event_repository import RegisterEventRepository
 from app.services.account_service import AccountService
 from app.services.probe_manager import ProbeManager
+from app.services.wechat_notification import WeChatAccountNotificationService
 
 logger = logging.getLogger(__name__)
 MAX_EVENT_ATTEMPTS = 20
@@ -29,12 +30,14 @@ class RegisterIntegrationService:
         accounts: AccountRepository,
         account_service: AccountService,
         probes: ProbeManager,
+        notifications: WeChatAccountNotificationService | None = None,
     ):
         self.settings = settings
         self.repository = repository
         self.accounts = accounts
         self.account_service = account_service
         self.probes = probes
+        self.notifications = notifications
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
 
@@ -89,11 +92,26 @@ class RegisterIntegrationService:
                 raise RegisteredAccountPending("grok2api 中尚未发现该注册账号")
             account_id = int(account.get("id") or 0)
             if bool(event.get("bot_risk")):
-                self.accounts.mark_registration_risk(
+                previous_assessment = self.accounts.get_assessment(account_id)
+                assessment = self.accounts.mark_registration_risk(
                     account_id=account_id,
                     bfs=event.get("bfs"),
                     registration_id=str(event.get("registration_id") or ""),
                 )
+                if self.notifications is not None:
+                    try:
+                        await self.notifications.notify_account_transition(
+                            account=account,
+                            previous=previous_assessment,
+                            current=assessment,
+                            source="grok-register",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "wechat notification failed event_id=%s account_id=%s",
+                            event_id,
+                            account_id,
+                        )
 
             run_ids: list[str] = []
             if self.settings.initial_probe_on_register:

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   ArrowRight,
+  BellRing,
   Check,
   CheckCheck,
   CheckCircle2,
@@ -21,6 +22,7 @@ import {
   RefreshCw,
   Route,
   Save,
+  Send,
   ServerCog,
   ShieldCheck,
   TestTube2,
@@ -74,6 +76,11 @@ type SettingsForm = {
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
+  wechatNotificationEnabled: boolean
+  wechatAppId: string
+  wechatAppSecret: string
+  wechatOpenid: string
+  wechatTemplateId: string
   probeWorkerConcurrency: number
   probeQueueLimit: number
   probeStepDelaySeconds: number
@@ -108,9 +115,22 @@ const secretMetadata: Record<
     placeholder: '留空保持当前令牌',
     configuredKey: 'grokRegisterWebhookTokenConfigured',
   },
+  wechatAppSecret: {
+    label: '微信 AppSecret',
+    placeholder: '留空保持当前 AppSecret',
+    configuredKey: 'wechatAppSecretConfigured',
+  },
 }
 
 const REGISTER_WEBHOOK_PATH = '/api/integrations/grok-register/account-imported'
+const WECHAT_TEMPLATE_BODY = `{{first.DATA}}
+账号：{{account.DATA}}
+状态：{{status.DATA}}
+风险分：{{score.DATA}}
+TPS：{{tps.DATA}}
+原因：{{reason.DATA}}
+时间：{{time.DATA}}
+{{remark.DATA}}`
 
 function registerWebhookUrl() {
   if (typeof window === 'undefined') return REGISTER_WEBHOOK_PATH
@@ -199,6 +219,37 @@ export function SettingsPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   })
 
+  const wechatTestMutation = useMutation({
+    mutationFn: async () => {
+      if (!form || !settings.data) throw new Error('设置尚未加载')
+      const submittedForm = form
+      const submittedClearSecrets = [...clearSecrets]
+      validateSettings(submittedForm)
+      const value = await api.updateSettings(
+        buildSettingsPayload(
+          submittedForm,
+          submittedClearSecrets,
+          settings.data
+        )
+      )
+      queryClient.setQueryData(['settings'], value)
+      const result = await api.testWechat()
+      return { value, submittedForm, submittedClearSecrets, result }
+    },
+    onSuccess: ({ value, submittedForm, submittedClearSecrets, result }) => {
+      const editableValue = mergeEditableSettings(
+        value,
+        submittedForm,
+        submittedClearSecrets
+      )
+      queryClient.setQueryData(['settings', 'editor'], editableValue)
+      setForm(toSettingsForm(editableValue))
+      setClearSecrets([])
+      toast.success(`微信测试消息已发送给 ${result.sent} 个接收人`)
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
   if (settings.isError) {
     return (
       <Page>
@@ -229,7 +280,10 @@ export function SettingsPage() {
     !clearSecrets.includes('grokRegisterWebhookToken') &&
     (Boolean(form.grokRegisterWebhookToken.trim()) ||
       settingsValue.grokRegisterWebhookTokenConfigured)
-  const busy = saveMutation.isPending || testMutation.isPending
+  const busy =
+    saveMutation.isPending ||
+    testMutation.isPending ||
+    wechatTestMutation.isPending
   const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) =>
     setForm((current) => (current ? { ...current, [key]: value } : current))
 
@@ -241,7 +295,9 @@ export function SettingsPage() {
     )
     const field = name as keyof Pick<
       SettingsForm,
-      'grok2apiAdminPassword' | 'grokRegisterWebhookToken'
+      | 'grok2apiAdminPassword'
+      | 'grokRegisterWebhookToken'
+      | 'wechatAppSecret'
     >
     set(field, '' as SettingsForm[typeof field])
   }
@@ -403,6 +459,7 @@ export function SettingsPage() {
           <TabsTrigger value='connection'>连接与凭据</TabsTrigger>
           <TabsTrigger value='execution'>任务队列</TabsTrigger>
           <TabsTrigger value='risk'>风险与隔离</TabsTrigger>
+          <TabsTrigger value='notifications'>通知推送</TabsTrigger>
           <TabsTrigger value='integration'>联动与启动项</TabsTrigger>
         </TabsList>
 
@@ -650,6 +707,137 @@ export function SettingsPage() {
                 disabled={!form.autoQuarantine}
                 onChange={(value) => set('quarantineMinutes', value)}
               />
+            </div>
+          </SettingsCard>
+        </TabsContent>
+
+        <TabsContent value='notifications' className='space-y-4'>
+          <SettingsCard
+            icon={BellRing}
+            title='微信测试公众号异常推送'
+            description='接入微信测试公众号模板消息；关闭开关时，自动探针和测试按钮都不会发消息。'
+          >
+            <div className='space-y-5'>
+              <SwitchRow
+                label='开启异常账号推送'
+                description='账号首次进入观察、疑似异常、高风险或隔离状态时推送；同一状态不会重复刷屏，风险升级会再次推送。'
+                checked={form.wechatNotificationEnabled}
+                onCheckedChange={(value) =>
+                  set('wechatNotificationEnabled', value)
+                }
+              />
+
+              <div className='grid gap-4 lg:grid-cols-2'>
+                <Field
+                  label='测试公众号 AppID'
+                  hint='微信测试公众号后台的 appID'
+                >
+                  <Input
+                    value={form.wechatAppId}
+                    onChange={(event) =>
+                      set('wechatAppId', event.target.value)
+                    }
+                    placeholder='wxxxxxxxxxxxxxxxxxxxxxxxx'
+                    autoComplete='off'
+                  />
+                </Field>
+                <SecretField
+                  name='wechatAppSecret'
+                  value={form.wechatAppSecret}
+                  settings={settingsValue}
+                  clearing={clearSecrets.includes('wechatAppSecret')}
+                  onChange={(value) => set('wechatAppSecret', value)}
+                  onToggleClear={() => toggleSecretClear('wechatAppSecret')}
+                />
+                <Field
+                  label='接收人 OpenID'
+                  hint='微信测试公众号用户列表中的 OpenID'
+                >
+                  <Input
+                    value={form.wechatOpenid}
+                    onChange={(event) =>
+                      set('wechatOpenid', event.target.value)
+                    }
+                    placeholder='oAxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+                    autoComplete='off'
+                  />
+                </Field>
+                <Field
+                  label='模板 ID'
+                  hint='在测试公众号“模板消息”里新建模板后复制 ID'
+                >
+                  <Input
+                    value={form.wechatTemplateId}
+                    onChange={(event) =>
+                      set('wechatTemplateId', event.target.value)
+                    }
+                    placeholder='模板 ID'
+                    autoComplete='off'
+                  />
+                </Field>
+              </div>
+
+              <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]'>
+                <div className='rounded-xl border bg-muted/15 p-4'>
+                  <div className='flex items-center justify-between gap-3'>
+                    <div>
+                      <div className='text-sm font-medium'>模板内容</div>
+                      <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+                        在微信测试公众号创建模板时，字段名按下面的 key 填写。
+                      </p>
+                    </div>
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      onClick={() =>
+                        void copyText(WECHAT_TEMPLATE_BODY)
+                          .then(() => toast.success('已复制微信模板内容'))
+                          .catch((error) =>
+                            toast.error(getErrorMessage(error))
+                          )
+                      }
+                    >
+                      <Copy />
+                      复制
+                    </Button>
+                  </div>
+                  <pre className='mt-3 overflow-x-auto rounded-lg border bg-background p-3 font-mono text-xs leading-6 whitespace-pre-wrap'>
+                    {WECHAT_TEMPLATE_BODY}
+                  </pre>
+                </div>
+                <div className='rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-xs leading-5 text-muted-foreground'>
+                  <div className='font-medium text-foreground'>推荐模板标题</div>
+                  <p className='mt-1'>账号异常提醒</p>
+                  <div className='mt-3 font-medium text-foreground'>字段说明</div>
+                  <p className='mt-1'>
+                    first、account、status、score、tps、reason、time、remark
+                    会由系统自动填充。
+                  </p>
+                  <p className='mt-3'>
+                    保存并开启后，可点击下方按钮向该 OpenID 发一条测试消息。
+                  </p>
+                </div>
+              </div>
+
+              <div className='flex flex-wrap items-center gap-3 border-t pt-4'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={busy || !form.wechatNotificationEnabled}
+                  onClick={() => wechatTestMutation.mutate()}
+                >
+                  <Send />
+                  {wechatTestMutation.isPending
+                    ? '正在发送测试消息…'
+                    : '保存并发送测试消息'}
+                </Button>
+                {!form.wechatNotificationEnabled && (
+                  <span className='text-xs text-muted-foreground'>
+                    先开启推送开关并保存，系统才会发送消息。
+                  </span>
+                )}
+              </div>
             </div>
           </SettingsCard>
         </TabsContent>
@@ -1098,6 +1286,11 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     registerProbeExecutionMode: settings.registerProbeExecutionMode,
     registerProbeRounds: settings.registerProbeRounds,
     registerProbeProxyTargets: settings.registerProbeProxyTargets,
+    wechatNotificationEnabled: settings.wechatNotificationEnabled,
+    wechatAppId: settings.wechatAppId,
+    wechatAppSecret: settings.wechatAppSecret,
+    wechatOpenid: settings.wechatOpenid,
+    wechatTemplateId: settings.wechatTemplateId,
     probeWorkerConcurrency: settings.probeWorkerConcurrency,
     probeQueueLimit: settings.probeQueueLimit,
     probeStepDelaySeconds: settings.probeStepDelaySeconds,
@@ -1134,6 +1327,10 @@ function buildSettingsPayload(
     registerProbeExecutionMode: form.registerProbeExecutionMode,
     registerProbeRounds: form.registerProbeRounds,
     registerProbeProxyTargets: form.registerProbeProxyTargets,
+    wechatNotificationEnabled: form.wechatNotificationEnabled,
+    wechatAppId: form.wechatAppId.trim(),
+    wechatOpenid: form.wechatOpenid.trim(),
+    wechatTemplateId: form.wechatTemplateId.trim(),
     probeWorkerConcurrency: form.probeWorkerConcurrency,
     probeQueueLimit: form.probeQueueLimit,
     probeStepDelaySeconds: form.probeStepDelaySeconds,
@@ -1168,6 +1365,13 @@ function buildSettingsPayload(
   ) {
     payload.grokRegisterWebhookToken = form.grokRegisterWebhookToken
   }
+  if (
+    !clearSecrets.includes('wechatAppSecret') &&
+    form.wechatAppSecret.trim() &&
+    form.wechatAppSecret !== original.wechatAppSecret
+  ) {
+    payload.wechatAppSecret = form.wechatAppSecret
+  }
   return payload
 }
 
@@ -1186,6 +1390,9 @@ function mergeEditableSettings(
     )
       ? ''
       : form.grokRegisterWebhookToken,
+    wechatAppSecret: clearSecrets.includes('wechatAppSecret')
+      ? ''
+      : form.wechatAppSecret,
   }
 }
 
@@ -1200,6 +1407,15 @@ function validateSettings(form: SettingsForm) {
   }
   if (!form.grok2apiBaseUrl.trim()) {
     throw new Error('请填写 grok2api 服务地址')
+  }
+  if (
+    form.wechatNotificationEnabled &&
+    (!form.wechatAppId.trim() ||
+      !form.wechatAppSecret.trim() ||
+      !form.wechatOpenid.trim() ||
+      !form.wechatTemplateId.trim())
+  ) {
+    throw new Error('开启微信异常推送前请填写 AppID、AppSecret、OpenID 和模板 ID')
   }
   if (form.initialProbeOnRegister && !form.registerProbeProfileIds.length) {
     throw new Error('注册后探针至少选择一个探针方案')

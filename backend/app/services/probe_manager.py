@@ -27,6 +27,7 @@ from app.persistence.probe_repository import (
     RunExecutionContext,
     RunStateError,
 )
+from app.services.wechat_notification import WeChatAccountNotificationService
 
 logger = logging.getLogger(__name__)
 FAST_QUALITY_PROBE_EXPECTED = "探针校验通过"
@@ -82,6 +83,7 @@ class ProbeManager:
         accounts: AccountRepository,
         client: Grok2APIClient,
         thresholds: Thresholds,
+        notifications: WeChatAccountNotificationService | None = None,
         log_path: Path | None = None,
     ):
         self.settings = settings
@@ -89,6 +91,7 @@ class ProbeManager:
         self.accounts = accounts
         self.client = client
         self.thresholds = thresholds
+        self.notifications = notifications
         self.log_path = log_path or (
             settings.database_path.resolve().parent / "logs" / PROBE_LOG_FILE_NAME
         )
@@ -953,12 +956,12 @@ class ProbeManager:
             status = None
         finished = self.repository.finish_run(run_id, status=status, error=error)
         try:
+            previous_assessment = self.accounts.get_assessment(account_id)
             assessment = self.accounts.recalculate(
                 account_id,
                 self.thresholds,
                 self.settings.analysis_window_hours,
             )
-            await self._apply_auto_quarantine(account_id, assessment)
         except Exception:
             # Run evidence is already complete. Post-processing failure must be
             # visible in the rotating log, but it must not terminate a Worker.
@@ -968,6 +971,39 @@ class ProbeManager:
                 run_id,
                 account_id,
             )
+        else:
+            try:
+                assessment = await self._apply_auto_quarantine(
+                    account_id, assessment
+                )
+            except Exception:
+                # A failed automatic action must not suppress the risk message;
+                # send the recalculated high-risk assessment below.
+                logger.exception(
+                    "auto quarantine failed worker=%s run=%s account=%s",
+                    runtime.worker_id,
+                    run_id,
+                    account_id,
+                )
+            if self.notifications is not None:
+                try:
+                    await self.notifications.notify_account_transition(
+                        account={
+                            "id": account_id,
+                            "name": str(run.get("account_name") or ""),
+                            "email": str(run.get("account_email") or ""),
+                        },
+                        previous=previous_assessment,
+                        current=assessment,
+                        source="probe",
+                    )
+                except Exception:
+                    logger.exception(
+                        "wechat notification failed worker=%s run=%s account=%s",
+                        runtime.worker_id,
+                        run_id,
+                        account_id,
+                    )
         logger.info(
             "run finished worker=%s run=%s account=%s status=%s completed_steps=%s/%s errors=%s",
             runtime.worker_id,
@@ -1318,17 +1354,21 @@ class ProbeManager:
         self._wake.set()
         return self.repository.get_run(run_id) or {}
 
-    async def _apply_auto_quarantine(self, account_id: int, assessment: dict[str, Any]) -> None:
+    async def _apply_auto_quarantine(
+        self,
+        account_id: int,
+        assessment: dict[str, Any],
+    ) -> dict[str, Any]:
         if not self.settings.auto_quarantine or assessment["monitor_status"] != "high_risk":
-            return
+            return assessment
         if assessment.get("disabled_by_monitor"):
-            return
+            return assessment
         account = await self.client.get_account(account_id)
         was_enabled = bool(account.get("enabled"))
         if was_enabled:
             await self.client.set_account_enabled(account_id, False)
         until = utc_now() + timedelta(minutes=self.settings.quarantine_minutes)
-        self.accounts.set_manual_status(
+        quarantined = self.accounts.set_manual_status(
             account_id=account_id,
             status="quarantined",
             note="连续多出口探针达到自动隔离阈值",
@@ -1347,6 +1387,7 @@ class ProbeManager:
                 "riskScore": assessment["risk_score"],
             },
         )
+        return quarantined
 
     @staticmethod
     def _target_key(target: dict[str, Any]) -> str:

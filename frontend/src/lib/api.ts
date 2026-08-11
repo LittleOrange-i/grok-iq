@@ -380,6 +380,11 @@ export type RuntimeSettings = {
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
+  wechatNotificationEnabled: boolean
+  wechatAppId: string
+  wechatAppSecretConfigured: boolean
+  wechatOpenid: string
+  wechatTemplateId: string
   schedulerEnabled: boolean
   schedulerTimezone: string
   schedulerMisfireGraceSeconds: number
@@ -414,11 +419,13 @@ export type RuntimeSettings = {
 export type EditableRuntimeSettings = RuntimeSettings & {
   grok2apiAdminPassword: string
   grokRegisterWebhookToken: string
+  wechatAppSecret: string
 }
 
 export type SecretSettingName =
   | 'grok2apiAdminPassword'
   | 'grokRegisterWebhookToken'
+  | 'wechatAppSecret'
 
 export type RuntimeSettingsUpdate = Partial<
   Pick<
@@ -431,6 +438,10 @@ export type RuntimeSettingsUpdate = Partial<
     | 'registerProbeExecutionMode'
     | 'registerProbeRounds'
     | 'registerProbeProxyTargets'
+    | 'wechatNotificationEnabled'
+    | 'wechatAppId'
+    | 'wechatOpenid'
+    | 'wechatTemplateId'
     | 'schedulerEnabled'
     | 'schedulerTimezone'
     | 'schedulerMisfireGraceSeconds'
@@ -457,17 +468,29 @@ export type RuntimeSettingsUpdate = Partial<
 > & {
   grok2apiAdminPassword?: string
   grokRegisterWebhookToken?: string
+  wechatAppSecret?: string
   clearSecrets?: SecretSettingName[]
 }
 
 type RuntimeSettingsWire = Omit<
   RuntimeSettings,
-  'degradationTps' | 'strongDegradationTps'
+  | 'degradationTps'
+  | 'strongDegradationTps'
+  | 'wechatNotificationEnabled'
+  | 'wechatAppId'
+  | 'wechatAppSecretConfigured'
+  | 'wechatOpenid'
+  | 'wechatTemplateId'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
   softTps?: number
   hardTps?: number
+  wechatNotificationEnabled?: boolean
+  wechatAppId?: string
+  wechatAppSecretConfigured?: boolean
+  wechatOpenid?: string
+  wechatTemplateId?: string
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -480,6 +503,11 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     registerProbeRounds: value.registerProbeRounds ?? 3,
     registerProbeProxyTargets:
       value.registerProbeProxyTargets ?? [{ kind: 'direct', id: null }],
+    wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
+    wechatAppId: value.wechatAppId ?? '',
+    wechatAppSecretConfigured: value.wechatAppSecretConfigured ?? false,
+    wechatOpenid: value.wechatOpenid ?? '',
+    wechatTemplateId: value.wechatTemplateId ?? '',
     degradationTps: value.degradationTps ?? value.softTps ?? 150,
     strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 500,
   }
@@ -489,7 +517,7 @@ async function loadEditableRuntimeSettings(): Promise<EditableRuntimeSettings> {
   const settings = normalizeRuntimeSettings(
     await request<RuntimeSettingsWire>('/settings')
   )
-  const [adminPassword, registerToken] = await Promise.all([
+  const [adminPassword, registerToken, wechatAppSecret] = await Promise.all([
     settings.grok2apiAdminPasswordConfigured
       ? request<{ value: string }>(
           '/settings/secrets/grok2apiAdminPassword',
@@ -502,11 +530,17 @@ async function loadEditableRuntimeSettings(): Promise<EditableRuntimeSettings> {
           { cache: 'no-store' }
         )
       : Promise.resolve({ value: '' }),
+    settings.wechatAppSecretConfigured
+      ? request<{ value: string }>('/settings/secrets/wechatAppSecret', {
+          cache: 'no-store',
+        })
+      : Promise.resolve({ value: '' }),
   ])
   return {
     ...settings,
     grok2apiAdminPassword: adminPassword.value,
     grokRegisterWebhookToken: registerToken.value,
+    wechatAppSecret: wechatAppSecret.value,
   }
 }
 
@@ -950,6 +984,13 @@ export const api = {
       baseUrl: string
       grokBuild: Record<string, unknown>
     }>('/settings/test-grok2api', { method: 'POST' }),
+  testWechat: () =>
+    request<{
+      ok: boolean
+      sent: number
+      templateId: string
+      messages: { openId: string; messageId: string }[]
+    }>('/settings/test-wechat', { method: 'POST' }),
   chatProviders: () => request<ChatProvider[]>('/chat/providers'),
   revealChatProviderApiKey: (id: string) =>
     request<{ value: string }>(`/chat/providers/${id}/api-key`),

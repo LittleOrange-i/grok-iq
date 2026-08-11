@@ -51,6 +51,15 @@ class Settings(BaseSettings):
         default_factory=lambda: [{"kind": "direct", "id": None}]
     )
 
+    # The WeChat public-platform test account uses the same template-message
+    # API as a normal public account, which keeps local development independent
+    # from production account verification.
+    wechat_notification_enabled: bool = False
+    wechat_app_id: str = ""
+    wechat_app_secret: str = ""
+    wechat_openid: str = ""
+    wechat_template_id: str = ""
+
     # Every user-created probe plan has its own Cron expression. This system
     # Cron only handles monitor-owned quarantine recovery.
     scheduler_enabled: bool = True
@@ -96,6 +105,11 @@ class Settings(BaseSettings):
         "register_probe_execution_mode",
         "register_probe_rounds",
         "register_probe_proxy_targets",
+        "wechat_notification_enabled",
+        "wechat_app_id",
+        "wechat_app_secret",
+        "wechat_openid",
+        "wechat_template_id",
         "scheduler_enabled",
         "scheduler_timezone",
         "scheduler_misfire_grace_seconds",
@@ -123,6 +137,7 @@ class Settings(BaseSettings):
         {
             "grok2api_admin_password",
             "grok_register_webhook_token",
+            "wechat_app_secret",
         }
     )
 

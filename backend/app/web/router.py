@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from app.core.clock import app_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
+from app.integrations.wechat.client import WeChatIntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.auth_repository import AdminAlreadyExistsError
 from app.persistence.probe_repository import ProbeRepository, QueueFullError, RunStateError
@@ -20,6 +21,7 @@ from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
+from app.services.wechat_notification import WeChatAccountNotificationService
 
 from .auth import build_admin_auth_dependency
 from .schemas import (
@@ -48,6 +50,8 @@ def _http_error(exc: Exception, status: int = 400) -> HTTPException:
         )
     if isinstance(exc, IntegrationError):
         return HTTPException(status_code=502, detail=str(exc))
+    if isinstance(exc, WeChatIntegrationError):
+        return HTTPException(status_code=502, detail=str(exc))
     if isinstance(exc, QueueFullError):
         return HTTPException(status_code=429, detail=str(exc))
     if isinstance(exc, RunStateError):
@@ -73,6 +77,7 @@ def build_router(
     auth_service: AuthService,
     chat_service: ChatService,
     register_integration: RegisterIntegrationService,
+    wechat_notifications: WeChatAccountNotificationService,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     require_admin = build_admin_auth_dependency(auth_service)
@@ -155,6 +160,13 @@ def build_router(
                 "adminConfigured": bool(
                     settings.grok2api_admin_username
                     and settings.grok2api_admin_password
+                ),
+                "wechatNotificationEnabled": settings.wechat_notification_enabled,
+                "wechatConfigured": bool(
+                    settings.wechat_app_id
+                    and settings.wechat_app_secret
+                    and settings.wechat_openid
+                    and settings.wechat_template_id
                 ),
             },
         }
@@ -574,6 +586,8 @@ def build_router(
             changed = runtime_settings_service.update(payload.runtime_changes())
             if any(key.startswith("grok2api_") for key in changed):
                 client.reset_credentials()
+            if any(key.startswith("wechat_") for key in changed):
+                wechat_notifications.reset_credentials()
             await probe_manager.reconfigure()
             await scheduler.reconfigure()
             return {**runtime_settings_service.public_view(), "changed": changed}
@@ -590,6 +604,14 @@ def build_router(
                 "baseUrl": settings.grok2api_base_url,
                 "grokBuild": summary.get("providers", {}).get("grok_build", {}),
             }
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @protected_router.post("/settings/test-wechat")
+    async def test_wechat_settings() -> dict[str, Any]:
+        try:
+            result = await wechat_notifications.send_test()
+            return {"ok": True, **result}
         except Exception as exc:
             raise _http_error(exc) from exc
 

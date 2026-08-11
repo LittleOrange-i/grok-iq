@@ -10,6 +10,7 @@ from app.analyzer import Thresholds
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.integrations.grok2api.client import Grok2APIClient
+from app.integrations.wechat.client import WeChatTestAccountClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.auth_repository import AuthRepository
 from app.persistence.chat_provider_repository import ChatProviderRepository
@@ -24,6 +25,7 @@ from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
+from app.services.wechat_notification import WeChatAccountNotificationService
 from app.web.auth import AdminAuthenticationRequired
 from app.web.router import build_router
 
@@ -50,12 +52,17 @@ runtime_settings_service = RuntimeSettingsService(settings, settings_repository)
 auth_service = AuthService(settings, auth_repository)
 chat_service = ChatService(settings=settings, providers=chat_provider_repository)
 grok_client = Grok2APIClient(settings)
+wechat_client = WeChatTestAccountClient(settings)
+wechat_notification_service = WeChatAccountNotificationService(
+    settings, wechat_client
+)
 probe_manager = ProbeManager(
     settings=settings,
     repository=probe_repository,
     accounts=account_repository,
     client=grok_client,
     thresholds=thresholds,
+    notifications=wechat_notification_service,
     log_path=probe_log_path,
 )
 account_service = AccountService(
@@ -76,6 +83,7 @@ register_integration_service = RegisterIntegrationService(
     accounts=account_repository,
     account_service=account_service,
     probes=probe_manager,
+    notifications=wechat_notification_service,
 )
 
 
@@ -137,6 +145,7 @@ app.include_router(
         auth_service=auth_service,
         chat_service=chat_service,
         register_integration=register_integration_service,
+        wechat_notifications=wechat_notification_service,
     )
 )
 

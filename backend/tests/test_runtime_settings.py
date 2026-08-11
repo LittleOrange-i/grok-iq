@@ -83,3 +83,35 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
                 "probe_transient_retry_max_seconds": 10,
             }
         )
+
+
+def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="AppID、AppSecret、OpenID"):
+        service.update({"wechat_notification_enabled": True})
+
+    changed = service.update(
+        {
+            "wechat_notification_enabled": True,
+            "wechat_app_id": "wx-test",
+            "wechat_app_secret": "wechat-secret",
+            "wechat_openid": "openid-test",
+            "wechat_template_id": "template-test",
+        }
+    )
+    assert changed == [
+        "wechat_app_id",
+        "wechat_app_secret",
+        "wechat_notification_enabled",
+        "wechat_openid",
+        "wechat_template_id",
+    ]
+    assert settings.wechat_notification_enabled is True
+    assert service.public_view()["wechatAppSecretConfigured"] is True
+
+    with database.session() as session:
+        stored = session.scalar(
+            select(AppSetting).where(AppSetting.key == "wechat_app_secret")
+        )
+        assert stored is not None
+        assert "wechat-secret" not in json.dumps(stored.value)

@@ -168,6 +168,7 @@ class ProbeRunBatchCreate(BaseModel):
 SecretSettingName = Literal[
     "grok2apiAdminPassword",
     "grokRegisterWebhookToken",
+    "wechatAppSecret",
 ]
 
 
@@ -197,6 +198,19 @@ class RuntimeSettingsInput(BaseModel):
     )
     register_probe_proxy_targets: list[ProxyTargetInput] | None = Field(
         default=None, alias="registerProbeProxyTargets", max_length=20
+    )
+    wechat_notification_enabled: bool | None = Field(
+        default=None, alias="wechatNotificationEnabled"
+    )
+    wechat_app_id: str | None = Field(default=None, alias="wechatAppId", max_length=128)
+    wechat_app_secret: str | None = Field(
+        default=None, alias="wechatAppSecret", max_length=256
+    )
+    wechat_openid: str | None = Field(
+        default=None, alias="wechatOpenid", max_length=256
+    )
+    wechat_template_id: str | None = Field(
+        default=None, alias="wechatTemplateId", max_length=256
     )
     scheduler_enabled: bool | None = Field(default=None, alias="schedulerEnabled")
     scheduler_timezone: str | None = Field(default=None, alias="schedulerTimezone")
@@ -243,12 +257,14 @@ class RuntimeSettingsInput(BaseModel):
         for key in (
             "grok2api_admin_password",
             "grok_register_webhook_token",
+            "wechat_app_secret",
         ):
             if result.get(key) == "":
                 result.pop(key)
         clear_mapping = {
             "grok2apiAdminPassword": "grok2api_admin_password",
             "grokRegisterWebhookToken": "grok_register_webhook_token",
+            "wechatAppSecret": "wechat_app_secret",
         }
         for alias in self.clear_secrets:
             result[clear_mapping[alias]] = ""
