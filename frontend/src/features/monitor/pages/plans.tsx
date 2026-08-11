@@ -1586,12 +1586,14 @@ function Field({
   label,
   required = false,
   action,
+  hint,
   children,
   className = '',
 }: {
   label: string
   required?: boolean
   action?: React.ReactNode
+  hint?: string
   children: React.ReactNode
   className?: string
 }) {
@@ -1608,6 +1610,9 @@ function Field({
         </label>
         {action}
       </div>
+      {hint && (
+        <p className='text-xs leading-5 text-muted-foreground'>{hint}</p>
+      )}
       {children}
     </div>
   )
