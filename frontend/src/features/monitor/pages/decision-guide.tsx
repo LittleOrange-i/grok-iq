@@ -1,0 +1,863 @@
+import { type ElementType, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  Ban,
+  Calculator,
+  CheckCircle2,
+  CircleDashed,
+  Clock3,
+  Database,
+  Gauge,
+  KeyRound,
+  Layers3,
+  LoaderCircle,
+  Network,
+  RefreshCw,
+  Route,
+  ShieldAlert,
+  ShieldCheck,
+  Timer,
+  Undo2,
+  XCircle,
+  Zap,
+} from 'lucide-react'
+import { api, type RuntimeSettings } from '@/lib/api'
+import { StatusBadge } from '@/lib/status'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Page, PageHeader } from '@/components/page'
+import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+
+type Thresholds = Pick<
+  RuntimeSettings,
+  | 'analysisWindowHours'
+  | 'degradationTps'
+  | 'strongDegradationTps'
+  | 'consecutiveAnomalies'
+  | 'crossEgressMin'
+  | 'bufferFirstTokenShare'
+  | 'minGenerationMs'
+  | 'minimumOutputTokens'
+  | 'autoQuarantine'
+  | 'quarantineMinutes'
+>
+
+type RuleCardProps = {
+  icon: ElementType
+  title: string
+  badge?: ReactNode
+  summary: string
+  conditions?: string[]
+  tone?: 'default' | 'success' | 'warning' | 'danger' | 'info'
+}
+
+const defaultThresholds: Thresholds = {
+  analysisWindowHours: 168,
+  degradationTps: 500,
+  strongDegradationTps: 1000,
+  consecutiveAnomalies: 3,
+  crossEgressMin: 2,
+  bufferFirstTokenShare: 0.85,
+  minGenerationMs: 250,
+  minimumOutputTokens: 32,
+  autoQuarantine: false,
+  quarantineMinutes: 30,
+}
+
+const toneClasses = {
+  default: 'bg-muted/40 text-muted-foreground',
+  success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  danger: 'bg-destructive/10 text-destructive',
+  info: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
+}
+
+export function DecisionGuidePage() {
+  const settings = useQuery({
+    queryKey: ['settings', 'decision-guide'],
+    queryFn: api.settings,
+    retry: false,
+  })
+  const thresholds = settings.data ?? defaultThresholds
+
+  return (
+    <Page>
+      <PageHeader
+        title='判定说明'
+        description='探针样本如何分类、风险分如何累计，以及账号、任务和恢复状态如何流转。'
+        actions={
+          <ActionToolbar label='判定说明操作'>
+            <Badge
+              variant={settings.data ? 'success' : 'secondary'}
+              className='h-8 border-0 bg-background px-2.5'
+            >
+              <Database />
+              {settings.data ? '当前运行配置' : '默认阈值示例'}
+            </Badge>
+            <ToolbarAction
+              label='刷新运行阈值'
+              pending={settings.isFetching}
+              onClick={() => void settings.refetch()}
+            >
+              <RefreshCw />
+            </ToolbarAction>
+          </ActionToolbar>
+        }
+      />
+
+      <Card className='overflow-hidden'>
+        <CardContent className='p-4 sm:p-6'>
+          <div className='grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:items-center'>
+            <FlowStep
+              icon={Activity}
+              title='发起探针'
+              description='固定账号并请求上游'
+            />
+            <FlowArrow />
+            <FlowStep
+              icon={Network}
+              title='核验审计'
+              description='确认实际账号与出口'
+            />
+            <FlowArrow />
+            <FlowStep
+              icon={Gauge}
+              title='分类样本'
+              description='计算 TPS 与缓冲特征'
+            />
+            <FlowArrow />
+            <FlowStep
+              icon={ShieldCheck}
+              title='聚合账号'
+              description='生成风险分与状态'
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Tabs defaultValue='account' className='space-y-4'>
+        <TabsList className='grid h-auto w-full grid-cols-2 lg:w-fit lg:grid-cols-4'>
+          <TabsTrigger value='account'>
+            <ShieldCheck />
+            账号判定
+          </TabsTrigger>
+          <TabsTrigger value='sample'>
+            <Gauge />
+            样本分类
+          </TabsTrigger>
+          <TabsTrigger value='task'>
+            <Activity />
+            任务与恢复
+          </TabsTrigger>
+          <TabsTrigger value='upstream'>
+            <KeyRound />
+            上游字段
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value='account' className='space-y-4'>
+          <ThresholdOverview thresholds={thresholds} />
+          <AccountStatusRules thresholds={thresholds} />
+          <RiskFormula thresholds={thresholds} />
+        </TabsContent>
+
+        <TabsContent value='sample' className='space-y-4'>
+          <SampleMetricRules thresholds={thresholds} />
+          <SampleClassificationRules thresholds={thresholds} />
+        </TabsContent>
+
+        <TabsContent value='task' className='space-y-4'>
+          <TaskStatusRules />
+          <RestoreStatusRules />
+        </TabsContent>
+
+        <TabsContent value='upstream' className='space-y-4'>
+          <UpstreamStatusRules />
+        </TabsContent>
+      </Tabs>
+    </Page>
+  )
+}
+
+function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
+  const values = [
+    {
+      icon: Clock3,
+      label: '分析窗口',
+      value: `${thresholds.analysisWindowHours} 小时`,
+    },
+    {
+      icon: Gauge,
+      label: '降智 / 强降智 TPS',
+      value: `${thresholds.degradationTps} / ${thresholds.strongDegradationTps}`,
+    },
+    {
+      icon: Layers3,
+      label: '重复信号',
+      value: `${thresholds.consecutiveAnomalies} 次`,
+    },
+    {
+      icon: Network,
+      label: '跨出口',
+      value: `${thresholds.crossEgressMin} 个`,
+    },
+    {
+      icon: Timer,
+      label: '缓冲比例',
+      value: `${formatPercent(thresholds.bufferFirstTokenShare)}`,
+    },
+  ]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>当前判定阈值</CardTitle>
+        <CardDescription>
+          数值来自系统设置；服务未连接时展示后端默认值。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
+        {values.map(({ icon: Icon, label, value }) => (
+          <div key={label} className='rounded-lg border bg-muted/20 p-3'>
+            <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+              <Icon className='size-3.5' />
+              {label}
+            </div>
+            <div className='mt-2 font-mono text-sm font-semibold tabular-nums'>
+              {value}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
+  const repeated = `累计降智信号数或最大连续信号数达到 ${thresholds.consecutiveAnomalies}`
+  const crossEgress = `降智信号覆盖至少 ${thresholds.crossEgressMin} 个实际出口`
+
+  return (
+    <section className='space-y-3'>
+      <SectionHeading
+        icon={ShieldCheck}
+        title='账号监控状态'
+        description='按最近分析窗口内的已持久化样本聚合；风险分越高表示降智证据越多。'
+      />
+      <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
+        <RuleCard
+          icon={CheckCircle2}
+          title='正常'
+          badge={<StatusBadge value='healthy' />}
+          summary='窗口内没有记录到降智信号。'
+          conditions={['降智信号数为 0', '风险分通常为 0']}
+          tone='success'
+        />
+        <RuleCard
+          icon={AlertTriangle}
+          title='观察'
+          badge={<StatusBadge value='watch' />}
+          summary='已经记录到降智信号，但次数尚未达到疑似降智条件。'
+          conditions={[
+            '降智信号数大于 0',
+            `累计信号数和最大连续信号数均小于 ${thresholds.consecutiveAnomalies}`,
+          ]}
+          tone='warning'
+        />
+        <RuleCard
+          icon={ShieldAlert}
+          title='疑似降智'
+          badge={<StatusBadge value='suspect' />}
+          summary='降智信号已经重复出现，需要使用多个实际出口进一步确认。'
+          conditions={[repeated, `尚未满足“${crossEgress}”`]}
+          tone='danger'
+        />
+        <RuleCard
+          icon={Zap}
+          title='高风险'
+          badge={<StatusBadge value='high_risk' />}
+          summary='重复降智信号已经在多个实际出口中复现。'
+          conditions={[repeated, crossEgress]}
+          tone='danger'
+        />
+        <RuleCard
+          icon={Ban}
+          title='已停用'
+          badge={<StatusBadge value='quarantined' />}
+          summary='由人工操作，或高风险命中自动隔离策略后进入。'
+          conditions={[
+            thresholds.autoQuarantine
+              ? `当前已启用自动隔离，默认 ${thresholds.quarantineMinutes} 分钟`
+              : '当前未启用自动隔离，只会由人工操作产生',
+            '隔离有效期内会覆盖重新计算出的普通监控状态',
+          ]}
+          tone='danger'
+        />
+        <RuleCard
+          icon={Database}
+          title='状态持久化'
+          badge={<Badge variant='outline'>ORM</Badge>}
+          summary='任务结束后计算一次并写入本地数据库，不依赖页面临时计算。'
+          conditions={[
+            '后台停止后已有结果仍保留',
+            '样本过期不会按时钟自动降分，下一次任务结束时重新计算',
+          ]}
+          tone='info'
+        />
+      </div>
+    </section>
+  )
+}
+
+function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
+  const rows = [
+    ['信号率', '降智信号数 ÷ 可测样本数 × 30', '最高 30'],
+    ['强信号', '强降智信号数 × 6', '最高 24'],
+    ['持续高速', 'fast_risk 数 × 12', '最高 30'],
+    ['标记缺失', 'marker_miss 数 × 16', '最高 32'],
+    ['跨出口', `降智信号覆盖 ≥ ${thresholds.crossEgressMin} 个出口`, '+16'],
+    ['连续信号', '最大连续降智信号数 × 3', '最高 15'],
+  ]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2'>
+          <Calculator className='size-4 text-primary' />
+          风险分公式
+        </CardTitle>
+        <CardDescription>
+          各项相加后封顶 100 分；“观察”最低显示 15 分，“疑似降智”最低显示 50
+          分。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className='grid gap-2 md:grid-cols-2 xl:grid-cols-3'>
+          {rows.map(([label, formula, cap]) => (
+            <div key={label} className='rounded-lg border p-3'>
+              <div className='flex items-center justify-between gap-2'>
+                <span className='text-sm font-medium'>{label}</span>
+                <Badge variant='secondary'>{cap}</Badge>
+              </div>
+              <div className='mt-2 font-mono text-xs text-muted-foreground'>
+                {formula}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SampleMetricRules({ thresholds }: { thresholds: Thresholds }) {
+  return (
+    <div className='grid gap-4 lg:grid-cols-2'>
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2'>
+            <Gauge className='size-4 text-primary' />
+            TPS 计算
+          </CardTitle>
+          <CardDescription>只计算首 Token 到达后的生成阶段。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className='rounded-lg bg-muted/50 p-4 font-mono text-sm'>
+            TPS = output_tokens × 1000 ÷ (duration_ms − first_token_ms)
+          </div>
+          <p className='mt-3 text-xs leading-5 text-muted-foreground'>
+            output_tokens 包含上游 usage 返回的推理
+            Token；因此长时间等待后集中返回大量 Token
+            会产生很高的计算值，这正是缓冲型降智信号要捕获的特征。
+          </p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2'>
+            <Timer className='size-4 text-primary' />
+            缓冲特征
+          </CardTitle>
+          <CardDescription>满足任意一项即认为存在集中吐出。</CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-2'>
+          <ConditionLine
+            icon={Clock3}
+            text={`首 Token 耗时 ÷ 总耗时 ≥ ${formatPercent(thresholds.bufferFirstTokenShare)}`}
+          />
+          <ConditionLine
+            icon={Zap}
+            text={`首 Token 后的生成阶段 < ${thresholds.minGenerationMs} ms`}
+          />
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
+  const rules: RuleCardProps[] = [
+    {
+      icon: XCircle,
+      title: '请求错误',
+      badge: <StatusBadge value='error' />,
+      summary: 'HTTP 非 2xx，或请求、审计与集成步骤抛出错误。',
+      conditions: ['不记录降智信号', '不会打断既有连续信号序列'],
+      tone: 'danger',
+    },
+    {
+      icon: CircleDashed,
+      title: '无法测量',
+      badge: <StatusBadge value='unmeasurable' />,
+      summary: '缺少首 Token 时间，或总耗时没有大于首 Token 耗时。',
+      conditions: ['TPS 记为 0', '不记录降智信号'],
+    },
+    {
+      icon: ShieldAlert,
+      title: '预期缺失',
+      badge: <StatusBadge value='marker_miss' />,
+      summary: '探针方案设置的自动校验标记没有出现在回复中。',
+      conditions: ['优先于长度和 TPS 判断', '计为强降智信号'],
+      tone: 'danger',
+    },
+    {
+      icon: Layers3,
+      title: '样本不足',
+      badge: <StatusBadge value='insufficient' />,
+      summary: `输出 Token 少于 ${thresholds.minimumOutputTokens}，证据长度不足。`,
+      conditions: ['不记录降智信号', '不会打断既有连续信号序列'],
+    },
+    {
+      icon: CheckCircle2,
+      title: '正常',
+      badge: <StatusBadge value='normal' />,
+      summary: `输出足够，且 TPS 低于 ${thresholds.degradationTps}。`,
+      conditions: ['不记录降智信号', '会结束连续降智信号序列'],
+      tone: 'success',
+    },
+    {
+      icon: Gauge,
+      title: '降智信号',
+      badge: <StatusBadge value='elevated' />,
+      summary: `TPS 位于 ${thresholds.degradationTps}～${thresholds.strongDegradationTps}，且没有缓冲特征。`,
+      conditions: ['记录 1 次疑似降智', '不属于强降智信号'],
+      tone: 'warning',
+    },
+    {
+      icon: Timer,
+      title: '缓冲降智信号',
+      badge: <StatusBadge value='buffered_soft' />,
+      summary: `TPS 位于 ${thresholds.degradationTps}～${thresholds.strongDegradationTps}，同时命中缓冲特征。`,
+      conditions: ['记录 1 次疑似降智', '不属于强降智信号'],
+      tone: 'warning',
+    },
+    {
+      icon: AlertTriangle,
+      title: '强缓冲降智信号',
+      badge: <StatusBadge value='buffered_hard' />,
+      summary: `TPS 达到 ${thresholds.strongDegradationTps}，并命中缓冲特征。`,
+      conditions: ['记录 1 次疑似降智', '同时计为强降智信号'],
+      tone: 'danger',
+    },
+    {
+      icon: Zap,
+      title: '强降智信号',
+      badge: <StatusBadge value='fast_risk' />,
+      summary: `TPS 达到 ${thresholds.strongDegradationTps}，但没有集中吐出的缓冲特征。`,
+      conditions: ['记录 1 次疑似降智', '同时计为强降智信号'],
+      tone: 'danger',
+    },
+  ]
+
+  return (
+    <section className='space-y-3'>
+      <SectionHeading
+        icon={Gauge}
+        title='单次样本分类'
+        description='规则按以下优先级依次判断，命中后不再继续向下分类。'
+      />
+      <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
+        {rules.map((rule) => (
+          <RuleCard key={rule.title} {...rule} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function TaskStatusRules() {
+  const rules: RuleCardProps[] = [
+    {
+      icon: Clock3,
+      title: '排队中',
+      badge: <StatusBadge value='queued' />,
+      summary: '任务已持久化，等待工作线程领取。',
+      conditions: [
+        '同账号只允许一个任务执行',
+        '队列优先级和创建时间决定领取顺序',
+      ],
+      tone: 'warning',
+    },
+    {
+      icon: LoaderCircle,
+      title: '执行中',
+      badge: <StatusBadge value='running' />,
+      summary: '工作线程已领取任务，正在逐轮、逐出口执行。',
+      conditions: ['持续写入当前轮次、目标和心跳'],
+      tone: 'info',
+    },
+    {
+      icon: Ban,
+      title: '取消中',
+      badge: <StatusBadge value='cancel_requested' />,
+      summary: '运行中任务收到取消请求，等待当前调用退出并执行清理恢复。',
+      conditions: ['账号设置恢复完成后才进入最终状态'],
+      tone: 'warning',
+    },
+    {
+      icon: RefreshCw,
+      title: '恢复中',
+      badge: <StatusBadge value='recovering' />,
+      summary: '服务启动时发现上次中断的活动任务，优先恢复账号原设置。',
+      conditions: [
+        '恢复成功后重新排队或结束',
+        '恢复失败则任务失败并等待人工同步',
+      ],
+      tone: 'info',
+    },
+    {
+      icon: CheckCircle2,
+      title: '已完成',
+      badge: <StatusBadge value='completed' />,
+      summary: '所有步骤完成，样本与账号设置恢复均没有错误。',
+      tone: 'success',
+    },
+    {
+      icon: AlertTriangle,
+      title: '部分异常',
+      badge: <StatusBadge value='completed_with_errors' />,
+      summary: '任务流程走完，但存在样本错误或资源清理警告。',
+      conditions: ['成功样本仍然保留并参与分析'],
+      tone: 'warning',
+    },
+    {
+      icon: XCircle,
+      title: '失败',
+      badge: <StatusBadge value='failed' />,
+      summary: '准备、路由、执行或启动恢复阶段发生致命错误。',
+      tone: 'danger',
+    },
+    {
+      icon: Ban,
+      title: '已取消',
+      badge: <StatusBadge value='cancelled' />,
+      summary: '排队任务被直接取消，或运行任务完成中止与清理。',
+    },
+  ]
+
+  return (
+    <section className='space-y-3'>
+      <SectionHeading
+        icon={Activity}
+        title='任务状态'
+        description='任务状态描述队列和执行生命周期，不等于样本质量分类。'
+      />
+      <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-4'>
+        {rules.map((rule) => (
+          <RuleCard key={rule.title} {...rule} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function RestoreStatusRules() {
+  const rules: RuleCardProps[] = [
+    {
+      icon: CircleDashed,
+      title: '未记录',
+      badge: <Badge variant='secondary'>not_recorded</Badge>,
+      summary: '旧任务或无需保存账号原设置的任务没有恢复快照。',
+    },
+    {
+      icon: Clock3,
+      title: '等待恢复',
+      badge: <Badge variant='warning'>pending</Badge>,
+      summary: '已保存启停、优先级、并发和出口快照，任务结束时自动恢复。',
+      tone: 'warning',
+    },
+    {
+      icon: LoaderCircle,
+      title: '正在恢复',
+      badge: <Badge variant='info'>restoring</Badge>,
+      summary: '正在向 grok2api 回写任务开始前的账号设置。',
+      tone: 'info',
+    },
+    {
+      icon: ShieldCheck,
+      title: '自动恢复完成',
+      badge: <Badge variant='success'>automatic</Badge>,
+      summary: '任务收尾阶段自动恢复成功。',
+      tone: 'success',
+    },
+    {
+      icon: RefreshCw,
+      title: '启动恢复完成',
+      badge: <Badge variant='info'>startup</Badge>,
+      summary: '服务重启后识别到中断任务，并按快照恢复成功。',
+      tone: 'info',
+    },
+    {
+      icon: Undo2,
+      title: '人工同步完成',
+      badge: <Badge variant='secondary'>manual</Badge>,
+      summary: '操作员从任务详情主动执行原设置同步。',
+    },
+    {
+      icon: ShieldAlert,
+      title: '需要人工同步',
+      badge: <Badge variant='destructive'>restore_failed</Badge>,
+      summary: '自动回写失败；同账号后续执行、重试和删除会被阻止。',
+      conditions: ['在任务详情点击同步原设置后解除阻塞'],
+      tone: 'danger',
+    },
+  ]
+
+  return (
+    <section className='space-y-3'>
+      <SectionHeading
+        icon={Undo2}
+        title='账号设置恢复状态'
+        description='这是任务对 grok2api 临时修改的补偿状态，与账号风险判定相互独立。'
+      />
+      <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
+        {rules.map((rule) => (
+          <RuleCard key={rule.title} {...rule} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function UpstreamStatusRules() {
+  return (
+    <section className='space-y-3'>
+      <SectionHeading
+        icon={KeyRound}
+        title='grok2api 上游字段'
+        description='这些字段来自实时账号列表，各自表达不同维度，不应合并理解。'
+      />
+      <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
+        <RuleCard
+          icon={Activity}
+          title='enabled'
+          badge={<Badge variant='outline'>启用 / 停用</Badge>}
+          summary='表示账号是否参与 grok2api 正常调度，不表示凭据有效或模型质量正常。'
+          conditions={['停用账号执行探针时会短时激活，结束后恢复原值']}
+          tone='info'
+        />
+        <RuleCard
+          icon={KeyRound}
+          title='authStatus = active'
+          badge={<Badge variant='success'>鉴权有效</Badge>}
+          summary='grok2api 当前认为账号凭据仍可使用。'
+          conditions={['不代表 enabled=true', '不代表没有降智']}
+          tone='success'
+        />
+        <RuleCard
+          icon={ShieldAlert}
+          title='reauthRequired'
+          badge={<Badge variant='destructive'>需要重新授权</Badge>}
+          summary='凭据失效或需要重新授权，账号不会进入探针执行条件。'
+          tone='danger'
+        />
+        <RuleCard
+          icon={Route}
+          title='上游默认出口策略'
+          badge={<Badge variant='secondary'>未固定节点</Badge>}
+          summary='账号没有绑定指定节点，由 grok2api 的节点池、回退或本地出口策略决定。'
+          conditions={[
+            '目标出口为 None 是调度策略，不是错误',
+            '实际出口从请求审计记录',
+          ]}
+        />
+        <RuleCard
+          icon={Network}
+          title='固定出口'
+          badge={<Badge variant='outline'>Node ID</Badge>}
+          summary='探针临时把账号绑定到指定 grok_build 出口节点。'
+          conditions={[
+            '审计实际节点与目标节点不同时显示提示，但流式结果仍参与 TPS 判断',
+            '任务结束后恢复原绑定',
+          ]}
+          tone='info'
+        />
+        <RuleCard
+          icon={Zap}
+          title='快速出口质量探针'
+          badge={<Badge variant='info'>quality-test</Badge>}
+          summary='调用指定节点的 quality-test 接口，因此必须选择已配置代理的出口节点。'
+          conditions={['没有出口节点时使用完整对话探针的上游调度']}
+          tone='info'
+        />
+        <RuleCard
+          icon={Clock3}
+          title='账号限定范围暂时不可用'
+          badge={<Badge variant='outline'>HTTP 503</Badge>}
+          summary='Client Key 与临时模型路由限定的账号范围内，此刻没有账号能被调度；这与“剩余额度为 0”不是同一个条件。'
+          conditions={[
+            '常见于前一个网络失败触发账号短冷却、账号被停用、鉴权状态变化或路由范围不匹配',
+            '错误码 client_key_account_scope_unavailable',
+            '按设置执行有界退避重试，不记录降智信号',
+          ]}
+          tone='warning'
+        />
+        <RuleCard
+          icon={Timer}
+          title='账号冷却'
+          badge={<Badge variant='outline'>HTTP 429</Badge>}
+          summary='上游账号仍有额度，但 grok2api 因最近失败暂时不再选择它。'
+          conditions={[
+            '错误码 upstream_cooling 或 upstream_model_cooling',
+            '优先使用 Retry-After，任务详情会显示重试次数',
+            '冷却错误不参与降智判定',
+          ]}
+          tone='warning'
+        />
+        <RuleCard
+          icon={XCircle}
+          title='上游网络错误'
+          badge={<Badge variant='outline'>HTTP 502</Badge>}
+          summary='请求已命中账号或出口，但到上游的传输失败；失败出口可能进一步触发账号短冷却。'
+          conditions={[
+            '错误码 upstream_network_error',
+            '优先检查任务审计中的实际出口与出口健康状态',
+            '属于可用性证据，不属于 TPS 降智证据',
+          ]}
+          tone='danger'
+        />
+      </div>
+    </section>
+  )
+}
+
+function FlowStep({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: ElementType
+  title: string
+  description: string
+}) {
+  return (
+    <div className='flex items-center gap-3 rounded-lg border bg-muted/20 p-3'>
+      <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+        <Icon className='size-4' />
+      </div>
+      <div className='min-w-0'>
+        <div className='text-sm font-medium'>{title}</div>
+        <div className='truncate text-xs text-muted-foreground'>
+          {description}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FlowArrow() {
+  return (
+    <ArrowRight className='mx-auto hidden size-4 text-muted-foreground md:block' />
+  )
+}
+
+function SectionHeading({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: ElementType
+  title: string
+  description: string
+}) {
+  return (
+    <div className='flex items-start gap-3'>
+      <div className='mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+        <Icon className='size-4' />
+      </div>
+      <div>
+        <h2 className='font-semibold'>{title}</h2>
+        <p className='mt-0.5 text-sm text-muted-foreground'>{description}</p>
+      </div>
+    </div>
+  )
+}
+
+function RuleCard({
+  icon: Icon,
+  title,
+  badge,
+  summary,
+  conditions = [],
+  tone = 'default',
+}: RuleCardProps) {
+  return (
+    <Card className='gap-4 py-4 shadow-none'>
+      <CardHeader className='px-4'>
+        <div className='flex items-start justify-between gap-3'>
+          <div className='flex min-w-0 items-center gap-2'>
+            <span
+              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${toneClasses[tone]}`}
+            >
+              <Icon className='size-4' />
+            </span>
+            <CardTitle className='truncate text-sm'>{title}</CardTitle>
+          </div>
+          {badge}
+        </div>
+      </CardHeader>
+      <CardContent className='px-4'>
+        <p className='text-sm leading-6 text-muted-foreground'>{summary}</p>
+        {conditions.length > 0 && (
+          <ul className='mt-3 space-y-2'>
+            {conditions.map((condition) => (
+              <li key={condition} className='flex gap-2 text-xs leading-5'>
+                <span className='mt-2 size-1 shrink-0 rounded-full bg-primary' />
+                <span>{condition}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ConditionLine({
+  icon: Icon,
+  text,
+}: {
+  icon: ElementType
+  text: string
+}) {
+  return (
+    <div className='flex items-center gap-3 rounded-lg border p-3 text-sm'>
+      <Icon className='size-4 shrink-0 text-primary' />
+      <span>{text}</span>
+    </div>
+  )
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`
+}

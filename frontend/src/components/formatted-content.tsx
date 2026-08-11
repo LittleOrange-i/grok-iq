@@ -1,0 +1,394 @@
+import { type ComponentProps, useMemo, useState } from 'react'
+import { Code2, ExternalLink, Eye, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+
+const RAW_HTML_START =
+  /^\s*(?:<\?xml[\s\S]*?\?>\s*)?<(?:!doctype\s+html|html|head|body|main|div|section|article|aside|header|footer|nav|form|table|svg|canvas|style|script)\b/i
+
+export function MarkdownView({
+  content,
+  className,
+  codeBlockClassName,
+}: {
+  content: string
+  className?: string
+  codeBlockClassName?: string
+}) {
+  const preClassName = cn(
+    'my-3 rounded-lg border bg-white p-4 text-xs leading-5 text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100 [&_code]:rounded-none [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit',
+    !codeBlockClassName && 'max-h-[28rem] overflow-auto overscroll-contain'
+  )
+  return (
+    <div className={cn('prose-monitor min-w-0 break-words', className)}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ ...props }) => (
+            <a {...props} target='_blank' rel='noreferrer' />
+          ),
+          code: ({ className: codeClass, children, ...props }) => (
+            <code
+              className={cn(
+                'rounded bg-muted px-1 py-0.5 font-mono text-[.9em]',
+                codeClass
+              )}
+              {...props}
+            >
+              {children}
+            </code>
+          ),
+          pre: ({ children }) => (
+            <pre className={cn(preClassName, codeBlockClassName)}>
+              {children}
+            </pre>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+export function SourceCodeView({
+  content,
+  className,
+}: {
+  content: string
+  className?: string
+}) {
+  return (
+    <pre
+      className={cn(
+        'm-0 min-w-0 bg-zinc-950 p-4 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-zinc-100',
+        className
+      )}
+    >
+      <code className='bg-transparent p-0 text-inherit'>{content}</code>
+    </pre>
+  )
+}
+
+export function extractHtmlPreviews(content: string): string[] {
+  const values = Array.from(
+    content.matchAll(/```(?:html|htm|svg)\s*\r?\n([\s\S]*?)```/gi)
+  )
+    .map((match) => match[1].trim())
+    .filter(Boolean)
+  if (values.length) return values
+
+  if (/<!doctype html|<html[\s>]/i.test(content)) {
+    const start = content.search(/<!doctype html|<html[\s>]/i)
+    const end = content.toLowerCase().lastIndexOf('</html>')
+    return [content.slice(start, end >= 0 ? end + 7 : undefined).trim()]
+  }
+
+  const svgValues = Array.from(
+    content.matchAll(/<svg\b[\s\S]*?<\/svg>/gi)
+  ).map((match) => match[0].trim())
+  if (svgValues.length) return svgValues
+
+  const trimmed = content.trim()
+  return RAW_HTML_START.test(trimmed) ? [trimmed] : []
+}
+
+export function buildHtmlDocument(html: string) {
+  // The task response is evidence: altering it before preview makes the rendered
+  // result differ from the stored upstream output. Isolation belongs to the
+  // sandboxed iframe below, while the HTML/CSS/JS source remains intact.
+  const source = html.trim()
+  const embeddableSource = source.replace(/^\s*<\?xml[\s\S]*?\?>\s*/i, '')
+  return /<!doctype html|<html[\s>]/i.test(source)
+    ? source
+    : `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${embeddableSource}</body></html>`
+}
+
+function openHtmlDocument(htmlDocument: string) {
+  const escaped = htmlDocument
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  // A blob document inherits this application's origin. Keep generated HTML
+  // inside a sandboxed srcdoc iframe so a preview opened in a new tab cannot
+  // read the administrator JWT or other browser-origin state.
+  const previewShell = [
+    '<!doctype html><html><head><meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<style>html,body,iframe{box-sizing:border-box;width:100%;height:100%;',
+    'margin:0;border:0}body{overflow:hidden;background:#fff}</style>',
+    '</head><body><iframe title="HTML preview" ',
+    'sandbox="allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock" ',
+    `srcdoc="${escaped}"></iframe></body></html>`,
+  ].join('')
+  const url = URL.createObjectURL(
+    new Blob([previewShell], { type: 'text/html;charset=utf-8' })
+  )
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.target = '_blank'
+  anchor.rel = 'noopener noreferrer'
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+export function FormattedContentRenderer({
+  content,
+  className,
+  emptyText = '尚未填写内容',
+}: {
+  content: string
+  className?: string
+  emptyText?: string
+}) {
+  const previews = useMemo(() => extractHtmlPreviews(content), [content])
+  const html = previews[0]
+  const htmlDocument = useMemo(
+    () => (html ? buildHtmlDocument(html) : ''),
+    [html]
+  )
+
+  return (
+    <div
+      className={cn(
+        'min-h-72 overflow-hidden rounded-lg border bg-background',
+        className
+      )}
+    >
+      {html ? (
+        <iframe
+          title='HTML preview'
+          sandbox='allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock'
+          srcDoc={htmlDocument}
+          className='size-full border-0 bg-white'
+        />
+      ) : content.trim() ? (
+        <div className='size-full overflow-auto overscroll-contain p-5'>
+          <MarkdownView content={content} />
+        </div>
+      ) : (
+        <div className='flex size-full items-center justify-center p-6 text-sm text-muted-foreground'>
+          {emptyText}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type FormattedContentPreviewButtonProps = {
+  content: string
+  expectedImageUrl?: string
+  label?: string
+  title?: string
+  iconOnly?: boolean
+  showWhenEmpty?: boolean
+  className?: string
+  variant?: ComponentProps<typeof Button>['variant']
+}
+
+export function FormattedContentPreviewButton({
+  content,
+  expectedImageUrl,
+  label = '预览内容',
+  title = '内容预览',
+  iconOnly = false,
+  showWhenEmpty = false,
+  className,
+  variant = 'outline',
+}: FormattedContentPreviewButtonProps) {
+  const [open, setOpen] = useState(false)
+  const hasContent = Boolean(content.trim())
+  if (!hasContent && !showWhenEmpty) return null
+
+  const trigger = (
+    <Button
+      type='button'
+      size={iconOnly ? 'icon' : 'sm'}
+      variant={variant}
+      className={className}
+      onClick={() => setOpen(true)}
+      disabled={!hasContent}
+      aria-label={label}
+    >
+      <Eye />
+      {!iconOnly && label}
+    </Button>
+  )
+
+  return (
+    <>
+      {iconOnly ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        trigger
+      )}
+      {open && (
+        <FormattedContentPreviewDialog
+          open
+          onOpenChange={setOpen}
+          content={content}
+          expectedImageUrl={expectedImageUrl}
+          title={title}
+        />
+      )}
+    </>
+  )
+}
+
+export function HtmlPreviewButton({
+  content,
+  expectedImageUrl,
+}: {
+  content: string
+  expectedImageUrl?: string
+}) {
+  const previews = useMemo(() => extractHtmlPreviews(content), [content])
+  if (!previews.length) return null
+  return (
+    <FormattedContentPreviewButton
+      content={content}
+      expectedImageUrl={expectedImageUrl}
+      label='预览 HTML'
+      title='HTML 预览'
+    />
+  )
+}
+
+function FormattedContentPreviewDialog({
+  open,
+  onOpenChange,
+  content,
+  expectedImageUrl,
+  title,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  content: string
+  expectedImageUrl?: string
+  title: string
+}) {
+  const previews = useMemo(() => extractHtmlPreviews(content), [content])
+  const [index, setIndex] = useState(0)
+  const isHtml = previews.length > 0
+  const selectedIndex = Math.min(index, Math.max(previews.length - 1, 0))
+  const source = isHtml ? (previews[selectedIndex] ?? '') : content
+  const htmlDocument = useMemo(
+    () => (isHtml ? buildHtmlDocument(source) : ''),
+    [isHtml, source]
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
+      >
+        <Tabs defaultValue='preview' className='flex h-full min-h-0 flex-col'>
+          <div className='flex shrink-0 flex-wrap items-center gap-3 border-b bg-background px-4 py-3'>
+            <div className='min-w-0 font-medium'>{title}</div>
+            <TabsList>
+              <TabsTrigger value='preview'>
+                <Eye className='size-4' />
+                {isHtml ? '预览' : '渲染'}
+              </TabsTrigger>
+              <TabsTrigger value='source'>
+                <Code2 className='size-4' />
+                源码
+              </TabsTrigger>
+            </TabsList>
+            {previews.length > 1 && (
+              <div className='flex gap-1'>
+                {previews.map((_, item) => (
+                  <Button
+                    key={item}
+                    type='button'
+                    size='sm'
+                    variant={item === selectedIndex ? 'default' : 'outline'}
+                    onClick={() => setIndex(item)}
+                  >
+                    HTML {item + 1}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {isHtml && (
+              <Button
+                className='ms-auto'
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={() => openHtmlDocument(htmlDocument)}
+              >
+                <ExternalLink />
+                新窗口
+              </Button>
+            )}
+            <Button
+              className={cn(!isHtml && 'ms-auto')}
+              type='button'
+              size='icon'
+              variant='ghost'
+              onClick={() => onOpenChange(false)}
+              aria-label='关闭预览'
+            >
+              <X />
+            </Button>
+          </div>
+          <div
+            className={cn(
+              'grid min-h-0 flex-1',
+              expectedImageUrl &&
+                'grid-rows-[minmax(0,2fr)_minmax(10rem,1fr)] lg:grid-cols-2 lg:grid-rows-1'
+            )}
+          >
+            <div className='relative min-h-0 border-r'>
+              <TabsContent value='preview' className='absolute inset-0 m-0'>
+                {isHtml ? (
+                  <iframe
+                    title='HTML preview'
+                    sandbox='allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock'
+                    srcDoc={htmlDocument}
+                    className='size-full border-0 bg-white'
+                  />
+                ) : (
+                  <div className='size-full overflow-auto overscroll-contain bg-background p-6'>
+                    <MarkdownView content={content} />
+                  </div>
+                )}
+              </TabsContent>
+              <TabsContent
+                value='source'
+                className='absolute inset-0 m-0 overflow-auto bg-zinc-950'
+              >
+                <SourceCodeView content={source} className='min-h-full' />
+              </TabsContent>
+            </div>
+            {expectedImageUrl && (
+              <div className='min-h-0 overflow-auto bg-muted/30 p-4'>
+                <div className='mb-3 text-sm font-medium'>参考效果图</div>
+                <img
+                  src={expectedImageUrl}
+                  alt='参考效果'
+                  className='mx-auto max-h-[calc(100dvh-7rem)] rounded-lg border bg-white object-contain'
+                />
+              </div>
+            )}
+          </div>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  )
+}

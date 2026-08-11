@@ -1,0 +1,1806 @@
+import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  CalendarClock,
+  CircleHelp,
+  Clock3,
+  Copy,
+  Edit3,
+  Eye,
+  History,
+  Layers3,
+  ListChecks,
+  Play,
+  Plus,
+  RefreshCw,
+  Route,
+  Save,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  api,
+  type EgressNode,
+  type ExecutionMode,
+  type ProbePlan,
+  type ProbeProfile,
+  type RuntimeSettings,
+  type ScheduleExecution,
+  type SchedulerJob,
+} from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
+import { cn, formatDate, getErrorMessage } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
+import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { SelectionToolbar } from '@/components/selection-toolbar'
+import { AccountMultiSelect } from '@/features/monitor/components/account-multi-select'
+import { ProfileMultiSelect } from '@/features/monitor/components/profile-multi-select'
+
+type CronView = 'plans' | 'system' | 'history'
+
+type SchedulerSettingsForm = Pick<
+  RuntimeSettings,
+  | 'schedulerEnabled'
+  | 'schedulerTimezone'
+  | 'schedulerMisfireGraceSeconds'
+  | 'recoveryCron'
+>
+
+export function PlansPage() {
+  const client = useQueryClient()
+  const plans = useQuery({
+    queryKey: ['plans'],
+    queryFn: api.plans,
+    refetchInterval: 10_000,
+  })
+  const profiles = useQuery({ queryKey: ['profiles'], queryFn: api.profiles })
+  const egress = useQuery({
+    queryKey: ['egress'],
+    queryFn: () => api.egress({ pageSize: 500 }),
+  })
+  const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  const scheduler = useQuery({
+    queryKey: ['scheduler'],
+    queryFn: api.scheduler,
+    refetchInterval: 10_000,
+  })
+  const [activeView, setActiveView] = useState<CronView>('plans')
+  const [editingPlan, setEditingPlan] = useState<ProbePlan | 'new' | null>(null)
+  const [viewingPlan, setViewingPlan] = useState<ProbePlan | null>(null)
+  const [deletingPlan, setDeletingPlan] = useState<ProbePlan | null>(null)
+  const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([])
+  const [selectedExecutionIds, setSelectedExecutionIds] = useState<string[]>(
+    []
+  )
+  const [schedulerForm, setSchedulerForm] =
+    useState<SchedulerSettingsForm | null>(null)
+  const [bulkRunOpen, setBulkRunOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeleteExecutionsOpen, setBulkDeleteExecutionsOpen] =
+    useState(false)
+  const planItems = useMemo(() => plans.data ?? [], [plans.data])
+  const executions = useMemo(
+    () => scheduler.data?.executions ?? [],
+    [scheduler.data?.executions]
+  )
+  const systemJobs = scheduler.data?.systemJobs ?? []
+  const planIdSet = useMemo(
+    () => new Set(planItems.map((plan) => plan.id)),
+    [planItems]
+  )
+  const planById = useMemo(
+    () => new Map(planItems.map((plan) => [plan.id, plan])),
+    [planItems]
+  )
+  const executionIdSet = useMemo(
+    () => new Set(executions.map((execution) => execution.id)),
+    [executions]
+  )
+  const selectedPlans = planItems.filter((plan) =>
+    selectedPlanIds.includes(plan.id)
+  )
+  const allPlansSelected =
+    planItems.length > 0 && selectedPlans.length === planItems.length
+  const selectedExecutions = executions.filter((execution) =>
+    selectedExecutionIds.includes(execution.id)
+  )
+  const allExecutionsSelected =
+    executions.length > 0 && selectedExecutions.length === executions.length
+
+  useEffect(() => {
+    // Keep selection aligned with the latest server-side plan list.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedPlanIds((current) => {
+      const next = current.filter((id) => planIdSet.has(id))
+      return next.length === current.length ? current : next
+    })
+  }, [planIdSet])
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedExecutionIds((current) => {
+      const next = current.filter((id) => executionIdSet.has(id))
+      return next.length === current.length ? current : next
+    })
+  }, [executionIdSet])
+
+  useEffect(() => {
+    if (!settings.data) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSchedulerForm(toSchedulerSettingsForm(settings.data))
+  }, [settings.data])
+
+  const mutation = useMutation({
+    mutationFn: async ({
+      action,
+      id,
+    }: {
+      action: 'run' | 'delete'
+      id: string
+    }) => {
+      if (action === 'run') return api.runPlan(id)
+      await api.deletePlan(id)
+      return undefined
+    },
+    onSuccess: (result, variables) => {
+      if (variables.action === 'run') {
+        const created = Number(result?.created ?? 0)
+        const restoreBlocked = Array.isArray(result?.restoreBlockedAccountIds)
+          ? result.restoreBlockedAccountIds.length
+          : 0
+        if (created > 0) {
+          toast.success(
+            restoreBlocked
+              ? `已加入 ${created} 个任务，${restoreBlocked} 个账号等待原设置同步`
+              : `已加入 ${created} 个任务`
+          )
+        } else {
+          toast.warning(
+            restoreBlocked
+              ? `${restoreBlocked} 个账号等待原设置同步`
+              : '本次未创建新任务'
+          )
+        }
+      } else {
+        toast.success('计划已删除')
+        setDeletingPlan(null)
+        setSelectedPlanIds((current) =>
+          current.filter((id) => id !== variables.id)
+        )
+      }
+      void client.invalidateQueries({ queryKey: ['plans'] })
+      void client.invalidateQueries({ queryKey: ['runs'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const bulkRunMutation = useMutation({
+    mutationFn: api.runPlans,
+    onSuccess: (result) => {
+      setBulkRunOpen(false)
+      const message = [`已加入 ${result.created} 个任务`]
+      if (result.failed) message.push(`${result.failed} 个计划执行失败`)
+      if (result.restoreBlocked) {
+        message.push(`${result.restoreBlocked} 个账号等待原设置同步`)
+      }
+      if (result.failed || result.restoreBlocked) {
+        toast.warning(message.join('，'))
+      } else {
+        toast.success(message.join('，'))
+      }
+      void client.invalidateQueries({ queryKey: ['plans'] })
+      void client.invalidateQueries({ queryKey: ['runs'] })
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const bulkDeleteMutation = useMutation({
+    mutationFn: api.deletePlans,
+    onSuccess: (result) => {
+      setBulkDeleteOpen(false)
+      setSelectedPlanIds(result.activeIds ?? [])
+      if (result.active) {
+        toast.warning(
+          `已删除 ${result.deleted} 个计划；${result.active} 个计划仍有排队或执行任务，已跳过并保留选择`
+        )
+      } else {
+        toast.success(`已删除 ${result.deleted} 个计划`)
+      }
+      void client.invalidateQueries({ queryKey: ['plans'] })
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const togglePlanMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.setPlanEnabled(id, enabled),
+    onMutate: async ({ id, enabled }) => {
+      await client.cancelQueries({ queryKey: ['plans'] })
+      const previous = client.getQueryData<ProbePlan[]>(['plans'])
+      client.setQueryData<ProbePlan[]>(['plans'], (current) =>
+        current?.map((plan) =>
+          plan.id === id
+            ? { ...plan, enabled, job: enabled ? plan.job : null }
+            : plan
+        )
+      )
+      return { previous }
+    },
+    onSuccess: (_result, { enabled }) => {
+      toast.success(enabled ? '计划已启用' : '计划已停用')
+    },
+    onError: (error, _variables, context) => {
+      if (context?.previous) {
+        client.setQueryData(['plans'], context.previous)
+      }
+      toast.error(getErrorMessage(error))
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['plans'] })
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+  })
+  const saveSchedulerMutation = useMutation({
+    mutationFn: () => {
+      if (!schedulerForm) throw new Error('Scheduler 设置尚未加载')
+      if (!schedulerForm.schedulerTimezone.trim()) {
+        throw new Error('请填写默认时区')
+      }
+      if (!schedulerForm.recoveryCron.trim()) {
+        throw new Error('请填写隔离恢复 Cron')
+      }
+      if (
+        !Number.isFinite(schedulerForm.schedulerMisfireGraceSeconds) ||
+        schedulerForm.schedulerMisfireGraceSeconds < 1 ||
+        schedulerForm.schedulerMisfireGraceSeconds > 86400
+      ) {
+        throw new Error('Misfire 宽限必须在 1 到 86400 秒之间')
+      }
+      return api.updateSettings({
+        ...schedulerForm,
+        schedulerTimezone: schedulerForm.schedulerTimezone.trim(),
+        recoveryCron: schedulerForm.recoveryCron.trim(),
+      })
+    },
+    onSuccess: (value) => {
+      client.setQueryData(['settings'], value)
+      setSchedulerForm(toSchedulerSettingsForm(value))
+      toast.success('Scheduler 设置已保存并热应用')
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+      void client.invalidateQueries({ queryKey: ['plans'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const deleteExecutionMutation = useMutation({
+    mutationFn: api.deleteSchedulerExecution,
+    onSuccess: (_value, executionId) => {
+      toast.success('调用记录已删除')
+      setSelectedExecutionIds((current) =>
+        current.filter((id) => id !== executionId)
+      )
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const bulkDeleteExecutionsMutation = useMutation({
+    mutationFn: api.deleteSchedulerExecutions,
+    onSuccess: (result) => {
+      setBulkDeleteExecutionsOpen(false)
+      setSelectedExecutionIds(result.runningIds ?? [])
+      if (result.running) {
+        toast.warning(
+          `已删除 ${result.deleted} 条记录；${result.running} 条仍在执行，已跳过并保留选择`
+        )
+      } else {
+        toast.success(`已删除 ${result.deleted} 条调用记录`)
+      }
+      void client.invalidateQueries({ queryKey: ['scheduler'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const bulkPending = bulkRunMutation.isPending || bulkDeleteMutation.isPending
+  const executionBusy =
+    deleteExecutionMutation.isPending || bulkDeleteExecutionsMutation.isPending
+
+  const togglePlanSelection = (id: string, checked: boolean) => {
+    setSelectedPlanIds((current) =>
+      checked
+        ? current.includes(id)
+          ? current
+          : [...current, id]
+        : current.filter((value) => value !== id)
+    )
+  }
+
+  const toggleExecutionSelection = (id: string, checked: boolean) => {
+    setSelectedExecutionIds((current) =>
+      checked
+        ? current.includes(id)
+          ? current
+          : [...current, id]
+        : current.filter((value) => value !== id)
+    )
+  }
+
+  if (plans.isLoading || profiles.isLoading)
+    return (
+      <Page>
+        <LoadingState />
+      </Page>
+    )
+  return (
+    <Page>
+      <PageHeader
+        title='Cron 调度'
+        description='集中管理探针计划、系统 Cron 设置和每次调度调用记录。'
+        actions={
+          activeView === 'plans' ? (
+            <>
+              <ActionToolbar label='Cron 计划操作'>
+                <ToolbarAction
+                  label='刷新 Cron 计划'
+                  pending={plans.isFetching}
+                  onClick={() => void plans.refetch()}
+                >
+                  <RefreshCw />
+                </ToolbarAction>
+                <ToolbarAction
+                  label={allPlansSelected ? '取消全选计划' : '全选全部计划'}
+                  active={allPlansSelected}
+                  disabled={planItems.length === 0 || bulkPending}
+                  onClick={() =>
+                    setSelectedPlanIds(
+                      allPlansSelected ? [] : planItems.map((plan) => plan.id)
+                    )
+                  }
+                >
+                  <ListChecks />
+                </ToolbarAction>
+                <ToolbarAction
+                  label='新建 Cron 计划'
+                  disabled={bulkPending}
+                  onClick={() => setEditingPlan('new')}
+                >
+                  <Plus />
+                </ToolbarAction>
+              </ActionToolbar>
+              <SelectionToolbar
+                selectedCount={selectedPlanIds.length}
+                entityLabel='计划'
+                disabled={bulkPending}
+                onClear={() => setSelectedPlanIds([])}
+              >
+                <ToolbarAction
+                  label={`立即运行 ${selectedPlanIds.length} 个计划`}
+                  disabled={bulkPending}
+                  pending={bulkRunMutation.isPending}
+                  onClick={() => setBulkRunOpen(true)}
+                >
+                  <Play />
+                </ToolbarAction>
+                <ToolbarAction
+                  label={`删除 ${selectedPlanIds.length} 个计划`}
+                  destructive
+                  disabled={bulkPending}
+                  pending={bulkDeleteMutation.isPending}
+                  onClick={() => setBulkDeleteOpen(true)}
+                >
+                  <Trash2 />
+                </ToolbarAction>
+              </SelectionToolbar>
+            </>
+          ) : activeView === 'system' ? (
+            <ActionToolbar label='系统 Cron 操作'>
+              <ToolbarAction
+                label='刷新系统 Cron 状态'
+                pending={settings.isFetching || scheduler.isFetching}
+                onClick={() => {
+                  void settings.refetch()
+                  void scheduler.refetch()
+                }}
+              >
+                <RefreshCw />
+              </ToolbarAction>
+              <ToolbarAction
+                label='保存并热应用系统 Cron 设置'
+                disabled={!schedulerForm}
+                pending={saveSchedulerMutation.isPending}
+                onClick={() => saveSchedulerMutation.mutate()}
+              >
+                <Save />
+              </ToolbarAction>
+            </ActionToolbar>
+          ) : (
+            <>
+              <ActionToolbar label='调用记录操作'>
+                <ToolbarAction
+                  label='刷新调用记录'
+                  pending={scheduler.isFetching}
+                  onClick={() => void scheduler.refetch()}
+                >
+                  <RefreshCw />
+                </ToolbarAction>
+                <ToolbarAction
+                  label={allExecutionsSelected ? '取消全选记录' : '全选记录'}
+                  active={allExecutionsSelected}
+                  disabled={executions.length === 0 || executionBusy}
+                  onClick={() =>
+                    setSelectedExecutionIds(
+                      allExecutionsSelected
+                        ? []
+                        : executions.map((execution) => execution.id)
+                    )
+                  }
+                >
+                  <ListChecks />
+                </ToolbarAction>
+              </ActionToolbar>
+              <SelectionToolbar
+                selectedCount={selectedExecutionIds.length}
+                entityLabel='调用记录'
+                disabled={executionBusy}
+                onClear={() => setSelectedExecutionIds([])}
+              >
+                <ToolbarAction
+                  label={`删除 ${selectedExecutionIds.length} 条调用记录`}
+                  destructive
+                  disabled={executionBusy}
+                  pending={bulkDeleteExecutionsMutation.isPending}
+                  onClick={() => setBulkDeleteExecutionsOpen(true)}
+                >
+                  <Trash2 />
+                </ToolbarAction>
+              </SelectionToolbar>
+            </>
+          )
+        }
+      />
+      <Tabs
+        value={activeView}
+        onValueChange={(value) => setActiveView(value as CronView)}
+        className='gap-4'
+      >
+        <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+          <TabsTrigger value='plans'>
+            <CalendarClock />
+            计划
+            <Badge variant='secondary'>{planItems.length}</Badge>
+          </TabsTrigger>
+          <TabsTrigger value='system'>
+            <Clock3 />
+            系统 Cron
+          </TabsTrigger>
+          <TabsTrigger value='history'>
+            <History />
+            调用记录
+            <Badge variant='secondary'>{executions.length}</Badge>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value='plans' className='mt-0'>
+          <div className='grid gap-4 lg:grid-cols-2'>
+            {plans.data?.map((plan) => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                profiles={profiles.data ?? []}
+                selected={selectedPlanIds.includes(plan.id)}
+                pending={
+                  mutation.isPending ||
+                  bulkPending ||
+                  (togglePlanMutation.isPending &&
+                    togglePlanMutation.variables?.id === plan.id)
+                }
+                onSelectedChange={(checked) =>
+                  togglePlanSelection(plan.id, checked)
+                }
+                onView={() => setViewingPlan(plan)}
+                onEdit={() => setEditingPlan(plan)}
+                onEnabledChange={(enabled) =>
+                  togglePlanMutation.mutate({ id: plan.id, enabled })
+                }
+                onRun={() => mutation.mutate({ action: 'run', id: plan.id })}
+                onDelete={() => setDeletingPlan(plan)}
+              />
+            ))}
+            {!plans.data?.length && (
+              <div className='lg:col-span-2'>
+                <EmptyState
+                  title='暂无 Cron 计划'
+                  description='创建计划并选择具体账号、轮数、上游调度或固定出口。'
+                />
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value='system' className='mt-0'>
+          <SystemCronPanel
+            form={schedulerForm}
+            loading={settings.isLoading}
+            error={settings.error}
+            running={scheduler.data?.running === true}
+            enabled={scheduler.data?.enabled === true}
+            jobs={systemJobs}
+            disabled={saveSchedulerMutation.isPending}
+            onChange={setSchedulerForm}
+          />
+        </TabsContent>
+
+        <TabsContent value='history' className='mt-0'>
+          <ExecutionHistory
+            executions={executions}
+            planById={planById}
+            selectedIds={selectedExecutionIds}
+            busy={executionBusy}
+            loading={scheduler.isLoading}
+            error={scheduler.error}
+            onSelectedChange={toggleExecutionSelection}
+            onViewPlan={setViewingPlan}
+            onDelete={(id) => deleteExecutionMutation.mutate(id)}
+          />
+        </TabsContent>
+      </Tabs>
+      {editingPlan && (
+        <PlanDialog
+          key={editingPlan === 'new' ? 'new' : editingPlan.id}
+          open
+          value={editingPlan}
+          profiles={profiles.data ?? []}
+          egress={egress.data?.items ?? []}
+          onOpenChange={(open) => !open && setEditingPlan(null)}
+          onSaved={() => {
+            setEditingPlan(null)
+            void client.invalidateQueries({ queryKey: ['plans'] })
+          }}
+        />
+      )}
+      {viewingPlan && (
+        <PlanDetailDialog
+          open
+          plan={viewingPlan}
+          profiles={profiles.data ?? []}
+          onOpenChange={(open) => !open && setViewingPlan(null)}
+        />
+      )}
+      <ConfirmDialog
+        open={deletingPlan != null}
+        onOpenChange={(open) =>
+          !mutation.isPending && !open && setDeletingPlan(null)
+        }
+        title='删除 Cron 计划？'
+        desc={
+          <>
+            将删除「{deletingPlan?.name}」。历史任务和样本继续保留；仍有排队或执行任务时会保留计划。
+          </>
+        }
+        confirmText={
+          <>
+            <Trash2 />
+            删除计划
+          </>
+        }
+        cancelBtnText='取消'
+        destructive
+        isLoading={mutation.isPending}
+        disabled={!deletingPlan}
+        handleConfirm={() => {
+          if (deletingPlan) {
+            mutation.mutate({ action: 'delete', id: deletingPlan.id })
+          }
+        }}
+      />
+      <ConfirmDialog
+        open={bulkRunOpen}
+        onOpenChange={(open) =>
+          !bulkRunMutation.isPending && setBulkRunOpen(open)
+        }
+        title={`立即运行 ${selectedPlanIds.length} 个 Cron 计划？`}
+        desc='每个计划会按自己的账号、方案、出口和重叠策略创建任务；超出队列容量或已有重叠任务时会自动跳过。'
+        confirmText={
+          <>
+            <Play />
+            立即运行
+          </>
+        }
+        cancelBtnText='取消'
+        isLoading={bulkRunMutation.isPending}
+        disabled={selectedPlanIds.length === 0}
+        handleConfirm={() => bulkRunMutation.mutate(selectedPlanIds)}
+      />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) =>
+          !bulkDeleteMutation.isPending && setBulkDeleteOpen(open)
+        }
+        title={`删除 ${selectedPlanIds.length} 个 Cron 计划？`}
+        desc='仅删除计划本身；历史任务和样本继续保留。仍有排队或执行任务的计划会自动跳过。'
+        confirmText={
+          <>
+            <Trash2 />
+            删除计划
+          </>
+        }
+        cancelBtnText='取消'
+        destructive
+        isLoading={bulkDeleteMutation.isPending}
+        disabled={selectedPlanIds.length === 0}
+        handleConfirm={() => bulkDeleteMutation.mutate(selectedPlanIds)}
+      />
+      <ConfirmDialog
+        open={bulkDeleteExecutionsOpen}
+        onOpenChange={(open) =>
+          !bulkDeleteExecutionsMutation.isPending &&
+          setBulkDeleteExecutionsOpen(open)
+        }
+        title={`删除 ${selectedExecutionIds.length} 条调用记录？`}
+        desc='调用记录只保存 Cron 触发和入队结果，不影响计划、探针任务或样本；仍在执行的记录会自动跳过。'
+        confirmText={
+          <>
+            <Trash2 />
+            删除记录
+          </>
+        }
+        cancelBtnText='取消'
+        destructive
+        isLoading={bulkDeleteExecutionsMutation.isPending}
+        disabled={selectedExecutionIds.length === 0}
+        handleConfirm={() =>
+          bulkDeleteExecutionsMutation.mutate(selectedExecutionIds)
+        }
+      />
+    </Page>
+  )
+}
+
+function SystemCronPanel({
+  form,
+  loading,
+  error,
+  running,
+  enabled,
+  jobs,
+  disabled,
+  onChange,
+}: {
+  form: SchedulerSettingsForm | null
+  loading: boolean
+  error: Error | null
+  running: boolean
+  enabled: boolean
+  jobs: SchedulerJob[]
+  disabled: boolean
+  onChange: (value: SchedulerSettingsForm) => void
+}) {
+  if (loading) return <LoadingState label='正在加载系统 Cron 设置' />
+  if (error) {
+    return (
+      <EmptyState
+        title='系统 Cron 设置加载失败'
+        description={getErrorMessage(error)}
+      />
+    )
+  }
+  if (!form) return null
+
+  const set = <K extends keyof SchedulerSettingsForm>(
+    key: K,
+    value: SchedulerSettingsForm[K]
+  ) => onChange({ ...form, [key]: value })
+
+  return (
+    <div className='space-y-4'>
+      <section className='overflow-hidden rounded-lg border'>
+        <div className='flex flex-wrap items-start justify-between gap-3 border-b bg-muted/20 px-4 py-3'>
+          <div>
+            <h2 className='text-sm font-semibold'>Scheduler 运行状态</h2>
+            <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+              计划 Cron 和系统恢复 Cron 共用该调度器；手动探针不受其开关影响。
+            </p>
+          </div>
+          <Badge
+            variant={running ? 'success' : enabled ? 'warning' : 'secondary'}
+          >
+            {running ? '运行中' : enabled ? '等待启动' : '已停用'}
+          </Badge>
+        </div>
+        <div className='grid gap-3 p-4 sm:grid-cols-3'>
+          <Info label='调度器' value={enabled ? '启用' : '停用'} />
+          <Info label='默认时区' value={form.schedulerTimezone || '—'} />
+          <Info label='系统任务' value={`${jobs.length} 个`} />
+        </div>
+        <div className='divide-y border-t'>
+          {jobs.length ? (
+            jobs.map((job) => (
+              <div
+                key={job.id}
+                className='flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm'
+              >
+                <div className='min-w-48 flex-1'>
+                  <div className='font-medium'>{job.name}</div>
+                  <div className='mt-0.5 font-mono text-xs text-muted-foreground'>
+                    {job.id}
+                  </div>
+                </div>
+                <div className='text-xs text-muted-foreground'>
+                  下次执行 {formatDate(job.nextRunAt)}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className='px-4 py-3 text-sm text-muted-foreground'>
+              {enabled
+                ? '当前未注册系统 Cron Job，请刷新状态或检查调度器运行情况。'
+                : '启用并保存 Scheduler 后，系统 Cron Job 会在这里显示。'}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className='rounded-lg border p-4'>
+        <div className='mb-4'>
+          <h2 className='text-sm font-semibold'>系统 Cron 设置</h2>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            系统 Cron 只恢复到期的暂时停用账号，不会恢复账号列表中的人工批量停用。
+          </p>
+        </div>
+        <div className='space-y-4'>
+          <div className='flex items-center justify-between gap-4 rounded-lg border px-3 py-3'>
+            <div>
+              <div className='text-sm font-medium'>启用调度器</div>
+              <div className='mt-1 text-xs leading-5 text-muted-foreground'>
+                关闭后暂停所有计划和系统 Cron Job，手动探针仍可加入队列
+              </div>
+            </div>
+            <Switch
+              checked={form.schedulerEnabled}
+              disabled={disabled}
+              onCheckedChange={(value) => set('schedulerEnabled', value)}
+              aria-label='启用调度器'
+            />
+          </div>
+          <div className='grid gap-4 sm:grid-cols-2'>
+            <Field label='默认时区'>
+              <Input
+                value={form.schedulerTimezone}
+                disabled={disabled}
+                onChange={(event) =>
+                  set('schedulerTimezone', event.target.value)
+                }
+                placeholder='UTC'
+              />
+            </Field>
+            <Field label='Misfire 宽限（秒）'>
+              <Input
+                type='number'
+                min={1}
+                max={86400}
+                value={form.schedulerMisfireGraceSeconds}
+                disabled={disabled}
+                onChange={(event) =>
+                  set(
+                    'schedulerMisfireGraceSeconds',
+                    Number(event.target.value)
+                  )
+                }
+              />
+            </Field>
+            <Field
+              label='隔离恢复 Cron'
+              hint='标准五段 Cron，例如 */5 * * * *'
+              className='sm:col-span-2'
+              action={
+                <CronExpressionHelp
+                  onSelect={(value) => set('recoveryCron', value)}
+                />
+              }
+            >
+              <Input
+                value={form.recoveryCron}
+                disabled={disabled}
+                onChange={(event) => set('recoveryCron', event.target.value)}
+                className='font-mono'
+              />
+            </Field>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function ExecutionHistory({
+  executions,
+  planById,
+  selectedIds,
+  busy,
+  loading,
+  error,
+  onSelectedChange,
+  onViewPlan,
+  onDelete,
+}: {
+  executions: ScheduleExecution[]
+  planById: Map<string, ProbePlan>
+  selectedIds: string[]
+  busy: boolean
+  loading: boolean
+  error: Error | null
+  onSelectedChange: (id: string, checked: boolean) => void
+  onViewPlan: (plan: ProbePlan) => void
+  onDelete: (id: string) => void
+}) {
+  if (loading) return <LoadingState label='正在加载 Cron 调用记录' />
+  if (error) {
+    return (
+      <EmptyState
+        title='调用记录加载失败'
+        description={getErrorMessage(error)}
+      />
+    )
+  }
+  if (!executions.length) {
+    return (
+      <EmptyState
+        title='暂无调用记录'
+        description='Cron 计划或系统任务首次触发后，会在这里显示入队、跳过、恢复或错误结果。'
+      />
+    )
+  }
+
+  return (
+    <section className='overflow-hidden rounded-lg border'>
+      <div className='border-b bg-muted/20 px-4 py-3'>
+        <h2 className='text-sm font-semibold'>最近 100 次调用</h2>
+        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+          计划调用可直接打开对应计划详情；计划被删除后仍保留原始调度键和历史结果。
+        </p>
+      </div>
+      <div className='divide-y'>
+        {executions.map((item) => {
+          const plan = getExecutionPlan(item, planById)
+          const title = plan?.name || scheduleName(item.schedule_key)
+          return (
+            <div
+              key={item.id}
+              className={cn(
+                'flex flex-wrap items-center gap-3 px-3 py-3 text-sm transition-colors',
+                selectedIds.includes(item.id) && 'bg-primary/[0.035]'
+              )}
+            >
+              <Checkbox
+                checked={selectedIds.includes(item.id)}
+                disabled={busy}
+                onCheckedChange={(value) =>
+                  onSelectedChange(item.id, value === true)
+                }
+                aria-label={`选择调用记录 ${item.schedule_key}`}
+              />
+              <Badge variant={executionVariant(item.status)}>
+                {executionLabel(item.status)}
+              </Badge>
+              <div className='min-w-44 flex-1'>
+                <div className='font-medium'>{title}</div>
+                <div className='mt-0.5 font-mono text-xs text-muted-foreground'>
+                  {item.schedule_key}
+                </div>
+              </div>
+              <div className='min-w-48 flex-[2] text-muted-foreground'>
+                <div className='truncate' title={item.message}>
+                  {item.message || '—'}
+                </div>
+                <div className='mt-0.5 text-xs'>
+                  {executionDetailSummary(item.detail)}
+                </div>
+              </div>
+              <div className='text-right text-xs text-muted-foreground'>
+                <div>{formatDate(item.started_at)}</div>
+                <div className='mt-0.5'>完成 {formatDate(item.completed_at)}</div>
+              </div>
+              <ActionToolbar label={`${title} 调用记录操作`}>
+                {plan && (
+                  <ToolbarAction
+                    label='查看关联计划详情'
+                    disabled={busy}
+                    onClick={() => onViewPlan(plan)}
+                  >
+                    <Eye />
+                  </ToolbarAction>
+                )}
+                <ToolbarAction
+                  label='删除调用记录'
+                  destructive
+                  disabled={busy || item.status === 'running'}
+                  onClick={() => onDelete(item.id)}
+                >
+                  <Trash2 />
+                </ToolbarAction>
+              </ActionToolbar>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function PlanDetailDialog({
+  open,
+  plan,
+  profiles,
+  onOpenChange,
+}: {
+  open: boolean
+  plan: ProbePlan
+  profiles: ProbeProfile[]
+  onOpenChange: (open: boolean) => void
+}) {
+  const profileIds = getPlanProfileIds(plan)
+  const accountPreview = plan.account_ids.slice(0, 500)
+  const remainingAccounts = plan.account_ids.length - accountPreview.length
+  const profileNames = profileIds.map(
+    (id) => profiles.find((profile) => profile.id === id)?.name || id
+  )
+  const copy = (value: string, label: string) => {
+    void copyText(value)
+      .then(() => toast.success(`${label}已复制`))
+      .catch((error) => toast.error(getErrorMessage(error)))
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='max-h-[88vh] overflow-y-auto sm:max-w-3xl'>
+        <DialogHeader>
+          <DialogTitle>{plan.name}</DialogTitle>
+          <DialogDescription>
+            {plan.description || '未填写计划说明'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className='flex flex-wrap gap-2'>
+          <Badge variant={plan.enabled ? 'success' : 'secondary'}>
+            {plan.enabled ? '启用' : '停用'}
+          </Badge>
+          <Badge variant='outline'>
+            {plan.overlap_policy === 'skip' ? '跳过重叠' : '补足空位'}
+          </Badge>
+          <Badge
+            variant={
+              plan.execution_mode === 'quality_test' ? 'info' : 'outline'
+            }
+          >
+            {plan.execution_mode === 'quality_test' ? '快速质量' : '完整对话'}
+          </Badge>
+        </div>
+
+        <section className='space-y-3'>
+          <h3 className='text-sm font-semibold'>调度与任务</h3>
+          <div className='grid gap-x-6 gap-y-3 sm:grid-cols-2'>
+            <PlanDetailRow
+              label='Cron 表达式'
+              value={plan.cron_expression}
+              mono
+            />
+            <PlanDetailRow label='时区' value={plan.timezone} />
+            <PlanDetailRow
+              label='下次执行'
+              value={formatDate(plan.job?.nextRunAt)}
+            />
+            <PlanDetailRow label='每账号轮数' value={`${plan.rounds} 轮`} />
+            <PlanDetailRow label='任务优先级' value={String(plan.priority)} />
+            <PlanDetailRow
+              label='单次任务上限'
+              value={`${plan.account_ids.length * profileIds.length} 个`}
+            />
+          </div>
+        </section>
+
+        <section className='space-y-3 border-t pt-4'>
+          <h3 className='text-sm font-semibold'>探针方案与出口</h3>
+          <PlanDetailRow
+            label={`探针方案（${profileIds.length}）`}
+            value={profileNames.join('、') || '—'}
+          />
+          <PlanDetailRow
+            label={`出口目标（${plan.proxy_targets.length}）`}
+            value={plan.proxy_targets.map(proxyTargetLabel).join('、') || '—'}
+          />
+        </section>
+
+        <section className='space-y-3 border-t pt-4'>
+          <div className='flex items-center justify-between gap-3'>
+            <h3 className='text-sm font-semibold'>
+              账号（{plan.account_ids.length}）
+            </h3>
+            <ToolbarAction
+              label='复制全部账号 ID'
+              disabled={!plan.account_ids.length}
+              onClick={() => copy(plan.account_ids.join('\n'), '账号 ID')}
+            >
+              <Copy />
+            </ToolbarAction>
+          </div>
+          <div className='max-h-40 overflow-y-auto rounded-lg border bg-muted/20 p-3 font-mono text-xs leading-5 break-all'>
+            {accountPreview.join(', ') || '—'}
+            {remainingAccounts > 0 && (
+              <div className='mt-2 font-sans text-muted-foreground'>
+                还有 {remainingAccounts} 个账号未在预览中展开，可使用复制按钮取得全部 ID。
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className='grid gap-x-6 gap-y-3 border-t pt-4 sm:grid-cols-2'>
+          <PlanDetailRow label='计划 ID' value={plan.id} mono />
+          <PlanDetailRow label='创建时间' value={formatDate(plan.created_at)} />
+          <PlanDetailRow label='更新时间' value={formatDate(plan.updated_at)} />
+        </section>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PlanCard({
+  plan,
+  profiles,
+  selected,
+  pending,
+  onSelectedChange,
+  onView,
+  onEdit,
+  onEnabledChange,
+  onRun,
+  onDelete,
+}: {
+  plan: ProbePlan
+  profiles: ProbeProfile[]
+  selected: boolean
+  pending: boolean
+  onSelectedChange: (checked: boolean) => void
+  onView: () => void
+  onEdit: () => void
+  onEnabledChange: (enabled: boolean) => void
+  onRun: () => void
+  onDelete: () => void
+}) {
+  const selectedProfileIds = getPlanProfileIds(plan)
+  const selectedProfiles = selectedProfileIds.map(
+    (id) => profiles.find((profile) => profile.id === id)?.name || id
+  )
+  return (
+    <Card
+      className={cn(
+        'transition-colors',
+        selected && 'border-primary/40 bg-primary/[0.025]'
+      )}
+    >
+      <CardHeader>
+        <div className='flex items-start gap-3'>
+          <Checkbox
+            checked={selected}
+            disabled={pending}
+            onCheckedChange={(value) => onSelectedChange(value === true)}
+            aria-label={`选择计划 ${plan.name}`}
+            className='mt-3'
+          />
+          <div className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary'>
+            <CalendarClock className='size-5' />
+          </div>
+          <div className='min-w-0 flex-1'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <CardTitle>{plan.name}</CardTitle>
+              <Badge variant={plan.enabled ? 'success' : 'secondary'}>
+                {plan.enabled ? '启用' : '停用'}
+              </Badge>
+              <Badge variant='outline'>
+                {plan.overlap_policy === 'skip' ? '跳过重叠' : '补足空位'}
+              </Badge>
+              <Badge
+                variant={
+                  plan.execution_mode === 'quality_test' ? 'info' : 'outline'
+                }
+              >
+                {plan.execution_mode === 'quality_test'
+                  ? '快速质量'
+                  : '完整对话'}
+              </Badge>
+            </div>
+            <CardDescription className='mt-1'>
+              {plan.description || '未填写说明'}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className='space-y-4'>
+        <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
+          <Info label='账号' value={`${plan.account_ids.length} 个`} />
+          <Info label='出口' value={`${plan.proxy_targets.length} 个`} />
+          <Info label='轮数' value={`${plan.rounds} 轮`} />
+          <Info label='优先级' value={plan.priority} />
+        </div>
+        <div className='rounded-lg border bg-muted/20 p-3'>
+          <div className='flex items-center gap-2 font-mono text-sm'>
+            <Clock3 className='size-4 text-primary' />
+            {plan.cron_expression}
+          </div>
+          <div className='mt-1 text-xs text-muted-foreground'>
+            {plan.timezone} · 下次执行 {formatDate(plan.job?.nextRunAt)}
+          </div>
+        </div>
+        <div className='flex items-start gap-2 text-xs text-muted-foreground'>
+          <Layers3 className='mt-0.5 size-3.5 shrink-0' />
+          <span className='min-w-0'>
+            {selectedProfiles.join('、')} · 每次最多创建{' '}
+            {plan.account_ids.length * selectedProfileIds.length} 个任务
+          </span>
+        </div>
+        <div className='flex justify-end'>
+          <ActionToolbar label={`${plan.name} 操作`}>
+            <div className='flex h-8 shrink-0 items-center gap-2 px-2 text-xs font-medium'>
+              <span>{plan.enabled ? '启用' : '停用'}</span>
+              <Switch
+                checked={plan.enabled}
+                disabled={pending}
+                onCheckedChange={onEnabledChange}
+                aria-label={`${plan.enabled ? '停用' : '启用'}计划 ${plan.name}`}
+              />
+            </div>
+            <ToolbarAction
+              label='查看计划详情'
+              disabled={pending}
+              onClick={onView}
+            >
+              <Eye />
+            </ToolbarAction>
+            <ToolbarAction
+              label='删除计划'
+              destructive
+              disabled={pending}
+              onClick={onDelete}
+            >
+              <Trash2 />
+            </ToolbarAction>
+            <ToolbarAction
+              label='编辑计划'
+              disabled={pending}
+              onClick={onEdit}
+            >
+              <Edit3 />
+            </ToolbarAction>
+            <ToolbarAction
+              label={plan.enabled ? '立即运行计划' : '计划已停用'}
+              disabled={pending || !plan.enabled}
+              onClick={onRun}
+            >
+              <Play />
+            </ToolbarAction>
+          </ActionToolbar>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PlanDialog({
+  open,
+  value,
+  profiles,
+  egress,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean
+  value: ProbePlan | 'new'
+  profiles: ProbeProfile[]
+  egress: EgressNode[]
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const initial = value === 'new' ? null : value
+  const [name, setName] = useState(initial?.name ?? '')
+  const [description, setDescription] = useState(initial?.description ?? '')
+  const [profileIds, setProfileIds] = useState<string[]>(() => {
+    if (initial) return getPlanProfileIds(initial)
+    const fallback =
+      profiles.find(
+        (profile) => profile.id === 'quality-marker' && profile.enabled
+      ) ??
+      profiles.find((profile) => profile.enabled)
+    return fallback ? [fallback.id] : []
+  })
+  const [accountIds, setAccountIds] = useState<number[]>(
+    initial?.account_ids ?? []
+  )
+  const [rounds, setRounds] = useState(initial?.rounds ?? 3)
+  const [cron, setCron] = useState(initial?.cron_expression ?? '15 */6 * * *')
+  const [timezone, setTimezone] = useState(initial?.timezone ?? 'UTC')
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true)
+  const [overlap, setOverlap] = useState<'skip' | 'fill'>(
+    initial?.overlap_policy ?? 'skip'
+  )
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(
+    initial?.execution_mode ?? 'chat'
+  )
+  const [direct, setDirect] = useState(
+    initial?.proxy_targets.some((target) => target.kind === 'direct') ?? true
+  )
+  const [nodes, setNodes] = useState<number[]>(
+    initial?.proxy_targets
+      .filter((target) => target.kind === 'egress')
+      .map((target) => Number(target.id)) ?? []
+  )
+  const selectableEgress = egress.filter(
+    (item) => item.enabled && item.proxyConfigured
+  )
+  const selectableNodeIds = new Set(
+    selectableEgress.map((item) => Number(item.id))
+  )
+  const selectedNodes = nodes.filter((id) => selectableNodeIds.has(id))
+  const profileIdSet = new Set(profiles.map((profile) => profile.id))
+  const selectedProfileIds = profileIds.filter((id) => profileIdSet.has(id))
+  const enabledProfiles = profiles.filter((profile) => profile.enabled)
+  const quickProfile =
+    enabledProfiles.find((profile) => profile.id === 'quality-marker') ??
+    enabledProfiles[0]
+  const effectiveProfileIds =
+    executionMode === 'quality_test'
+      ? quickProfile
+        ? [quickProfile.id]
+        : []
+      : selectedProfileIds
+  const qualityTestAvailable =
+    selectableEgress.length > 0 && quickProfile != null
+  const targetCount =
+    (executionMode === 'chat' && direct ? 1 : 0) + selectedNodes.length
+  const mutation = useMutation({
+    mutationFn: () => {
+      const ids = Array.from(new Set(accountIds.filter((id) => id > 0)))
+      const proxy_targets = [
+        ...(executionMode === 'chat' && direct
+          ? [{ kind: 'direct', id: null }]
+          : []),
+        ...selectedNodes.map((id) => ({ kind: 'egress', id })),
+      ]
+      const body = {
+        name,
+        description,
+        profile_id: effectiveProfileIds[0],
+        profile_ids: effectiveProfileIds,
+        account_ids: ids,
+        proxy_targets,
+        execution_mode: executionMode,
+        rounds,
+        cron_expression: cron,
+        timezone,
+        enabled,
+        overlap_policy: overlap,
+        priority: 200,
+      }
+      if (
+        !name.trim() ||
+        !effectiveProfileIds.length ||
+        !ids.length ||
+        !proxy_targets.length
+      ) {
+        throw new Error(
+          executionMode === 'quality_test'
+            ? '名称、快速质量基线、账号和至少一个出口节点均为必填'
+            : '名称、探针方案、账号和出口目标均为必填'
+        )
+      }
+      return initial ? api.updatePlan(initial.id, body) : api.createPlan(body)
+    },
+    onSuccess: () => {
+      toast.success(initial ? '计划已更新' : '计划已创建')
+      onSaved()
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size='wide'>
+        <DialogHeader>
+          <DialogTitle>
+            {initial ? '编辑 Cron 计划' : '新建 Cron 计划'}
+          </DialogTitle>
+          <DialogDescription>
+            短周期触发时，计划重叠策略和全局队列容量会阻止任务无限累积。
+            <span className='mt-1 block'>
+              带 <span className='font-medium text-destructive'>*</span>{' '}
+              的字段为必填项。
+            </span>
+          </DialogDescription>
+        </DialogHeader>
+        <div className='grid max-h-[65dvh] min-h-0 gap-4 overflow-auto py-2 sm:grid-cols-2'>
+          <Field label='计划名称' required>
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </Field>
+          {executionMode === 'chat' ? (
+            <Field label='探针方案' required>
+              <ProfileMultiSelect
+                profiles={profiles}
+                value={selectedProfileIds}
+                onChange={setProfileIds}
+                invalid={!selectedProfileIds.length}
+              />
+            </Field>
+          ) : (
+            <Field label='快速质量基线'>
+              <div className='flex items-start gap-3 rounded-lg border border-sky-500/20 bg-sky-500/5 p-3'>
+                <Layers3 className='mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400' />
+                <div className='min-w-0'>
+                  <div className='text-sm font-medium'>自动使用，无需选择</div>
+                  <p className='mt-1 truncate text-xs text-muted-foreground'>
+                    {quickProfile
+                      ? `${quickProfile.name} · ${quickProfile.model}`
+                      : '当前没有已启用的内置质量基线'}
+                  </p>
+                </div>
+              </div>
+            </Field>
+          )}
+          <Field label='执行模式' className='sm:col-span-2'>
+            <Select
+              value={executionMode}
+              onValueChange={(value: ExecutionMode) => {
+                setExecutionMode(value)
+                if (value === 'chat') setDirect(true)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='chat'>完整对话探针</SelectItem>
+                <SelectItem
+                  value='quality_test'
+                  disabled={!qualityTestAvailable}
+                >
+                  快速出口质量探针
+                  {!qualityTestAvailable ? '（缺少出口或内置基线）' : ''}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p className='text-xs leading-5 text-muted-foreground'>
+              {executionMode === 'chat'
+                ? '固定账号与出口后调用 /v1/chat/completions，保存完整回复。'
+                : '固定账号路由后调用 grok2api 出口 quality-test，仅保存指标、哈希和审计核验结果。'}
+            </p>
+          </Field>
+          <Field
+            label='Cron 表达式'
+            required
+            action={<CronExpressionHelp onSelect={setCron} />}
+          >
+            <Input
+              value={cron}
+              onChange={(event) => setCron(event.target.value)}
+              className='font-mono'
+              placeholder='例如：0 */6 * * *'
+            />
+          </Field>
+          <Field label='时区' required>
+            <Input
+              value={timezone}
+              onChange={(event) => setTimezone(event.target.value)}
+              placeholder='UTC'
+            />
+          </Field>
+          <Field label='探针账号' required className='sm:col-span-2'>
+            <AccountMultiSelect
+              value={accountIds}
+              onChange={setAccountIds}
+              invalid={!accountIds.length}
+            />
+            <p className='text-xs leading-5 text-muted-foreground'>
+              列表按页实时读取 grok2api；支持服务端搜索、跨页多选和全选当前搜索结果。
+              停用但鉴权正常的账号仍可用于诊断探针。
+            </p>
+          </Field>
+          <Field label='说明' className='sm:col-span-2'>
+            <Textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </Field>
+          <Field label='轮数' required>
+            <Input
+              type='number'
+              min={1}
+              max={20}
+              value={rounds}
+              onChange={(event) => setRounds(Number(event.target.value))}
+            />
+          </Field>
+          <Field label='重叠策略'>
+            <Select
+              value={overlap}
+              onValueChange={(value: 'skip' | 'fill') => setOverlap(value)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='skip'>前批未结束则跳过</SelectItem>
+                <SelectItem value='fill'>仅补充无活动任务账号</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label='出口目标' required className='sm:col-span-2'>
+            <div className='grid gap-2 sm:grid-cols-2'>
+              {executionMode === 'chat' && (
+                <label className='flex items-center gap-2 rounded-lg border p-3 text-sm'>
+                  <Checkbox
+                    checked={direct}
+                    onCheckedChange={(checked) => setDirect(checked === true)}
+                  />
+                  <Route className='size-4 text-muted-foreground' />
+                  <span>上游调度</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        className='inline-flex size-6 cursor-help items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground'
+                        tabIndex={0}
+                        aria-label='上游调度说明'
+                      >
+                        <CircleHelp className='size-3.5' />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className='max-w-80'>
+                      临时解除固定出口绑定，由 grok2api
+                      选择可用节点或回退出口；任务保存审计中的实际出口。
+                    </TooltipContent>
+                  </Tooltip>
+                </label>
+              )}
+              {selectableEgress.map((node) => {
+                const id = Number(node.id)
+                return (
+                  <label
+                    key={id}
+                    className='flex items-center gap-2 rounded-lg border p-3 text-sm'
+                  >
+                    <Checkbox
+                      checked={nodes.includes(id)}
+                      onCheckedChange={(checked) =>
+                        setNodes((current) =>
+                          checked
+                            ? [...current, id]
+                            : current.filter((item) => item !== id)
+                        )
+                      }
+                    />
+                    <span className='truncate'>{node.name}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {!selectableEgress.length && (
+              <div className='flex items-start gap-3 rounded-lg border border-dashed p-3'>
+                <TriangleAlert className='mt-0.5 size-4 shrink-0 text-amber-500' />
+                <div className='min-w-0 flex-1'>
+                  <div className='text-sm font-medium'>暂无可选固定出口</div>
+                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+                    grok2api 当前没有已启用且已配置代理的 grok_build
+                    出口节点，因此快速出口质量计划不可用。
+                  </p>
+                  {executionMode === 'quality_test' && (
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      className='mt-2'
+                      onClick={() => {
+                        setExecutionMode('chat')
+                        setDirect(true)
+                      }}
+                    >
+                      <Route />
+                      使用上游调度
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+            {executionMode === 'quality_test' && (
+              <p className='text-xs leading-5 text-muted-foreground'>
+                快速模式仅支持已配置代理的 grok_build
+                出口节点，不生成上游调度步骤。
+              </p>
+            )}
+          </Field>
+          <label className='flex items-center gap-3 rounded-lg border p-3 text-sm sm:col-span-2'>
+            <Switch checked={enabled} onCheckedChange={setEnabled} />
+            <span>
+              <span className='font-medium'>启用计划</span>
+              <span className='block text-xs text-muted-foreground'>
+                保存后立即注册或移除 APScheduler Job
+              </span>
+            </span>
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant='outline' onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            disabled={
+              mutation.isPending ||
+              !effectiveProfileIds.length ||
+              targetCount === 0
+            }
+            onClick={() => mutation.mutate()}
+          >
+            {mutation.isPending ? '保存中…' : '保存计划'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Field({
+  label,
+  required = false,
+  action,
+  children,
+  className = '',
+}: {
+  label: string
+  required?: boolean
+  action?: React.ReactNode
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`grid gap-2 ${className}`}>
+      <div className='flex items-center gap-2'>
+        <label className='text-sm font-medium'>
+          {label}
+          {required && (
+            <span className='ms-1 text-destructive' aria-hidden='true'>
+              *
+            </span>
+          )}
+        </label>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function CronExpressionHelp({
+  onSelect,
+}: {
+  onSelect: (expression: string) => void
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type='button'
+          size='icon'
+          variant='ghost'
+          className='size-6 rounded-full text-muted-foreground'
+          aria-label='查看 Cron 表达式填写说明'
+        >
+          <CircleHelp className='size-3.5' />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align='start' className='w-[min(30rem,calc(100vw-2rem))]'>
+        <div className='space-y-3'>
+          <div>
+            <div className='text-sm font-semibold'>Cron 五段格式</div>
+            <code className='mt-1 block rounded-md bg-muted px-3 py-2 text-xs'>
+              分钟 小时 日期 月份 星期
+            </code>
+          </div>
+          <div className='grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1 text-xs'>
+            <span className='font-medium'>分钟</span>
+            <span className='text-muted-foreground'>0–59</span>
+            <span className='font-medium'>小时</span>
+            <span className='text-muted-foreground'>0–23</span>
+            <span className='font-medium'>日期</span>
+            <span className='text-muted-foreground'>1–31</span>
+            <span className='font-medium'>月份</span>
+            <span className='text-muted-foreground'>1–12</span>
+            <span className='font-medium'>星期</span>
+            <span className='text-muted-foreground'>0–7，周日为 0 或 7</span>
+          </div>
+          <div className='space-y-2 border-t pt-3 text-xs'>
+            <CronExample
+              expression='*/15 * * * *'
+              description='每 15 分钟'
+              onSelect={onSelect}
+            />
+            <CronExample
+              expression='0 */6 * * *'
+              description='每 6 小时整点'
+              onSelect={onSelect}
+            />
+            <CronExample
+              expression='0 9 * * 1-5'
+              description='工作日 09:00'
+              onSelect={onSelect}
+            />
+            <CronExample
+              expression='30 2 * * *'
+              description='每天 02:30'
+              onSelect={onSelect}
+            />
+          </div>
+          <p className='text-xs leading-5 text-muted-foreground'>
+            <code>*</code> 表示任意值，<code>*/n</code> 表示每隔 n 个单位，
+            <code>1-5</code> 表示范围，<code>1,3,5</code> 表示多个值。
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function CronExample({
+  expression,
+  description,
+  onSelect,
+}: {
+  expression: string
+  description: string
+  onSelect: (expression: string) => void
+}) {
+  return (
+    <button
+      type='button'
+      className='grid w-full grid-cols-[8rem_1fr] items-center gap-3 rounded-md p-1 text-left hover:bg-accent'
+      onClick={() => onSelect(expression)}
+    >
+      <code className='rounded bg-muted px-2 py-1'>{expression}</code>
+      <span className='text-muted-foreground'>{description}</span>
+    </button>
+  )
+}
+
+function getPlanProfileIds(plan: ProbePlan): string[] {
+  const values = plan.profile_ids?.length
+    ? plan.profile_ids
+    : [plan.profile_id]
+  return Array.from(new Set(values.map((id) => id.trim()).filter(Boolean)))
+}
+
+function toSchedulerSettingsForm(
+  settings: RuntimeSettings
+): SchedulerSettingsForm {
+  return {
+    schedulerEnabled: settings.schedulerEnabled,
+    schedulerTimezone: settings.schedulerTimezone,
+    schedulerMisfireGraceSeconds: settings.schedulerMisfireGraceSeconds,
+    recoveryCron: settings.recoveryCron,
+  }
+}
+
+function getExecutionPlan(
+  execution: ScheduleExecution,
+  planById: Map<string, ProbePlan>
+) {
+  if (!execution.schedule_key.startsWith('plan:')) return undefined
+  return planById.get(execution.schedule_key.slice('plan:'.length))
+}
+
+function scheduleName(scheduleKey: string) {
+  if (scheduleKey === 'system:quarantine-recovery') return '隔离恢复检查'
+  if (scheduleKey.startsWith('plan:')) return '已删除的计划'
+  return scheduleKey
+}
+
+function executionDetailSummary(detail: Record<string, unknown>) {
+  const labels: Record<string, string> = {
+    created: '创建任务',
+    skipped: '跳过任务',
+    restored: '恢复账号',
+    guarded: '保护账号',
+  }
+  const values = Object.entries(labels).flatMap(([key, label]) => {
+    const value = detail[key]
+    return typeof value === 'number' ? [`${label} ${value}`] : []
+  })
+  const failed = detail.failed
+  if (Array.isArray(failed) && failed.length) values.push(`失败 ${failed.length}`)
+  return values.join(' · ') || '无附加明细'
+}
+
+function executionVariant(status: string) {
+  if (status === 'succeeded') return 'success' as const
+  if (status === 'skipped') return 'warning' as const
+  if (status === 'running') return 'info' as const
+  return 'destructive' as const
+}
+
+function executionLabel(status: string) {
+  if (status === 'succeeded') return '成功'
+  if (status === 'skipped') return '已跳过'
+  if (status === 'running') return '执行中'
+  if (status === 'failed') return '失败'
+  return status || '错误'
+}
+
+function proxyTargetLabel(target: ProbePlan['proxy_targets'][number]) {
+  if (target.kind === 'direct') return target.name || '上游调度'
+  return target.name || `出口 #${target.id}`
+}
+
+function PlanDetailRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: React.ReactNode
+  mono?: boolean
+}) {
+  return (
+    <div className='min-w-0'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div
+        className={cn(
+          'mt-1 text-sm leading-5 break-words',
+          mono && 'font-mono text-xs'
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function Info({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className='rounded-lg bg-muted/40 p-3'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div className='mt-1 text-sm font-semibold'>{value}</div>
+    </div>
+  )
+}

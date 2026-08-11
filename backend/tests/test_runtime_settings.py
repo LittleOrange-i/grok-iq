@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+
+from app.core.config import DEFAULT_DATABASE_PATH, Settings
+from app.persistence.database import Database
+from app.persistence.models import AppSetting
+from app.persistence.settings_repository import SettingsRepository
+from app.services.settings_service import RuntimeSettingsService
+from app.web.schemas import RuntimeSettingsInput
+
+
+def build_service(tmp_path: Path) -> tuple[Database, Settings, RuntimeSettingsService]:
+    settings = Settings(database_path=tmp_path / "monitor.db")
+    database = Database(settings.database_path)
+    database.initialize()
+    repository = SettingsRepository(database, settings)
+    return database, settings, RuntimeSettingsService(settings, repository)
+
+
+def test_default_database_path_is_independent_of_working_directory():
+    settings = Settings(_env_file=None)
+
+    assert settings.database_path == DEFAULT_DATABASE_PATH
+    assert settings.database_path == Path(__file__).resolve().parents[1] / "data" / "monitor.db"
+
+
+def test_runtime_settings_are_encrypted_masked_and_reloadable(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    changed = service.update(
+        {
+            "grok2api_base_url": "http://grok2api.test:8000",
+            "grok2api_admin_password": "secret-password",
+            "probe_worker_concurrency": 4,
+        }
+    )
+    assert changed == [
+        "grok2api_admin_password",
+        "grok2api_base_url",
+        "probe_worker_concurrency",
+    ]
+    assert settings.probe_worker_concurrency == 4
+    public = service.public_view()
+    assert public["grok2apiAdminPasswordConfigured"] is True
+    assert "secret-password" not in json.dumps(public)
+
+    with database.session() as session:
+        stored = session.scalar(select(AppSetting).where(AppSetting.key == "grok2api_admin_password"))
+        assert stored is not None
+        assert "secret-password" not in json.dumps(stored.value)
+
+    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded = RuntimeSettingsService(reloaded_settings, SettingsRepository(database, reloaded_settings))
+    reloaded.load()
+    assert reloaded_settings.grok2api_admin_password == "secret-password"
+    assert reloaded_settings.grok2api_base_url == "http://grok2api.test:8000"
+
+
+def test_blank_secret_preserves_value_and_explicit_clear_removes_it():
+    keep = RuntimeSettingsInput(grok2apiAdminPassword="")
+    assert "grok2api_admin_password" not in keep.runtime_changes()
+
+    clear = RuntimeSettingsInput(clearSecrets=["grok2apiAdminPassword"])
+    assert clear.runtime_changes()["grok2api_admin_password"] == ""
+
+
+def test_runtime_settings_reject_invalid_threshold_order(tmp_path: Path):
+    _, _, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="降智信号 TPS 下限"):
+        service.update({"degradation_tps": 1000, "strong_degradation_tps": 500})
+
+
+def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
+    _, _, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="重试基础等待"):
+        service.update(
+            {
+                "probe_transient_retry_base_seconds": 20,
+                "probe_transient_retry_max_seconds": 10,
+            }
+        )

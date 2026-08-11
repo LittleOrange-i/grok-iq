@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+import hashlib
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class AuthLoginInput(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class AuthSetupInput(AuthLoginInput):
+    confirm_password: str = Field(min_length=1, max_length=256)
+
+
+class ChatProviderCreateInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(min_length=1, max_length=120)
+    base_url: str = Field(alias="baseUrl", min_length=1, max_length=2000)
+    api_key: str = Field(default="", alias="apiKey", max_length=8000)
+    models: list[str] = Field(default_factory=list, max_length=2000)
+    enabled: bool = True
+    is_default: bool = Field(default=False, alias="isDefault")
+
+    @model_validator(mode="after")
+    def normalize_values(self) -> ChatProviderCreateInput:
+        self.name = self.name.strip()
+        self.base_url = self.base_url.strip()
+        self.models = _normalize_model_names(self.models)
+        if not self.name or not self.base_url:
+            raise ValueError("提供商名称和 Base URL 为必填项")
+        return self
+
+
+class ChatProviderUpdateInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_url: str | None = Field(
+        default=None,
+        alias="baseUrl",
+        min_length=1,
+        max_length=2000,
+    )
+    api_key: str | None = Field(default=None, alias="apiKey", max_length=8000)
+    clear_api_key: bool = Field(default=False, alias="clearApiKey")
+    models: list[str] | None = Field(default=None, max_length=2000)
+    enabled: bool | None = None
+    is_default: bool | None = Field(default=None, alias="isDefault")
+
+    @model_validator(mode="after")
+    def normalize_values(self) -> ChatProviderUpdateInput:
+        if self.name is not None:
+            self.name = self.name.strip()
+        if self.base_url is not None:
+            self.base_url = self.base_url.strip()
+        if self.models is not None:
+            self.models = _normalize_model_names(self.models)
+        return self
+
+    def changes(self) -> dict[str, Any]:
+        return self.model_dump(exclude_unset=True)
+
+
+def _normalize_model_names(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        model = str(value or "").strip()
+        if not model or model in seen:
+            continue
+        if len(model) > 255:
+            raise ValueError("模型名称长度不能超过 255")
+        result.append(model)
+        seen.add(model)
+    return result
+
+
+class AccountActionInput(BaseModel):
+    action: str
+    note: str = ""
+    propagate: bool = False
+    quarantine_minutes: int | None = Field(default=None, ge=1, le=10080)
+
+
+class AccountBatchUpdateInput(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+    enabled: bool
+
+
+class ProxyTargetInput(BaseModel):
+    kind: Literal["direct", "egress"]
+    id: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> ProxyTargetInput:
+        if self.kind == "egress" and self.id is None:
+            raise ValueError("egress 目标必须填写 id")
+        if self.kind == "direct":
+            self.id = None
+        return self
+
+
+def _normalize_profile_selection(
+    profile_ids: list[str], profile_id: str, *, fallback: str = ""
+) -> list[str]:
+    candidates = profile_ids if profile_ids else [profile_id or fallback]
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in candidates:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        if len(normalized) > 64:
+            raise ValueError("探针方案 ID 长度不能超过 64")
+        result.append(normalized)
+        seen.add(normalized)
+    if not result:
+        raise ValueError("至少选择一个探针方案")
+    return result
+
+
+class ProbeRunCreate(BaseModel):
+    account_id: int = Field(gt=0)
+    profile_id: str = "quality-marker"
+    profile_ids: list[str] = Field(default_factory=list, max_length=1000)
+    execution_mode: Literal["chat", "quality_test"] = "chat"
+    rounds: int = Field(default=3, ge=1, le=20)
+    proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> ProbeRunCreate:
+        self.profile_ids = _normalize_profile_selection(
+            self.profile_ids, self.profile_id, fallback="quality-marker"
+        )
+        self.profile_id = self.profile_ids[0]
+        if self.execution_mode == "quality_test" and any(
+            target.kind != "egress" for target in self.proxy_targets
+        ):
+            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        return self
+
+
+class ProbeRunBatchCreate(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+    profile_id: str = "quality-marker"
+    profile_ids: list[str] = Field(default_factory=list, max_length=1000)
+    execution_mode: Literal["chat", "quality_test"] = "chat"
+    rounds: int = Field(default=3, ge=1, le=20)
+    proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> ProbeRunBatchCreate:
+        self.profile_ids = _normalize_profile_selection(
+            self.profile_ids, self.profile_id, fallback="quality-marker"
+        )
+        self.profile_id = self.profile_ids[0]
+        if self.execution_mode == "quality_test" and any(
+            target.kind != "egress" for target in self.proxy_targets
+        ):
+            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        return self
+
+
+SecretSettingName = Literal[
+    "grok2apiAdminPassword",
+    "grokRegisterWebhookToken",
+]
+
+
+class RuntimeSettingsInput(BaseModel):
+    """Editable settings exposed by the monitor UI.
+
+    Secret values are write-only. An omitted or blank secret keeps the current
+    value; ``clearSecrets`` performs an explicit clear.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    grok2api_base_url: str | None = Field(default=None, alias="grok2apiBaseUrl")
+    grok2api_admin_username: str | None = Field(default=None, alias="grok2apiAdminUsername")
+    grok2api_admin_password: str | None = Field(default=None, alias="grok2apiAdminPassword")
+    grok2api_http_impersonate: str | None = Field(default=None, alias="grok2apiHttpImpersonate")
+    grok_register_webhook_token: str | None = Field(default=None, alias="grokRegisterWebhookToken")
+    initial_probe_on_register: bool | None = Field(default=None, alias="initialProbeOnRegister")
+    register_probe_profile_ids: list[str] | None = Field(
+        default=None, alias="registerProbeProfileIds", max_length=1000
+    )
+    register_probe_execution_mode: Literal["chat", "quality_test"] | None = Field(
+        default=None, alias="registerProbeExecutionMode"
+    )
+    register_probe_rounds: int | None = Field(
+        default=None, alias="registerProbeRounds", ge=1, le=20
+    )
+    register_probe_proxy_targets: list[ProxyTargetInput] | None = Field(
+        default=None, alias="registerProbeProxyTargets", max_length=20
+    )
+    scheduler_enabled: bool | None = Field(default=None, alias="schedulerEnabled")
+    scheduler_timezone: str | None = Field(default=None, alias="schedulerTimezone")
+    scheduler_misfire_grace_seconds: int | None = Field(
+        default=None, alias="schedulerMisfireGraceSeconds", ge=1, le=86_400
+    )
+    recovery_cron: str | None = Field(default=None, alias="recoveryCron")
+    probe_worker_concurrency: int | None = Field(default=None, alias="probeWorkerConcurrency", ge=1, le=32)
+    probe_queue_limit: int | None = Field(default=None, alias="probeQueueLimit", ge=1, le=100_000)
+    probe_step_delay_seconds: float | None = Field(default=None, alias="probeStepDelaySeconds", ge=0, le=60)
+    probe_transient_retry_attempts: int | None = Field(
+        default=None, alias="probeTransientRetryAttempts", ge=0, le=5
+    )
+    probe_transient_retry_base_seconds: float | None = Field(
+        default=None, alias="probeTransientRetryBaseSeconds", ge=0.1, le=60
+    )
+    probe_transient_retry_max_seconds: float | None = Field(
+        default=None, alias="probeTransientRetryMaxSeconds", ge=0.1, le=300
+    )
+    probe_route_prefix: str | None = Field(default=None, alias="probeRoutePrefix")
+    probe_diagnostic_priority: int | None = Field(
+        default=None,
+        alias="probeDiagnosticPriority",
+        ge=-2_000_000_000,
+        le=0,
+    )
+    analysis_window_hours: int | None = Field(default=None, alias="analysisWindowHours", ge=1, le=24 * 365)
+    degradation_tps: float | None = Field(default=None, alias="degradationTps", gt=0)
+    strong_degradation_tps: float | None = Field(default=None, alias="strongDegradationTps", gt=0)
+    consecutive_anomalies: int | None = Field(default=None, alias="consecutiveAnomalies", ge=2, le=20)
+    cross_egress_min: int | None = Field(default=None, alias="crossEgressMin", ge=1, le=20)
+    buffer_first_token_share: float | None = Field(
+        default=None, alias="bufferFirstTokenShare", ge=0.5, le=0.99
+    )
+    min_generation_ms: int | None = Field(default=None, alias="minGenerationMs", ge=1, le=60_000)
+    minimum_output_tokens: int | None = Field(default=None, alias="minimumOutputTokens", ge=1, le=4096)
+    auto_quarantine: bool | None = Field(default=None, alias="autoQuarantine")
+    quarantine_minutes: int | None = Field(default=None, alias="quarantineMinutes", ge=1, le=7 * 24 * 60)
+    clear_secrets: list[SecretSettingName] = Field(default_factory=list, alias="clearSecrets")
+
+    def runtime_changes(self) -> dict[str, Any]:
+        values = self.model_dump(exclude_unset=True, exclude={"clear_secrets"})
+        result = {key: value for key, value in values.items() if value is not None}
+        for key in (
+            "grok2api_admin_password",
+            "grok_register_webhook_token",
+        ):
+            if result.get(key) == "":
+                result.pop(key)
+        clear_mapping = {
+            "grok2apiAdminPassword": "grok2api_admin_password",
+            "grokRegisterWebhookToken": "grok_register_webhook_token",
+        }
+        for alias in self.clear_secrets:
+            result[clear_mapping[alias]] = ""
+        return result
+
+
+class ProfileInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    model: str = Field(min_length=1, max_length=160)
+    system_prompt: str = Field(default="", max_length=8000)
+    prompt: str = Field(min_length=1, max_length=16000)
+    expected_text: str = Field(default="", max_length=2000)
+    expected_output: str = Field(default="", max_length=500_000)
+    expected_image_url: str = Field(default="", max_length=4000)
+    # Zero means the monitor omits the output-token field and lets the upstream
+    # route/model apply its own limit.
+    max_output_tokens: int = Field(default=0, ge=0)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class ProbePlanInput(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    profile_id: str = ""
+    profile_ids: list[str] = Field(default_factory=list, max_length=1000)
+    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+    proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
+    execution_mode: Literal["chat", "quality_test"] = "chat"
+    rounds: int = Field(default=3, ge=1, le=20)
+    cron_expression: str = Field(min_length=5, max_length=120)
+    timezone: str = Field(default="UTC", min_length=1, max_length=80)
+    enabled: bool = True
+    overlap_policy: Literal["skip", "fill"] = "skip"
+    priority: int = Field(default=200, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def validate_request(self) -> ProbePlanInput:
+        self.profile_ids = _normalize_profile_selection(self.profile_ids, self.profile_id)
+        self.profile_id = self.profile_ids[0]
+        if self.execution_mode == "quality_test" and any(
+            target.kind != "egress" for target in self.proxy_targets
+        ):
+            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        return self
+
+
+class ProbePlanEnabledInput(BaseModel):
+    enabled: bool
+
+
+class BulkIdsInput(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class RegisterAccountEvent(BaseModel):
+    event_id: str = Field(default="", max_length=120)
+    event_type: str = Field(default="grok2api.account_imported", max_length=80)
+    email: str = Field(min_length=3, max_length=255)
+    grok2api_account_id: int | None = None
+    bot_risk: bool = False
+    bfs: int | str | None = None
+    registration_id: str = ""
+    occurred_at: str = Field(default="", max_length=80)
+
+    @model_validator(mode="after")
+    def normalize_event(self) -> RegisterAccountEvent:
+        self.event_id = self.event_id.strip()
+        self.event_type = self.event_type.strip() or "grok2api.account_imported"
+        self.email = self.email.strip().lower()
+        self.registration_id = self.registration_id.strip()
+        self.occurred_at = self.occurred_at.strip()
+        if "@" not in self.email:
+            raise ValueError("Webhook 邮箱格式无效")
+        if not self.event_id:
+            if self.registration_id:
+                self.event_id = f"registration:{self.registration_id}:grok2api-imported"
+            else:
+                digest = hashlib.sha256(
+                    f"{self.event_type}\n{self.email}".encode()
+                ).hexdigest()[:32]
+                self.event_id = f"legacy:{digest}"
+        if len(self.event_id) < 3:
+            raise ValueError("Webhook 事件 ID 无效")
+        return self

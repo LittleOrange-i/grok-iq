@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grok-account-monitor-backend"
+version = "0.1.0"
+description = "Account-level quality probe and risk monitor for grok2api"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.16,<2",
+  "apscheduler>=3.11,<4",
+  "curl-cffi>=0.13,<1",
+  "cryptography>=45,<47",
+  "fastapi>=0.116,<1",
+  "pydantic-settings>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "PyJWT>=2.10,<3",
+  "sqlalchemy>=2.0.41,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["alembic*", "data*", "tests*"]
+
+[tool.setuptools.package-data]
+"app.persistence" = ["default_profiles.json"]

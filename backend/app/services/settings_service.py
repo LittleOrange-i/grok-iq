@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import re
+from typing import Any
+from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from apscheduler.triggers.cron import CronTrigger
+
+from app.core.config import Settings
+from app.persistence.settings_repository import SettingsRepository
+
+
+class RuntimeSettingsService:
+    """Validates, persists, masks, and hot-applies operator settings."""
+
+    def __init__(self, settings: Settings, repository: SettingsRepository):
+        self.settings = settings
+        self.repository = repository
+
+    def load(self) -> None:
+        overrides = self.repository.load()
+        if not overrides:
+            return
+        candidate = self._validate(self.settings.model_dump() | overrides)
+        self.settings.apply_runtime(candidate)
+
+    def update(self, values: dict[str, Any]) -> list[str]:
+        changes = {key: value for key, value in values.items() if key in Settings.RUNTIME_FIELDS}
+        if not changes:
+            return []
+        candidate = self._validate(self.settings.model_dump() | changes)
+        normalized = {key: getattr(candidate, key) for key in changes}
+        self.repository.save(normalized)
+        self.settings.apply_runtime(candidate)
+        return sorted(normalized)
+
+    @staticmethod
+    def _validate(values: dict[str, Any]) -> Settings:
+        candidate = Settings.model_validate(values)
+        if candidate.degradation_tps >= candidate.strong_degradation_tps:
+            raise ValueError("降智信号 TPS 下限必须小于强降智信号 TPS 下限")
+        if candidate.probe_transient_retry_base_seconds > candidate.probe_transient_retry_max_seconds:
+            raise ValueError("探针重试基础等待不能大于最大等待")
+        parsed = urlsplit(candidate.grok2api_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("grok2api 地址必须是有效的 HTTP(S) URL")
+        try:
+            zone = ZoneInfo(candidate.scheduler_timezone)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("调度时区名称无效") from exc
+        try:
+            CronTrigger.from_crontab(candidate.recovery_cron, timezone=zone)
+        except ValueError as exc:
+            raise ValueError(f"隔离恢复 Cron 表达式无效: {exc}") from exc
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}", candidate.probe_route_prefix):
+            raise ValueError("临时资源前缀需为 2-48 位字母、数字、下划线或连字符")
+        profile_ids = list(
+            dict.fromkeys(
+                str(value or "").strip()
+                for value in candidate.register_probe_profile_ids
+                if str(value or "").strip()
+            )
+        )
+        if candidate.initial_probe_on_register and not profile_ids:
+            raise ValueError("注册后探针至少选择一个探针方案")
+        if candidate.register_probe_execution_mode not in {"chat", "quality_test"}:
+            raise ValueError("注册探针执行模式无效")
+        targets: list[dict[str, Any]] = []
+        seen_targets: set[tuple[str, int | None]] = set()
+        for raw in candidate.register_probe_proxy_targets:
+            kind = str(raw.get("kind") or "").strip()
+            raw_id = raw.get("id")
+            if kind == "direct":
+                target_id = None
+            elif kind == "egress":
+                try:
+                    target_id = int(raw_id)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("注册探针出口节点 ID 无效") from exc
+                if target_id <= 0:
+                    raise ValueError("注册探针出口节点 ID 必须大于 0")
+            else:
+                raise ValueError("注册探针出口目标类型无效")
+            key = (kind, target_id)
+            if key not in seen_targets:
+                targets.append({"kind": kind, "id": target_id})
+                seen_targets.add(key)
+        if candidate.initial_probe_on_register and not targets:
+            raise ValueError("注册后探针至少选择一个出口目标")
+        if candidate.register_probe_execution_mode == "quality_test" and any(
+            target["kind"] != "egress" for target in targets
+        ):
+            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        candidate.register_probe_profile_ids = profile_ids
+        candidate.register_probe_proxy_targets = targets
+        return candidate
+
+    def public_view(self) -> dict[str, Any]:
+        s = self.settings
+        return {
+            "grok2apiBaseUrl": s.grok2api_base_url,
+            "grok2apiAdminUsername": s.grok2api_admin_username,
+            "grok2apiAdminPasswordConfigured": bool(s.grok2api_admin_password),
+            "grok2apiHttpImpersonate": s.grok2api_http_impersonate,
+            "grokRegisterWebhookTokenConfigured": bool(s.grok_register_webhook_token),
+            "initialProbeOnRegister": s.initial_probe_on_register,
+            "registerProbeProfileIds": s.register_probe_profile_ids,
+            "registerProbeExecutionMode": s.register_probe_execution_mode,
+            "registerProbeRounds": s.register_probe_rounds,
+            "registerProbeProxyTargets": s.register_probe_proxy_targets,
+            "schedulerEnabled": s.scheduler_enabled,
+            "schedulerTimezone": s.scheduler_timezone,
+            "schedulerMisfireGraceSeconds": s.scheduler_misfire_grace_seconds,
+            "recoveryCron": s.recovery_cron,
+            "probeWorkerConcurrency": s.probe_worker_concurrency,
+            "probeQueueLimit": s.probe_queue_limit,
+            "probeStepDelaySeconds": s.probe_step_delay_seconds,
+            "probeTransientRetryAttempts": s.probe_transient_retry_attempts,
+            "probeTransientRetryBaseSeconds": s.probe_transient_retry_base_seconds,
+            "probeTransientRetryMaxSeconds": s.probe_transient_retry_max_seconds,
+            "probeRoutePrefix": s.probe_route_prefix,
+            "probeDiagnosticPriority": s.probe_diagnostic_priority,
+            "analysisWindowHours": s.analysis_window_hours,
+            "degradationTps": s.degradation_tps,
+            "strongDegradationTps": s.strong_degradation_tps,
+            "consecutiveAnomalies": s.consecutive_anomalies,
+            "crossEgressMin": s.cross_egress_min,
+            "bufferFirstTokenShare": s.buffer_first_token_share,
+            "minGenerationMs": s.min_generation_ms,
+            "minimumOutputTokens": s.minimum_output_tokens,
+            "autoQuarantine": s.auto_quarantine,
+            "quarantineMinutes": s.quarantine_minutes,
+            "bootstrap": {
+                "host": s.host,
+                "port": s.port,
+                "databasePath": str(s.database_path),
+                "corsOrigins": s.cors_origin_list,
+            },
+        }

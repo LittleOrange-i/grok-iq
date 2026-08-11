@@ -1,0 +1,863 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy import delete, inspect
+
+from app.analyzer import Thresholds
+from app.core.config import Settings
+from app.integrations.grok2api.client import ChatProbeResult, IntegrationError
+from app.persistence.account_repository import AccountRepository
+from app.persistence.database import Database
+from app.persistence.models import MetadataRow, ProbeDurationEstimate
+from app.persistence.probe_repository import (
+    PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
+    ProbeRepository,
+    QueueFullError,
+    RunStateError,
+)
+from app.services.probe_manager import ProbeManager
+
+
+@pytest.fixture
+def repository(tmp_path: Path) -> ProbeRepository:
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    value = ProbeRepository(database)
+    value.seed_defaults()
+    return value
+
+
+def create_run(
+    repository: ProbeRepository,
+    account_id: int = 10,
+    *,
+    account_name: str | None = None,
+    account_email: str = "",
+) -> str:
+    return repository.create_run(
+        account_id=account_id,
+        account_name=account_name or f"account-{account_id}",
+        account_email=account_email,
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[{"kind": "direct", "id": None, "name": "直连"}],
+        trigger="manual",
+        priority=100,
+        queue_limit=20,
+    )
+
+
+async def wait_for_terminal_run(
+    repository: ProbeRepository,
+    run_id: str,
+) -> dict[str, Any]:
+    detail: dict[str, Any] | None = None
+    for _ in range(150):
+        detail = repository.run_detail(run_id)
+        if detail and detail["run"]["status"] in {
+            "completed",
+            "completed_with_errors",
+            "failed",
+            "cancelled",
+        }:
+            return detail
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"run {run_id} did not become terminal: {detail}")
+
+
+def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    tables = set(inspect(database.engine).get_table_names())
+    assessment_columns = {
+        value["name"] for value in inspect(database.engine).get_columns("account_assessments")
+    }
+    assert "account_assessments" in tables
+    assert "recovery_guarded" in assessment_columns
+    assert "probe_runs" in tables
+    assert "probe_duration_estimates" in tables
+    assert "monitored_accounts" not in tables
+    assert "account_snapshots" not in tables
+    assert "egress_mirrors" not in tables
+    assert "egress_snapshots" not in tables
+
+
+def test_same_account_runs_are_claimed_serially(repository: ProbeRepository):
+    first = create_run(repository)
+    second = create_run(repository)
+
+    claimed = repository.claim_next("worker-1")
+    assert claimed and claimed.run["id"] == first
+    assert repository.claim_next("worker-2") is None
+
+    repository.finish_run(first)
+    claimed = repository.claim_next("worker-2")
+    assert claimed and claimed.run["id"] == second
+
+
+def test_queued_run_can_be_cancelled_then_deleted(repository: ProbeRepository):
+    run_id = create_run(repository)
+    assert repository.request_cancel(run_id) == "cancelled"
+    assert repository.delete_run(run_id) == 10
+    assert repository.run_detail(run_id) is None
+
+
+def test_terminal_runs_can_be_deleted_in_bulk(repository: ProbeRepository):
+    first = create_run(repository, account_id=11)
+    second = create_run(repository, account_id=12)
+    repository.request_cancel(first)
+    repository.request_cancel(second)
+
+    deleted, account_ids = repository.delete_runs([first, second])
+
+    assert deleted == 2
+    assert account_ids == {11, 12}
+    assert repository.run_detail(first) is None
+    assert repository.run_detail(second) is None
+
+
+def test_manual_batch_creates_many_runs_and_skips_active_accounts(repository: ProbeRepository):
+    accounts = [
+        {"id": 11, "name": "alpha", "email": "alpha@example.test"},
+        {"id": 12, "name": "bravo", "email": "bravo@example.test"},
+    ]
+    created = repository.create_manual_runs_batch(
+        accounts=accounts,
+        profile_id="quality-marker",
+        rounds=3,
+        proxy_targets=[{"kind": "direct", "id": None, "name": "上游调度"}],
+        execution_mode="chat",
+        priority=100,
+        queue_limit=20,
+    )
+    assert created["createdAccountIds"] == [11, 12]
+    assert len(created["runIds"]) == 2
+
+    repeated = repository.create_manual_runs_batch(
+        accounts=accounts,
+        profile_id="quality-marker",
+        rounds=3,
+        proxy_targets=[{"kind": "direct", "id": None, "name": "上游调度"}],
+        execution_mode="chat",
+        priority=100,
+        queue_limit=20,
+    )
+    assert repeated["createdAccountIds"] == []
+    assert repeated["activeAccountIds"] == [11, 12]
+    assert repository.list_runs(page=1, page_size=20)["total"] == 2
+
+
+def test_list_runs_reports_active_count(repository: ProbeRepository):
+    active = create_run(repository, account_id=21)
+    terminal_run = create_run(repository, account_id=22)
+    repository.request_cancel(terminal_run)
+
+    result = repository.list_runs(page=1, page_size=20)
+
+    assert result["total"] == 2
+    assert result["activeCount"] == 1
+    repository.request_cancel(active)
+
+
+def test_duration_estimate_backfills_once_then_updates_incrementally(
+    repository: ProbeRepository,
+):
+    historical_run_id = create_run(repository, account_id=31)
+    assert repository.claim_next("worker-history") is not None
+    repository.add_sample(
+        historical_run_id,
+        {
+            "round_number": 1,
+            "target_key": "direct",
+            "target_kind": "direct",
+            "status": "done",
+            "duration_ms": 1_500,
+            "classification": "normal",
+        },
+    )
+    repository.finish_run(historical_run_id)
+
+    with repository.database.transaction() as session:
+        session.execute(delete(ProbeDurationEstimate))
+        session.execute(
+            delete(MetadataRow).where(
+                MetadataRow.key == PROBE_DURATION_ESTIMATE_BACKFILL_KEY
+            )
+        )
+    repository.seed_defaults()
+
+    pending_run_id = repository.create_run(
+        account_id=32,
+        account_name="account-32",
+        account_email="",
+        profile_id="quality-marker",
+        rounds=2,
+        proxy_targets=[
+            {"kind": "direct", "id": None, "name": "直连"},
+            {"kind": "egress", "id": 7, "name": "出口 7"},
+        ],
+        trigger="manual",
+        priority=100,
+        queue_limit=20,
+    )
+    pending = repository.run_detail(pending_run_id)
+    assert pending is not None
+    estimate = pending["run"]["duration_estimate"]
+    assert estimate["average_sample_ms"] == 1_500
+    assert estimate["estimated_total_ms"] == 6_000
+    assert estimate["estimated_remaining_ms"] == 6_000
+    assert estimate["sample_count"] == 1
+    assert estimate["updated_at"] is not None
+
+    claimed = repository.claim_next("worker-current")
+    assert claimed is not None and claimed.run["id"] == pending_run_id
+    repository.add_sample(
+        pending_run_id,
+        {
+            "round_number": 1,
+            "target_key": "direct",
+            "target_kind": "direct",
+            "status": "done",
+            "duration_ms": 2_500,
+            "classification": "normal",
+        },
+    )
+    running = repository.run_detail(pending_run_id)
+    assert running is not None
+    estimate = running["run"]["duration_estimate"]
+    assert estimate["average_sample_ms"] == 2_000
+    assert estimate["estimated_total_ms"] == 8_000
+    assert estimate["estimated_remaining_ms"] == 6_000
+    assert estimate["sample_count"] == 2
+
+
+def test_manual_batch_capacity_failure_does_not_partially_create(repository: ProbeRepository):
+    create_run(repository, account_id=99)
+    with pytest.raises(QueueFullError, match="本次未创建任务"):
+        repository.create_manual_runs_batch(
+            accounts=[
+                {"id": 21, "name": "charlie", "email": ""},
+                {"id": 22, "name": "delta", "email": ""},
+            ],
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None, "name": "上游调度"}],
+            execution_mode="chat",
+            priority=100,
+            queue_limit=2,
+        )
+    assert repository.list_runs(page=1, page_size=20)["total"] == 1
+
+
+def test_runs_can_be_searched_by_account_name_email_or_id(repository: ProbeRepository):
+    create_run(
+        repository,
+        account_id=301,
+        account_name="Alpha Account",
+        account_email="alpha@example.test",
+    )
+    create_run(
+        repository,
+        account_id=302,
+        account_name="Bravo Account",
+        account_email="bravo@example.test",
+    )
+
+    assert repository.list_runs(page=1, page_size=20, search="bravo")["total"] == 1
+    assert repository.list_runs(page=1, page_size=20, search="EXAMPLE.TEST")["total"] == 2
+    result = repository.list_runs(page=1, page_size=20, search="301")
+    assert result["total"] == 1
+    assert result["items"][0]["account_id"] == 301
+
+
+class FakeGrokClient:
+    def __init__(self):
+        self.bindings: list[dict[str, Any]] = []
+        self.routing_updates: list[dict[str, Any]] = []
+        self.restored = False
+        self.deleted_route = False
+        self.deleted_key = False
+        self.account_enabled = True
+        self.account_priority = 7
+        self.account_max_concurrent = 4
+        self.probe_error: Exception | None = None
+        self.probe_errors: list[Exception] = []
+        self.probe_calls = 0
+        self.restore_routing_failures = 0
+        self.chat_egress_override = 0
+
+    async def get_account(self, account_id: int) -> dict[str, Any]:
+        return {
+            "id": str(account_id),
+            "name": "probe-account",
+            "email": "probe@example.test",
+            "enabled": self.account_enabled,
+            "authStatus": "active",
+            "priority": self.account_priority,
+            "maxConcurrent": self.account_max_concurrent,
+            "egressNodeId": None,
+            "egressAssignmentMode": "",
+        }
+
+    async def list_all_accounts(self, account_ids: set[int] | None = None) -> list[dict[str, Any]]:
+        return [await self.get_account(account_id) for account_id in sorted(account_ids or {10})]
+
+    async def list_egress_nodes(self, **_: Any) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "id": "7",
+                    "name": "proxy-7",
+                    "enabled": True,
+                    "proxyConfigured": True,
+                }
+            ],
+            "total": 1,
+            "pageSize": 500,
+        }
+
+    async def create_probe_route(self, **_: Any) -> tuple[str, str]:
+        return "route-1", "gam-probe-test"
+
+    async def create_probe_client_key(self, _: str, **__: Any) -> tuple[str, str]:
+        return "key-1", "secret"
+
+    async def set_account_egress(self, _: int, target: dict[str, Any]) -> None:
+        self.bindings.append(target)
+
+    async def set_account_routing_settings(
+        self,
+        _: int,
+        *,
+        enabled: bool,
+        priority: int,
+        max_concurrent: int,
+    ) -> None:
+        if not enabled and self.restore_routing_failures > 0:
+            self.restore_routing_failures -= 1
+            raise RuntimeError("simulated account restore failure")
+        self.account_enabled = enabled
+        self.account_priority = priority
+        self.account_max_concurrent = max_concurrent
+        self.routing_updates.append(
+            {
+                "enabled": enabled,
+                "priority": priority,
+                "maxConcurrent": max_concurrent,
+            }
+        )
+
+    async def chat_probe(self, **kwargs: Any) -> ChatProbeResult:
+        self.probe_calls += 1
+        if self.probe_errors:
+            raise self.probe_errors.pop(0)
+        if self.probe_error is not None:
+            raise self.probe_error
+        target = self.bindings[-1]
+        target_id = int(target.get("id") or 0) or None
+        egress_id = self.chat_egress_override or target_id
+        return ChatProbeResult(
+            request_id="request-1",
+            audit_id=1,
+            verified_account_id=10,
+            verified_egress_node_id=egress_id,
+            status_code=200,
+            response_text="探针校验通过",
+            response_sha256="digest",
+            output_tokens=100,
+            reasoning_tokens=10,
+            visible_tokens=90,
+            chunk_count=3,
+            first_token_ms=500,
+            duration_ms=1500,
+            generation_ms=1000,
+            first_token_share=1 / 3,
+            tps=100,
+            expected_matched=True,
+            usage={"completion_tokens": 100},
+        )
+
+    async def quality_probe(self, **kwargs: Any) -> ChatProbeResult:
+        egress_id = kwargs["egress_node_id"]
+        return ChatProbeResult(
+            request_id="quality-request-1",
+            audit_id=2,
+            verified_account_id=10,
+            verified_egress_node_id=egress_id,
+            status_code=200,
+            response_text="",
+            response_sha256="quality-digest",
+            output_tokens=120,
+            reasoning_tokens=20,
+            visible_tokens=100,
+            chunk_count=4,
+            first_token_ms=400,
+            duration_ms=1400,
+            generation_ms=1000,
+            first_token_share=2 / 7,
+            tps=120,
+            expected_matched=True,
+            usage={"completion_tokens": 120, "quality_test": True},
+        )
+
+    async def restore_account_egress(self, *_: Any) -> None:
+        self.restored = True
+
+    async def delete_probe_client_key(self, _: str) -> None:
+        self.deleted_key = True
+
+    async def delete_probe_route(self, _: str) -> None:
+        self.deleted_route = True
+
+    async def cleanup_stale_resources(self) -> dict[str, int]:
+        return {"routes": 0, "clientKeys": 0}
+
+    async def set_account_enabled(self, *_: Any) -> None:
+        return None
+
+
+class DisabledFakeGrokClient(FakeGrokClient):
+    def __init__(self):
+        super().__init__()
+        self.account_enabled = False
+
+
+@pytest.mark.asyncio
+async def test_disabled_account_uses_diagnostic_activation_and_restores_snapshot(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    client = DisabledFakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(repository, run_id)
+        run = detail["run"]
+        assert run["status"] == "completed"
+        assert run["original_account_enabled"] is False
+        assert run["original_account_priority"] == 7
+        assert run["original_account_max_concurrent"] == 4
+        assert run["diagnostic_priority"] == -1_000_000
+        assert run["diagnostic_activation_active"] is False
+        assert run["account_restore_status"] == "automatic_restored"
+        assert run["account_restore_source"] == "automatic"
+        assert client.routing_updates[0] == {
+            "enabled": True,
+            "priority": -1_000_000,
+            "maxConcurrent": 1,
+        }
+        assert client.routing_updates[-1] == {
+            "enabled": False,
+            "priority": 7,
+            "maxConcurrent": 4,
+        }
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_probe_error_still_restores_disabled_account_automatically(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    client = DisabledFakeGrokClient()
+    client.probe_error = RuntimeError("simulated upstream probe failure")
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(repository, run_id)
+        run = detail["run"]
+        assert run["status"] == "completed_with_errors"
+        assert detail["samples"][0]["status"] == "error"
+        assert run["account_restore_status"] == "automatic_restored"
+        assert run["account_restore_source"] == "automatic"
+        assert client.account_enabled is False
+        assert client.account_priority == 7
+        assert client.account_max_concurrent == 4
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_transient_scheduler_error_is_retried_as_one_successful_sample(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.probe_errors = [
+        IntegrationError(
+            "temporarily unavailable",
+            status_code=503,
+            error_code="client_key_account_scope_unavailable",
+            request_id="failed-request",
+        )
+    ]
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+            probe_transient_retry_attempts=1,
+            probe_transient_retry_base_seconds=0.1,
+            probe_transient_retry_max_seconds=0.1,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(repository, run_id)
+        sample = detail["samples"][0]
+        assert detail["run"]["status"] == "completed"
+        assert client.probe_calls == 2
+        assert sample["status"] == "done"
+        assert sample["usage"]["probeAttempts"] == 2
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_final_transient_error_preserves_http_and_retry_metadata(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.probe_error = IntegrationError(
+        "scope temporarily unavailable",
+        status_code=503,
+        error_code="client_key_account_scope_unavailable",
+        retry_after_seconds=5,
+        request_id="failed-request",
+    )
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+            probe_transient_retry_attempts=0,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(repository, run_id)
+        sample = detail["samples"][0]
+        assert detail["run"]["status"] == "completed_with_errors"
+        assert sample["status_code"] == 503
+        assert sample["error_code"] == "client_key_account_scope_unavailable"
+        assert sample["request_id"] == "failed-request"
+        assert sample["retry_count"] == 0
+        assert sample["retry_after_seconds"] == 5
+        assert sample["usage"]["probeError"]["transient"] is True
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_restore_failure_is_marked_then_manual_sync_clears_it(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    client = DisabledFakeGrokClient()
+    # The per-sample rollback and the final cleanup both fail.
+    client.restore_routing_failures = 2
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(repository, run_id)
+        failed = detail["run"]
+        assert failed["status"] == "failed"
+        assert failed["account_restore_status"] == "restore_failed"
+        assert failed["diagnostic_activation_active"] is True
+        assert failed["account_restore_attempts"] == 1
+        assert "simulated account restore failure" in failed["account_restore_error"]
+
+        restored = await manager.restore_run_account_settings(run_id)
+        assert restored["account_restore_status"] == "manual_restored"
+        assert restored["account_restore_source"] == "manual"
+        assert restored["diagnostic_activation_active"] is False
+        assert restored["account_restore_attempts"] == 2
+        assert client.account_enabled is False
+        assert client.account_priority == 7
+        assert client.account_max_concurrent == 4
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_marks_cancelled_run_as_startup_restored(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    repository.seed_defaults()
+    run_id = create_run(repository)
+    assert repository.claim_next("crashed-worker") is not None
+    repository.ensure_account_settings_snapshot(
+        run_id=run_id,
+        enabled=False,
+        priority=7,
+        max_concurrent=4,
+        egress_node_id=None,
+        egress_assignment_mode="",
+        diagnostic_priority=-1_000_000,
+        diagnostic_max_concurrent=1,
+    )
+    repository.set_upstream_context(
+        run_id=run_id,
+        original_node_id=None,
+        original_mode="",
+        route_id="route-1",
+        public_model="gam-probe-test",
+        client_key_id="key-1",
+    )
+    repository.set_diagnostic_activation(run_id, True)
+    assert repository.request_cancel(run_id) == "cancel_requested"
+
+    client = DisabledFakeGrokClient()
+    client.account_enabled = True
+    client.account_priority = -1_000_000
+    client.account_max_concurrent = 1
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        detail = repository.run_detail(run_id)
+        assert detail is not None
+        run = detail["run"]
+        assert run["status"] == "cancelled"
+        assert run["account_restore_status"] == "startup_restored"
+        assert run["account_restore_source"] == "startup"
+        assert run["diagnostic_activation_active"] is False
+        assert client.account_enabled is False
+        assert client.deleted_route and client.deleted_key
+    finally:
+        await manager.stop()
+
+
+def test_failed_restore_blocks_followup_claim_delete_and_retry(repository: ProbeRepository):
+    failed_run_id = create_run(repository)
+    assert repository.claim_next("worker-1") is not None
+    repository.ensure_account_settings_snapshot(
+        run_id=failed_run_id,
+        enabled=False,
+        priority=7,
+        max_concurrent=4,
+        egress_node_id=None,
+        egress_assignment_mode="",
+        diagnostic_priority=-1_000_000,
+        diagnostic_max_concurrent=1,
+    )
+    repository.begin_account_restore(failed_run_id, "automatic")
+    repository.finish_account_restore(failed_run_id, "automatic", "restore failed")
+    repository.finish_run(failed_run_id, status="failed", error="restore failed")
+    queued_run_id = create_run(repository)
+
+    assert repository.claim_next("worker-2") is None
+    with pytest.raises(RunStateError, match="同步原设置"):
+        repository.delete_run(failed_run_id)
+    with pytest.raises(RunStateError, match="同步原设置"):
+        repository.retry_values(failed_run_id)
+
+    repository.begin_account_restore(failed_run_id, "manual")
+    repository.finish_account_restore(failed_run_id, "manual")
+    claimed = repository.claim_next("worker-2")
+    assert claimed is not None
+    assert claimed.run["id"] == queued_run_id
+
+
+@pytest.mark.asyncio
+async def test_worker_persists_result_and_restores_upstream(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    account_repository = AccountRepository(database)
+    client = FakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=account_repository,
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "egress", "id": 7}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        assert detail["run"]["status"] == "completed"
+        assert detail["samples"][0]["response_text"] == "探针校验通过"
+        assert client.restored and client.deleted_route and client.deleted_key
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_chat_probe_keeps_metrics_when_actual_egress_differs_from_target(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.chat_egress_override = 3
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "egress", "id": 7}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        sample = detail["samples"][0]
+        assert detail["run"]["status"] == "completed"
+        assert sample["status"] == "done"
+        assert sample["egress_node_id"] == 7
+        assert sample["verified_egress_node_id"] == 3
+        assert sample["tps"] == 100
+        assert sample["error"] == ""
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_quality_test_pins_account_and_node_without_changing_binding(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    account_repository = AccountRepository(database)
+    client = FakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=account_repository,
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            execution_mode="quality_test",
+            rounds=1,
+            proxy_targets=[{"kind": "egress", "id": 7}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        assert detail["run"]["status"] == "completed"
+        assert detail["run"]["execution_mode"] == "quality_test"
+        assert detail["samples"][0]["response_text"] == ""
+        assert detail["samples"][0]["verified_egress_node_id"] == 7
+        assert client.bindings == []
+        assert client.restored is False
+        assert client.deleted_route and client.deleted_key
+    finally:
+        await manager.stop()

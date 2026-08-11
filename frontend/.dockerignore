@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+.vitest-attachments/
+*.log
+.env*
