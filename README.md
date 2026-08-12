@@ -214,6 +214,37 @@ http://monitor-backend:8090/api/integrations/grok-register/account-imported
 
 请求使用 `x-monitor-token`，两边填写的 Token 必须一致。
 
+最小请求体只需要邮箱，监控端会从 Grok2API 按邮箱精确匹配账号：
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+调用方存在自动重试时，推荐提供稳定的 `event_id`；同一次事件的每次重试必须使用相同值：
+
+```json
+{
+  "event_id": "registration:123:grok2api-imported",
+  "email": "user@example.com"
+}
+```
+
+完整请求体还支持以下可选字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `event_id` | string | 幂等事件 ID；省略时按邮箱生成 |
+| `event_type` | string | 事件类型，默认 `grok2api.account_imported` |
+| `registration_id` | string | 调用方自己的注册记录 ID |
+| `grok2api_account_id` | integer | 已知时可传；未知时按邮箱匹配 |
+| `bot_risk` | boolean | 注册阶段是否发现风控，默认 `false` |
+| `bfs` | string / integer | 注册阶段的 bfs 风控值 |
+| `occurred_at` | string | 事件发生时间，建议使用 ISO 8601 |
+
+接口返回 HTTP `202` 表示事件已经持久接收，账号匹配、失败重试和探针执行由后台继续完成。探针方案、模式、轮次和出口均使用监控端“默认策略”，调用方不需要传入。
+
 ### 投递行为
 
 - `grok-register` 先把事件写入本地 Outbox，再由后台线程投递；网络错误或非 `2xx` 会自动退避重试。

@@ -123,6 +123,13 @@ const secretMetadata: Record<
 }
 
 const REGISTER_WEBHOOK_PATH = '/api/integrations/grok-register/account-imported'
+const REGISTER_WEBHOOK_MINIMAL_BODY = `{
+  "email": "user@example.com"
+}`
+const REGISTER_WEBHOOK_RECOMMENDED_BODY = `{
+  "event_id": "registration:123:grok2api-imported",
+  "email": "user@example.com"
+}`
 const WECHAT_TEMPLATE_BODY = `{{first.DATA}}
 账号：{{account.DATA}}
 状态：{{status.DATA}}
@@ -997,6 +1004,8 @@ export function SettingsPage() {
                     </div>
                   </div>
                 </div>
+
+                <WebhookContract />
               </IntegrationSection>
 
               <IntegrationSection
@@ -1541,6 +1550,154 @@ function IntegrationFlow({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function WebhookContract() {
+  const copyBody = (body: string, label: string) =>
+    void copyText(body)
+      .then(() => toast.success(`已复制${label}`))
+      .catch((error) => toast.error(getErrorMessage(error)))
+
+  const optionalFields = [
+    {
+      name: 'event_id',
+      type: 'string',
+      description: '推荐传入；重试时保持不变，用于幂等去重。省略时按邮箱生成。',
+    },
+    {
+      name: 'event_type',
+      type: 'string',
+      description: '事件类型，默认 grok2api.account_imported。',
+    },
+    {
+      name: 'registration_id',
+      type: 'string',
+      description: '调用方自己的注册记录 ID。',
+    },
+    {
+      name: 'grok2api_account_id',
+      type: 'integer',
+      description: '已知时可传；未知时监控端按邮箱精确匹配。',
+    },
+    {
+      name: 'bot_risk',
+      type: 'boolean',
+      description: '注册阶段是否发现风控，默认 false。',
+    },
+    {
+      name: 'bfs',
+      type: 'string | integer',
+      description: '注册阶段的 bfs 风控值。',
+    },
+    {
+      name: 'occurred_at',
+      type: 'string',
+      description: '事件发生时间，建议使用 ISO 8601。',
+    },
+  ]
+
+  return (
+    <div className='mt-5 overflow-hidden rounded-xl border'>
+      <div className='flex flex-col gap-2 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
+        <div>
+          <div className='text-sm font-medium'>请求协议</div>
+          <p className='mt-0.5 text-xs leading-5 text-muted-foreground'>
+            POST JSON；必填字段只有 email，探针策略由本页面统一维护。
+          </p>
+        </div>
+        <div className='flex flex-wrap gap-2 text-xs'>
+          <Badge variant='outline'>POST</Badge>
+          <Badge variant='outline'>Content-Type: application/json</Badge>
+          <Badge variant='outline'>x-monitor-token: 联动令牌</Badge>
+        </div>
+      </div>
+
+      <div className='grid gap-0 lg:grid-cols-2 lg:divide-x'>
+        <WebhookBodyExample
+          title='最小请求体'
+          description='适合简单调用方，监控端自动生成事件 ID。'
+          body={REGISTER_WEBHOOK_MINIMAL_BODY}
+          onCopy={() => copyBody(REGISTER_WEBHOOK_MINIMAL_BODY, '最小请求体')}
+        />
+        <WebhookBodyExample
+          title='推荐请求体'
+          description='调用方会重试时传 event_id，避免重复创建任务。'
+          body={REGISTER_WEBHOOK_RECOMMENDED_BODY}
+          onCopy={() =>
+            copyBody(REGISTER_WEBHOOK_RECOMMENDED_BODY, '推荐请求体')
+          }
+        />
+      </div>
+
+      <div className='border-t px-4 py-3'>
+        <div className='mb-2 text-xs font-medium'>可选字段</div>
+        <div className='grid gap-x-5 gap-y-2 md:grid-cols-2'>
+          {optionalFields.map((field) => (
+            <div
+              key={field.name}
+              className='grid min-w-0 grid-cols-[minmax(7rem,auto)_1fr] gap-3 text-xs leading-5'
+            >
+              <div className='min-w-0'>
+                <code className='break-all font-mono text-foreground'>
+                  {field.name}
+                </code>
+                <div className='text-[11px] text-muted-foreground'>
+                  {field.type}
+                </div>
+              </div>
+              <p className='text-muted-foreground'>{field.description}</p>
+            </div>
+          ))}
+        </div>
+        <p className='mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground'>
+          返回 HTTP 202 表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function WebhookBodyExample({
+  title,
+  description,
+  body,
+  onCopy,
+}: {
+  title: string
+  description: string
+  body: string
+  onCopy: () => void
+}) {
+  return (
+    <div className='min-w-0 p-4'>
+      <div className='mb-3 flex items-start justify-between gap-3'>
+        <div>
+          <div className='text-xs font-medium'>{title}</div>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            {description}
+          </p>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='size-8 shrink-0'
+              onClick={onCopy}
+              aria-label={`复制${title}`}
+            >
+              <Copy />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>复制请求体</TooltipContent>
+        </Tooltip>
+      </div>
+      <pre className='max-w-full overflow-x-auto rounded-lg bg-muted/45 p-3 font-mono text-xs leading-5 text-foreground'>
+        <code>{body}</code>
+      </pre>
     </div>
   )
 }
