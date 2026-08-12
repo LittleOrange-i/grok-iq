@@ -73,7 +73,12 @@ class Database:
                 (
                     "execution_mode",
                     "ALTER TABLE probe_plans ADD COLUMN execution_mode VARCHAR(24) NOT NULL DEFAULT 'chat'",
-                )
+                ),
+                (
+                    "account_scope",
+                    "ALTER TABLE probe_plans ADD COLUMN account_scope VARCHAR(24) "
+                    "NOT NULL DEFAULT 'fixed'",
+                ),
             ],
             "probe_runs": [
                 (

@@ -52,6 +52,8 @@ def build_health_router(
             "queue": probes.queue_stats(),
             "scheduler": {
                 "enabled": settings.scheduler_enabled,
+                "plansEnabled": settings.scheduler_enabled,
+                "systemRecoveryEnabled": True,
                 "running": scheduler.scheduler.running,
             },
             "integration": {

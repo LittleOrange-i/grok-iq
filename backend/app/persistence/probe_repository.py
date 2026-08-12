@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import case, delete, func, or_, select
@@ -804,6 +805,7 @@ class ProbeRepository:
         execution_mode: str,
         priority: int,
         queue_limit: int,
+        register_cooldown_minutes: int = 0,
     ) -> dict[str, Any]:
         """Atomically expand one Cron trigger into account/profile runs."""
 
@@ -819,6 +821,7 @@ class ProbeRepository:
                 "createdAccountIds": [],
                 "activeAccountIds": [],
                 "restoreBlockedAccountIds": [],
+                "registerCooldownAccountIds": [],
                 "profileIds": _profile_ids(profile_ids),
             }
 
@@ -833,11 +836,23 @@ class ProbeRepository:
                 session.scalars(
                     select(ProbeRun.account_id).where(
                         ProbeRun.account_id.in_(requested_ids),
-                        ProbeRun.plan_id == plan_id,
                         ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
                     )
                 ).all()
             )
+            cooldown_account_ids: set[int] = set()
+            if register_cooldown_minutes > 0:
+                cooldown_cutoff = now - timedelta(minutes=register_cooldown_minutes)
+                cooldown_account_ids = set(
+                    session.scalars(
+                        select(ProbeRun.account_id).where(
+                            ProbeRun.account_id.in_(requested_ids),
+                            ProbeRun.trigger == "register",
+                            ProbeRun.completed_at.is_not(None),
+                            ProbeRun.completed_at >= cooldown_cutoff,
+                        )
+                    ).all()
+                )
             restore_blocked_account_ids = set(
                 session.scalars(
                     select(ProbeRun.account_id).where(
@@ -852,7 +867,10 @@ class ProbeRepository:
                 ).all()
             )
             candidate_ids = sorted(
-                requested_ids - active_account_ids - restore_blocked_account_ids
+                requested_ids
+                - active_account_ids
+                - restore_blocked_account_ids
+                - cooldown_account_ids
             )
             active_count = int(
                 session.scalar(
@@ -906,6 +924,7 @@ class ProbeRepository:
             "createdAccountIds": candidate_ids,
             "activeAccountIds": sorted(active_account_ids),
             "restoreBlockedAccountIds": sorted(restore_blocked_account_ids),
+            "registerCooldownAccountIds": sorted(cooldown_account_ids),
             "profileIds": selected_profile_ids,
         }
 

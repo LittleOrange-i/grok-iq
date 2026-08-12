@@ -176,6 +176,9 @@ class RuntimeSettingsService:
             "schedulerTimezone": s.scheduler_timezone,
             "schedulerMisfireGraceSeconds": s.scheduler_misfire_grace_seconds,
             "recoveryCron": s.recovery_cron,
+            "scheduledProbeRegisterCooldownMinutes": (
+                s.scheduled_probe_register_cooldown_minutes
+            ),
             "probeWorkerConcurrency": s.probe_worker_concurrency,
             "probeQueueLimit": s.probe_queue_limit,
             "probeStepDelaySeconds": s.probe_step_delay_seconds,

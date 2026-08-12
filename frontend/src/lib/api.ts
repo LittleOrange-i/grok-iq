@@ -241,12 +241,15 @@ export type ProxyTarget = {
   name?: string
 }
 
+export type PlanAccountScope = 'fixed' | 'all_enabled' | 'risky_enabled'
+
 export type ProbePlan = {
   id: string
   name: string
   description: string
   profile_id: string
   profile_ids: string[]
+  account_scope: PlanAccountScope
   account_ids: number[]
   proxy_targets: ProxyTarget[]
   execution_mode: ExecutionMode
@@ -460,6 +463,7 @@ export type RuntimeSettings = {
   schedulerTimezone: string
   schedulerMisfireGraceSeconds: number
   recoveryCron: string
+  scheduledProbeRegisterCooldownMinutes: number
   probeWorkerConcurrency: number
   probeQueueLimit: number
   probeStepDelaySeconds: number
@@ -516,6 +520,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'schedulerTimezone'
     | 'schedulerMisfireGraceSeconds'
     | 'recoveryCron'
+    | 'scheduledProbeRegisterCooldownMinutes'
     | 'probeWorkerConcurrency'
     | 'probeQueueLimit'
     | 'probeStepDelaySeconds'
@@ -553,6 +558,7 @@ type RuntimeSettingsWire = Omit<
   | 'wechatAppSecretConfigured'
   | 'wechatOpenid'
   | 'wechatTemplateId'
+  | 'scheduledProbeRegisterCooldownMinutes'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
@@ -564,6 +570,7 @@ type RuntimeSettingsWire = Omit<
   wechatAppSecretConfigured?: boolean
   wechatOpenid?: string
   wechatTemplateId?: string
+  scheduledProbeRegisterCooldownMinutes?: number
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -579,6 +586,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     ],
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
+    scheduledProbeRegisterCooldownMinutes:
+      value.scheduledProbeRegisterCooldownMinutes ?? 360,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',
     wechatAppSecretConfigured: value.wechatAppSecretConfigured ?? false,
@@ -754,6 +763,8 @@ export type ScheduleExecution = {
 
 export type SchedulerResponse = {
   enabled: boolean
+  plansEnabled?: boolean
+  systemRecoveryEnabled?: boolean
   running: boolean
   plans: ProbePlan[]
   systemJobs: SchedulerJob[]

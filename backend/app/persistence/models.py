@@ -152,6 +152,11 @@ class ProbePlan(Base):
     # run still references exactly one profile so evidence never mixes schemes.
     profile_id: Mapped[str] = mapped_column(ForeignKey("probe_profiles.id"), nullable=False)
     profile_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Fixed plans keep their concrete IDs. Dynamic plans resolve the upstream
+    # account set at trigger time so newly imported accounts are included.
+    account_scope: Mapped[str] = mapped_column(
+        String(24), default="fixed", nullable=False
+    )
     account_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
     # Each target is {kind: "current"|"direct"|"egress", id?: int, name?: str}.
     proxy_targets: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)

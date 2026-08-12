@@ -251,6 +251,12 @@ class RuntimeSettingsInput(BaseModel):
         default=None, alias="schedulerMisfireGraceSeconds", ge=1, le=86_400
     )
     recovery_cron: str | None = Field(default=None, alias="recoveryCron")
+    scheduled_probe_register_cooldown_minutes: int | None = Field(
+        default=None,
+        alias="scheduledProbeRegisterCooldownMinutes",
+        ge=0,
+        le=7 * 24 * 60,
+    )
     probe_worker_concurrency: int | None = Field(default=None, alias="probeWorkerConcurrency", ge=1, le=32)
     probe_queue_limit: int | None = Field(default=None, alias="probeQueueLimit", ge=1, le=100_000)
     probe_step_delay_seconds: float | None = Field(default=None, alias="probeStepDelaySeconds", ge=0, le=60)
@@ -329,7 +335,8 @@ class ProbePlanInput(BaseModel):
     description: str = Field(default="", max_length=500)
     profile_id: str = ""
     profile_ids: list[str] = Field(default_factory=list, max_length=1000)
-    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+    account_scope: Literal["fixed", "all_enabled", "risky_enabled"] = "fixed"
+    account_ids: list[int] = Field(default_factory=list, max_length=100_000)
     proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
     execution_mode: Literal["chat", "quality_test"] = "chat"
     rounds: int = Field(default=1, ge=1, le=20)
@@ -344,6 +351,17 @@ class ProbePlanInput(BaseModel):
         self.profile_ids = _normalize_profile_selection(self.profile_ids, self.profile_id)
         self.profile_id = self.profile_ids[0]
         _validate_proxy_target_selection(self.proxy_targets, self.execution_mode)
+        self.account_ids = list(
+            dict.fromkeys(account_id for account_id in self.account_ids if account_id > 0)
+        )
+        if self.account_scope == "fixed" and not self.account_ids:
+            raise ValueError("固定账号计划至少选择一个账号")
+        if self.account_scope != "fixed":
+            self.account_ids = []
+        if self.execution_mode != "chat" or any(
+            target.kind != "current" for target in self.proxy_targets
+        ):
+            raise ValueError("Cron 周期巡检仅支持完整对话和账号当前出口")
         return self
 
 

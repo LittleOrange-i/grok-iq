@@ -67,12 +67,15 @@ class Settings(BaseSettings):
     wechat_openid: str = ""
     wechat_template_id: str = ""
 
-    # Every user-created probe plan has its own Cron expression. This system
-    # Cron only handles monitor-owned quarantine recovery.
+    # The scheduler process always runs monitor-owned quarantine recovery.
+    # This switch gates only the user-created plans with their own Cron values.
     scheduler_enabled: bool = True
     scheduler_timezone: str = "UTC"
     scheduler_misfire_grace_seconds: int = Field(default=300, ge=1, le=86_400)
     recovery_cron: str = "*/5 * * * *"
+    scheduled_probe_register_cooldown_minutes: int = Field(
+        default=360, ge=0, le=7 * 24 * 60
+    )
 
     # Persistent probe queue. A short Cron interval therefore cannot create
     # unbounded asyncio tasks.
@@ -122,6 +125,7 @@ class Settings(BaseSettings):
         "scheduler_timezone",
         "scheduler_misfire_grace_seconds",
         "recovery_cron",
+        "scheduled_probe_register_cooldown_minutes",
         "probe_worker_concurrency",
         "probe_queue_limit",
         "probe_step_delay_seconds",

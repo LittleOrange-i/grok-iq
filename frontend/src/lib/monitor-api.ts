@@ -86,8 +86,11 @@ export type ProbePlan = {
   name: string
   description: string
   profile_id: string
+  profile_ids: string[]
+  account_scope: 'fixed' | 'all_enabled' | 'risky_enabled'
   account_ids: number[]
   proxy_targets: ProxyTarget[]
+  execution_mode: 'chat' | 'quality_test'
   rounds: number
   cron_expression: string
   timezone: string

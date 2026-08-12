@@ -321,13 +321,44 @@ class ProbeManager:
             )
         )
         if plan.get("overlap_policy") == "skip" and self.repository.active_plan_run_count(plan_id):
-            return {"created": 0, "skipped": len(plan["account_ids"]), "reason": "previous_batch_active"}
+            return {
+                "accountScope": str(plan.get("account_scope") or "fixed"),
+                "created": 0,
+                "skipped": len(plan["account_ids"]),
+                "reason": "previous_batch_active",
+            }
 
-        requested_ids = {int(value) for value in plan["account_ids"]}
-        upstream_accounts = await self.client.list_all_accounts(requested_ids)
-        by_id = {int(value.get("id") or 0): value for value in upstream_accounts}
         execution_mode = str(plan.get("execution_mode") or "chat")
-        targets = await self.validate_targets(list(plan["proxy_targets"]), execution_mode=execution_mode)
+        raw_targets = list(plan["proxy_targets"])
+        if execution_mode != "chat" or any(
+            str(target.get("kind") or "") != "current" for target in raw_targets
+        ):
+            raise ValueError("Cron 周期巡检仅支持完整对话和账号当前出口")
+
+        account_scope = str(plan.get("account_scope") or "fixed")
+        if account_scope == "fixed":
+            requested_ids = {int(value) for value in plan["account_ids"]}
+            upstream_accounts = await self.client.list_all_accounts(requested_ids)
+        elif account_scope in {"all_enabled", "risky_enabled"}:
+            upstream_accounts = await self.client.list_all_accounts()
+            upstream_accounts = [
+                account for account in upstream_accounts if bool(account.get("enabled"))
+            ]
+            if account_scope == "risky_enabled":
+                risky_account_ids = self.accounts.risky_account_ids()
+                upstream_accounts = [
+                    account
+                    for account in upstream_accounts
+                    if int(account.get("id") or 0) in risky_account_ids
+                ]
+            requested_ids = {
+                int(account.get("id") or 0) for account in upstream_accounts
+            }
+            requested_ids.discard(0)
+        else:
+            raise ValueError("Cron 计划账号范围无效")
+        by_id = {int(value.get("id") or 0): value for value in upstream_accounts}
+        targets = await self.validate_targets(raw_targets, execution_mode=execution_mode)
         missing: list[int] = []
         invalid: list[dict[str, Any]] = []
         diagnostic: list[int] = []
@@ -355,6 +386,9 @@ class ProbeManager:
                 proxy_targets=targets,
                 priority=int(plan["priority"]),
                 queue_limit=self.settings.probe_queue_limit,
+                register_cooldown_minutes=(
+                    self.settings.scheduled_probe_register_cooldown_minutes
+                ),
             )
         created = len(result["runIds"])
         if created:
@@ -363,7 +397,10 @@ class ProbeManager:
         skipped_account_ids.update(item["id"] for item in invalid)
         skipped_account_ids.update(result["activeAccountIds"])
         skipped_account_ids.update(result["restoreBlockedAccountIds"])
+        skipped_account_ids.update(result["registerCooldownAccountIds"])
         return {
+            "accountScope": account_scope,
+            "resolvedAccountCount": len(requested_ids),
             "created": created,
             "skipped": len(skipped_account_ids),
             "missingAccountIds": missing,
@@ -371,6 +408,7 @@ class ProbeManager:
             "diagnosticAccountIds": diagnostic,
             "activeAccountIds": result["activeAccountIds"],
             "restoreBlockedAccountIds": result["restoreBlockedAccountIds"],
+            "registerCooldownAccountIds": result["registerCooldownAccountIds"],
             "profileIds": result["profileIds"],
             "runIds": result["runIds"],
         }

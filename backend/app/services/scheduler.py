@@ -34,8 +34,6 @@ class SchedulerService:
 
     async def start(self) -> None:
         self.scheduler = AsyncIOScheduler(timezone=self.settings.scheduler_timezone)
-        if not self.settings.scheduler_enabled:
-            return
         self.scheduler.start()
         self.reload()
 
@@ -65,9 +63,10 @@ class SchedulerService:
             return
         for job in list(self.scheduler.get_jobs()):
             self.scheduler.remove_job(job.id)
-        for plan in self.repository.list_plans():
-            if plan["enabled"]:
-                self._add_plan_job(plan)
+        if self.settings.scheduler_enabled:
+            for plan in self.repository.list_plans():
+                if plan["enabled"]:
+                    self._add_plan_job(plan)
         self.scheduler.add_job(
             self._run_recovery,
             CronTrigger.from_crontab(
@@ -199,6 +198,8 @@ class SchedulerService:
             plans.append({**plan, "job": jobs.get(f"plan:{plan['id']}")})
         return {
             "enabled": self.settings.scheduler_enabled,
+            "plansEnabled": self.settings.scheduler_enabled,
+            "systemRecoveryEnabled": True,
             "running": self.scheduler.running,
             "plans": plans,
             "systemJobs": [value for key, value in jobs.items() if key.startswith("system:")],
