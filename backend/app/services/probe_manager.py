@@ -31,9 +31,7 @@ from app.services.wechat_notification import WeChatAccountNotificationService
 
 logger = logging.getLogger(__name__)
 FAST_QUALITY_PROBE_EXPECTED = "探针校验通过"
-FAST_QUALITY_PROBE_PROMPT = (
-    f"请只输出“{FAST_QUALITY_PROBE_EXPECTED}”，不要添加其他内容。"
-)
+FAST_QUALITY_PROBE_PROMPT = f"请只输出“{FAST_QUALITY_PROBE_EXPECTED}”，不要添加其他内容。"
 
 
 class AccountRestoreError(RuntimeError):
@@ -92,9 +90,7 @@ class ProbeManager:
         self.client = client
         self.thresholds = thresholds
         self.notifications = notifications
-        self.log_path = log_path or (
-            settings.database_path.resolve().parent / "logs" / PROBE_LOG_FILE_NAME
-        )
+        self.log_path = log_path or (settings.database_path.resolve().parent / "logs" / PROBE_LOG_FILE_NAME)
         self._process_started_at = utc_now()
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._worker_runtime: dict[int, WorkerRuntime] = {}
@@ -105,6 +101,8 @@ class ProbeManager:
         self._desired_worker_concurrency = settings.probe_worker_concurrency
         self._claim_lock = asyncio.Lock()
         self._enqueue_lock = asyncio.Lock()
+        self._current_probe_lock = asyncio.Lock()
+        self._next_current_probe_at = 0.0
 
     async def start(self) -> None:
         if self._started:
@@ -175,8 +173,8 @@ class ProbeManager:
     ) -> str:
         self._ensure_account_restore_ready(account_id)
         account = await self.client.get_account(account_id)
-        self._validate_probe_account(account)
         targets = await self.validate_targets(proxy_targets, execution_mode=execution_mode)
+        self._validate_account_for_targets(account, targets)
         async with self._enqueue_lock:
             run_id = self.repository.create_run(
                 account_id=account_id,
@@ -204,11 +202,7 @@ class ProbeManager:
         profile_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         selected_profile_ids = list(
-            dict.fromkeys(
-                str(value).strip()
-                for value in (profile_ids or [profile_id])
-                if str(value).strip()
-            )
+            dict.fromkeys(str(value).strip() for value in (profile_ids or [profile_id]) if str(value).strip())
         )
         requested_ids = {int(account_id) for account_id in account_ids if int(account_id) > 0}
         upstream_accounts, targets = await asyncio.gather(
@@ -223,7 +217,7 @@ class ProbeManager:
         for account_id in sorted(requested_ids & by_id.keys()):
             account = by_id[account_id]
             try:
-                self._validate_probe_account(account)
+                self._validate_account_for_targets(account, targets)
             except ValueError as exc:
                 invalid.append({"id": account_id, "reason": str(exc)})
                 continue
@@ -248,6 +242,31 @@ class ProbeManager:
         skipped_ids.update(item["id"] for item in invalid)
         skipped_ids.update(result["activeAccountIds"])
         skipped_ids.update(result["restoreBlockedAccountIds"])
+        invalid_reasons = {item["id"]: item["reason"] for item in invalid}
+        skipped_accounts = []
+        for account_id in sorted(skipped_ids):
+            account = by_id.get(account_id, {})
+            if account_id in missing:
+                code = "missing"
+                reason = f"账号 {account_id} 已不在 grok2api 账号列表中"
+            elif account_id in result["restoreBlockedAccountIds"]:
+                code = "restore_blocked"
+                reason = f"账号 {account_id} 存在未完成的原设置恢复，请先在历史任务中同步"
+            elif account_id in result["activeAccountIds"]:
+                code = "active_run"
+                reason = f"账号 {account_id} 已有排队或执行中的探针任务，请等待其结束"
+            else:
+                code = "invalid"
+                reason = invalid_reasons.get(account_id, f"账号 {account_id} 不满足创建条件")
+            skipped_accounts.append(
+                {
+                    "id": account_id,
+                    "name": str(account.get("name") or ""),
+                    "email": str(account.get("email") or ""),
+                    "code": code,
+                    "reason": reason,
+                }
+            )
         return {
             "requested": len(requested_ids),
             "requestedTasks": len(requested_ids) * len(selected_profile_ids),
@@ -259,6 +278,7 @@ class ProbeManager:
             "activeAccountIds": result["activeAccountIds"],
             "restoreBlockedAccountIds": result["restoreBlockedAccountIds"],
             "diagnosticAccountIds": diagnostic,
+            "skippedAccounts": skipped_accounts,
             "runIds": result["runIds"],
         }
 
@@ -274,10 +294,8 @@ class ProbeManager:
     ) -> dict[str, Any]:
         account_id = int(account.get("id") or 0)
         self._ensure_account_restore_ready(account_id)
-        self._validate_probe_account(account)
-        targets = await self.validate_targets(
-            proxy_targets, execution_mode=execution_mode
-        )
+        targets = await self.validate_targets(proxy_targets, execution_mode=execution_mode)
+        self._validate_account_for_targets(account, targets)
         async with self._enqueue_lock:
             result = self.repository.create_register_runs(
                 source_event_id=source_event_id,
@@ -311,12 +329,18 @@ class ProbeManager:
         execution_mode = str(plan.get("execution_mode") or "chat")
         targets = await self.validate_targets(list(plan["proxy_targets"]), execution_mode=execution_mode)
         missing: list[int] = []
+        invalid: list[dict[str, Any]] = []
         diagnostic: list[int] = []
         available_accounts: list[dict[str, Any]] = []
         for account_id in sorted(requested_ids):
             account = by_id.get(account_id)
             if account is None:
                 missing.append(account_id)
+                continue
+            try:
+                self._validate_account_for_targets(account, targets)
+            except ValueError as exc:
+                invalid.append({"id": account_id, "reason": str(exc)})
                 continue
             if not bool(account.get("enabled")):
                 diagnostic.append(account_id)
@@ -336,12 +360,14 @@ class ProbeManager:
         if created:
             self._wake.set()
         skipped_account_ids = set(missing)
+        skipped_account_ids.update(item["id"] for item in invalid)
         skipped_account_ids.update(result["activeAccountIds"])
         skipped_account_ids.update(result["restoreBlockedAccountIds"])
         return {
             "created": created,
             "skipped": len(skipped_account_ids),
             "missingAccountIds": missing,
+            "invalidAccounts": invalid,
             "diagnosticAccountIds": diagnostic,
             "activeAccountIds": result["activeAccountIds"],
             "restoreBlockedAccountIds": result["restoreBlockedAccountIds"],
@@ -353,7 +379,7 @@ class ProbeManager:
         values = self.repository.retry_values(run_id)
         self._ensure_account_restore_ready(int(values["account_id"]))
         account = await self.client.get_account(int(values["account_id"]))
-        self._validate_probe_account(account)
+        self._validate_account_for_targets(account, list(values["proxy_targets"]))
         new_id = self.repository.create_run(
             **values,
             trigger="retry",
@@ -380,15 +406,44 @@ class ProbeManager:
         self._wake.set()
         return result
 
+    async def restore_many(self, run_ids: list[str]) -> dict[str, Any]:
+        """Replay persisted account snapshots for many runs, one at a time.
+
+        Each restore mutates shared upstream account state behind the claim
+        lock, so the runs are processed sequentially and a failing run only
+        reports itself instead of aborting the batch.
+        """
+
+        requested = list(dict.fromkeys(run_id for run_id in run_ids if run_id))
+        restored = 0
+        failures: list[dict[str, str]] = []
+        for run_id in requested:
+            try:
+                await self.restore_run_account_settings(run_id)
+                restored += 1
+            except Exception as exc:
+                failures.append({"id": run_id, "error": str(exc)})
+        return {
+            "requested": len(requested),
+            "restored": restored,
+            "failed": len(failures),
+            "failedRunIds": [failure["id"] for failure in failures],
+            "failures": failures,
+        }
+
     async def validate_targets(
         self, targets: list[dict[str, Any]], *, execution_mode: str = "chat"
     ) -> list[dict[str, Any]]:
         if not targets:
-            raise ValueError("至少选择一个上游调度或固定出口目标")
+            raise ValueError("至少选择一个账号当前出口或诊断出口目标")
         if execution_mode not in {"chat", "quality_test"}:
             raise ValueError("探针执行模式无效")
         if execution_mode == "quality_test" and any(target.get("kind") != "egress" for target in targets):
             raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        if any(target.get("kind") == "current" for target in targets) and any(
+            target.get("kind") != "current" for target in targets
+        ):
+            raise ValueError("账号当前出口不能与诊断出口混用，请分别创建定检和诊断任务")
         requested_node_ids = {
             int(target.get("id") or 0) for target in targets if target.get("kind") == "egress"
         }
@@ -413,8 +468,11 @@ class ProbeManager:
         seen: set[str] = set()
         for target in targets:
             kind = str(target.get("kind") or "")
-            if kind == "direct":
-                value = {"kind": "direct", "id": None, "name": "上游调度"}
+            if kind == "current":
+                value = {"kind": "current", "id": None, "name": "账号当前出口"}
+                key = "current"
+            elif kind == "direct":
+                value = {"kind": "direct", "id": None, "name": "上游调度（诊断）"}
                 key = "direct"
             elif kind == "egress":
                 node_id = int(target.get("id") or 0)
@@ -426,7 +484,7 @@ class ProbeManager:
                 value = {"kind": "egress", "id": node_id, "name": str(node.get("name") or node_id)}
                 key = f"egress:{node_id}"
             else:
-                raise ValueError("代理目标 kind 必须为 direct 或 egress")
+                raise ValueError("代理目标 kind 必须为 current、direct 或 egress")
             if key not in seen:
                 normalized.append(value)
                 seen.add(key)
@@ -438,6 +496,17 @@ class ProbeManager:
         auth_status = str(account.get("authStatus") or "")
         if auth_status and auth_status != "active":
             raise ValueError(f"账号 {account_id} 当前鉴权状态为 {auth_status}，暂不具备探针执行条件")
+
+    @classmethod
+    def _validate_account_for_targets(cls, account: dict[str, Any], targets: list[dict[str, Any]]) -> None:
+        cls._validate_probe_account(account)
+        if not any(target.get("kind") == "current" for target in targets):
+            return
+        account_id = int(account.get("id") or 0)
+        if not bool(account.get("enabled")):
+            raise ValueError(f"账号 {account_id} 已停用，正常定检不会临时激活；请启用账号或改用人工诊断")
+        if int(account.get("egressNodeId") or 0) <= 0:
+            raise ValueError(f"账号 {account_id} 未绑定固定出口；请先在 grok2api 绑定账号出口")
 
     def _ensure_account_restore_ready(self, account_id: int) -> None:
         if self.repository.has_blocking_account_restore(account_id=account_id):
@@ -456,11 +525,7 @@ class ProbeManager:
             status = runtime.status
             if task is not None and task.done() and status not in {"stopped", "restarting"}:
                 status = "error"
-            elif (
-                status == "idle"
-                and queue["queued"] > 0
-                and queue["eligible"] == 0
-            ):
+            elif status == "idle" and queue["queued"] > 0 and queue["eligible"] == 0:
                 status = "blocked"
             workers.append(
                 {
@@ -497,18 +562,14 @@ class ProbeManager:
                 }
             )
 
-        live_workers = sum(
-            bool(task and not task.done()) for task in self._workers.values()
-        )
+        live_workers = sum(bool(task and not task.done()) for task in self._workers.values())
         busy_workers = sum(bool(item["currentRun"]) for item in workers)
         return {
             "process": {
                 "pid": os.getpid(),
                 "hostname": socket.gethostname(),
                 "startedAt": app_isoformat(self._process_started_at),
-                "uptimeSeconds": max(
-                    0, int((now - self._process_started_at).total_seconds())
-                ),
+                "uptimeSeconds": max(0, int((now - self._process_started_at).total_seconds())),
                 "model": "single_process_asyncio",
             },
             "started": self._started,
@@ -523,8 +584,8 @@ class ProbeManager:
             "policy": {
                 "sameAccountSerial": True,
                 "reason": (
-                    "完整对话探针会临时修改账号出口、启用状态、优先级和并发设置；"
-                    "同一账号的任务顺序执行，不同账号可由多个 Worker 并行处理。"
+                    "正常定检保持账号当前出口，诊断任务才会临时修改账号设置；"
+                    "为避免同一账号的请求和诊断状态冲突，同账号任务始终顺序执行。"
                 ),
             },
             "log": {
@@ -560,9 +621,7 @@ class ProbeManager:
         task = asyncio.create_task(self._worker(index), name=f"probe-worker-{index}")
         self._workers[index] = task
         task.add_done_callback(
-            lambda finished, worker_index=index: self._handle_worker_exit(
-                worker_index, finished
-            )
+            lambda finished, worker_index=index: self._handle_worker_exit(worker_index, finished)
         )
 
     def _handle_worker_exit(self, index: int, task: asyncio.Task[None]) -> None:
@@ -643,14 +702,10 @@ class ProbeManager:
                 profile = context.profile
                 runtime.current_run_id = str(run["id"])
                 runtime.current_account_id = int(run["account_id"])
-                runtime.current_account_name = str(
-                    run.get("account_name") or run.get("account_email") or ""
-                )
+                runtime.current_account_name = str(run.get("account_name") or run.get("account_email") or "")
                 runtime.current_profile_id = str(run["profile_id"])
                 runtime.current_profile_name = str(profile.get("name") or "")
-                runtime.current_execution_mode = str(
-                    run.get("execution_mode") or "chat"
-                )
+                runtime.current_execution_mode = str(run.get("execution_mode") or "chat")
                 runtime.current_run_started_at = utc_now()
                 runtime.last_error = ""
                 self._set_worker_status(runtime, "running")
@@ -702,9 +757,7 @@ class ProbeManager:
                     self._clear_worker_run(runtime)
                     self._set_worker_status(
                         runtime,
-                        "stopping"
-                        if index > self._desired_worker_concurrency
-                        else "idle",
+                        "stopping" if index > self._desired_worker_concurrency else "idle",
                     )
         finally:
             self._clear_worker_run(runtime)
@@ -734,7 +787,7 @@ class ProbeManager:
 
         try:
             account = await self.client.get_account(account_id)
-            self._validate_probe_account(account)
+            self._validate_account_for_targets(account, list(run["proxy_targets"]))
             original_node_id = int(account.get("egressNodeId") or 0) or None
             original_mode = str(account.get("egressAssignmentMode") or "")
             priority_value = account.get("priority")
@@ -792,47 +845,63 @@ class ProbeManager:
                         round_number,
                         target_key,
                     )
-                    if execution_mode == "chat":
-                        await self.client.set_account_egress(account_id, target)
-                        await asyncio.sleep(0.15)
-
-                        def probe_factory() -> Awaitable[Any]:
-                            return self.client.chat_probe(
-                                api_key=api_key,
-                                public_model=public_model,
-                                account_id=account_id,
-                                system_prompt=str(profile["system_prompt"]),
-                                prompt=str(profile["prompt"]),
-                                expected=str(profile["expected_text"]),
-                                max_output_tokens=int(profile["max_output_tokens"]),
-                                temperature=profile["temperature"],
-                                extra_body=dict(profile["extra_body"] or {}),
-                            )
-
-                    else:
-                        egress_node_id = int(target.get("id") or 0)
-
-                        def probe_factory(
-                            node_id: int = egress_node_id,
-                        ) -> Awaitable[Any]:
-                            return self.client.quality_probe(
-                                client_key_id=client_key_id,
-                                public_model=public_model,
-                                account_id=account_id,
-                                egress_node_id=node_id,
-                                # Keep quick mode independent of user profiles
-                                # while exposing a readable validation marker.
-                                prompt=FAST_QUALITY_PROBE_PROMPT,
-                                expected=FAST_QUALITY_PROBE_EXPECTED,
-                                max_output_tokens=0,
-                            )
-
                     try:
+                        if execution_mode == "chat":
+                            if target.get("kind") == "current":
+                                await self._wait_for_current_probe_slot(run_id)
+                                live_account = await self.client.get_account(account_id)
+                                live_node_id = int(live_account.get("egressNodeId") or 0) or None
+                                if live_node_id != original_node_id:
+                                    raise IntegrationError(
+                                        f"账号出口在定检期间从节点 {original_node_id} 变为 "
+                                        f"{live_node_id or '未绑定'}，已停止该样本"
+                                    )
+                            else:
+                                self.repository.mark_account_mutation_pending(run_id)
+                                await self.client.set_account_egress(account_id, target)
+                                await asyncio.sleep(0.15)
+
+                            def probe_factory() -> Awaitable[Any]:
+                                return self.client.chat_probe(
+                                    api_key=api_key,
+                                    public_model=public_model,
+                                    account_id=account_id,
+                                    system_prompt=str(profile["system_prompt"]),
+                                    prompt=str(profile["prompt"]),
+                                    expected=str(profile["expected_text"]),
+                                    max_output_tokens=int(profile["max_output_tokens"]),
+                                    temperature=profile["temperature"],
+                                    extra_body=dict(profile["extra_body"] or {}),
+                                )
+
+                        else:
+                            egress_node_id = int(target.get("id") or 0)
+
+                            def probe_factory(
+                                node_id: int = egress_node_id,
+                            ) -> Awaitable[Any]:
+                                return self.client.quality_probe(
+                                    client_key_id=client_key_id,
+                                    public_model=public_model,
+                                    account_id=account_id,
+                                    egress_node_id=node_id,
+                                    # Keep quick mode independent of user profiles
+                                    # while exposing a readable validation marker.
+                                    prompt=FAST_QUALITY_PROBE_PROMPT,
+                                    expected=FAST_QUALITY_PROBE_EXPECTED,
+                                    max_output_tokens=0,
+                                )
+
                         result = await self._run_probe_call(
                             run_id=run_id,
                             account_id=account_id,
                             snapshot=snapshot,
                             factory=probe_factory,
+                        )
+                        self._verify_probe_egress(
+                            target=target,
+                            original_node_id=original_node_id,
+                            result=result,
                         )
                     except asyncio.CancelledError:
                         cancelled = True
@@ -844,7 +913,12 @@ class ProbeManager:
                             await self._wait_for_account_cooldown(run_id, account_id, exc)
                         self.repository.add_sample(
                             run_id,
-                            self._error_sample(round_number, target, exc),
+                            self._error_sample(
+                                round_number,
+                                target,
+                                exc,
+                                current_node_id=original_node_id,
+                            ),
                         )
                         logger.warning(
                             "step failed worker=%s run=%s account=%s round=%s target=%s "
@@ -877,7 +951,9 @@ class ProbeManager:
                                 "round_number": round_number,
                                 "target_key": target_key,
                                 "target_kind": str(target["kind"]),
-                                "egress_node_id": target.get("id"),
+                                "egress_node_id": (
+                                    original_node_id if target.get("kind") == "current" else target.get("id")
+                                ),
                                 "egress_name": str(target.get("name") or ""),
                                 "request_id": result.request_id,
                                 "audit_id": result.audit_id,
@@ -938,7 +1014,7 @@ class ProbeManager:
                 legacy_original_mode=original_mode,
                 route_id=route_id,
                 client_key_id=client_key_id,
-                execution_mode=execution_mode,
+                restore_egress=self._run_changes_egress(run),
                 source="automatic",
             )
             cleanup_errors.extend(cleanup_result.errors)
@@ -973,9 +1049,7 @@ class ProbeManager:
             )
         else:
             try:
-                assessment = await self._apply_auto_quarantine(
-                    account_id, assessment
-                )
+                assessment = await self._apply_auto_quarantine(account_id, assessment)
             except Exception:
                 # A failed automatic action must not suppress the risk message;
                 # send the recalculated high-risk assessment below.
@@ -988,11 +1062,9 @@ class ProbeManager:
             if self.notifications is not None:
                 try:
                     trigger = str(run.get("trigger") or "probe")
-                    force_notification = (
-                        trigger in {"manual", "retry"}
-                        and str(finished.get("status") or "")
-                        in {"completed", "completed_with_errors"}
-                    )
+                    force_notification = trigger in {"manual", "retry"} and str(
+                        finished.get("status") or ""
+                    ) in {"completed", "completed_with_errors"}
                     await self.notifications.notify_account_transition(
                         account={
                             "id": account_id,
@@ -1200,6 +1272,28 @@ class ProbeManager:
                 return
             await asyncio.sleep(min(0.5, remaining))
 
+    async def _wait_for_current_probe_slot(self, run_id: str) -> None:
+        """Rate-limit normal checks across all workers without affecting diagnostics."""
+
+        interval = max(
+            0.0,
+            float(
+                getattr(
+                    self.settings,
+                    "probe_current_egress_interval_seconds",
+                    10.0,
+                )
+            ),
+        )
+        if interval <= 0:
+            return
+        async with self._current_probe_lock:
+            loop = asyncio.get_running_loop()
+            delay = self._next_current_probe_at - loop.time()
+            if delay > 0:
+                await self._sleep_probe_delay(run_id, delay)
+            self._next_current_probe_at = loop.time() + interval
+
     async def _restore_diagnostic_activation(
         self,
         *,
@@ -1233,7 +1327,7 @@ class ProbeManager:
         legacy_original_mode: str,
         route_id: str,
         client_key_id: str,
-        execution_mode: str,
+        restore_egress: bool,
         source: str,
         account_restore_started: bool = False,
     ) -> UpstreamCleanupResult:
@@ -1241,20 +1335,36 @@ class ProbeManager:
         resource_errors: list[str] = []
 
         async def cleanup() -> None:
+            current_run = self.repository.get_run(run_id) or {}
+            restore_status = str(current_run.get("account_restore_status") or "")
+            restore_egress_requested = restore_egress and (
+                source == "manual" or restore_status in {"pending", "restoring", "restore_failed"}
+            )
+            restore_requested = (
+                bool(current_run.get("diagnostic_activation_active"))
+                or restore_status in {"pending", "restoring", "restore_failed"}
+                or restore_egress_requested
+                or source == "manual"
+            )
+            restore_account_routing = bool(
+                current_run.get("diagnostic_activation_active")
+                or (source == "manual" and snapshot is not None and not snapshot.enabled)
+            )
             if snapshot is not None:
-                if not account_restore_started:
+                if restore_requested and not account_restore_started:
                     self.repository.begin_account_restore(run_id, source)
-                try:
-                    await self.client.set_account_routing_settings(
-                        account_id,
-                        enabled=snapshot.enabled,
-                        priority=snapshot.priority,
-                        max_concurrent=snapshot.max_concurrent,
-                    )
-                    self.repository.set_diagnostic_activation(run_id, False)
-                except Exception as exc:
-                    account_errors.append(f"恢复启用状态、优先级和并发数失败: {exc}")
-                if execution_mode == "chat" or source == "manual":
+                if restore_account_routing:
+                    try:
+                        await self.client.set_account_routing_settings(
+                            account_id,
+                            enabled=snapshot.enabled,
+                            priority=snapshot.priority,
+                            max_concurrent=snapshot.max_concurrent,
+                        )
+                        self.repository.set_diagnostic_activation(run_id, False)
+                    except Exception as exc:
+                        account_errors.append(f"恢复启用状态、优先级和并发数失败: {exc}")
+                if restore_egress_requested:
                     try:
                         await self.client.restore_account_egress(
                             account_id,
@@ -1263,15 +1373,19 @@ class ProbeManager:
                         )
                     except Exception as exc:
                         account_errors.append(f"恢复账号出口失败: {exc}")
-                restore_error = "; ".join(account_errors)
-                self.repository.finish_account_restore(run_id, source, restore_error)
-            elif execution_mode == "chat":
+                if restore_requested:
+                    restore_error = "; ".join(account_errors)
+                    self.repository.finish_account_restore(run_id, source, restore_error)
+            elif restore_egress_requested:
+                if not account_restore_started:
+                    self.repository.begin_account_restore(run_id, source)
                 try:
                     await self.client.restore_account_egress(
                         account_id, legacy_original_node_id, legacy_original_mode
                     )
                 except Exception as exc:
                     account_errors.append(f"恢复账号出口失败: {exc}")
+                self.repository.finish_account_restore(run_id, source, "; ".join(account_errors))
             try:
                 await self.client.delete_probe_client_key(client_key_id)
             except Exception as exc:
@@ -1302,7 +1416,7 @@ class ProbeManager:
                 legacy_original_mode=str(run["original_egress_assignment_mode"] or ""),
                 route_id=str(run["temporary_route_id"] or ""),
                 client_key_id=str(run["temporary_client_key_id"] or ""),
-                execution_mode=str(run.get("execution_mode") or "chat"),
+                restore_egress=self._run_changes_egress(run),
                 source="startup",
             )
             if not cleanup_result.resource_errors:
@@ -1325,8 +1439,15 @@ class ProbeManager:
             raise RunStateError("任务执行期间由自动恢复流程管理账号设置")
         account_id = int(run["account_id"])
         snapshot = self.repository.account_settings_snapshot(run_id)
-        if snapshot is None:
+        restore_egress = self._run_changes_egress(run)
+        if snapshot is None and not restore_egress:
             raise RunStateError("该任务没有可同步的账号原设置记录")
+        if (
+            not restore_egress
+            and not bool(run.get("diagnostic_activation_active"))
+            and str(run.get("account_restore_status") or "") != "restore_failed"
+        ):
+            raise RunStateError("正常定检未修改账号设置，无需同步")
 
         async with self._claim_lock:
             if self.repository.has_executing_run(
@@ -1340,11 +1461,17 @@ class ProbeManager:
             run_id=run_id,
             account_id=account_id,
             snapshot=snapshot,
-            legacy_original_node_id=snapshot.egress_node_id,
-            legacy_original_mode=snapshot.egress_assignment_mode,
+            legacy_original_node_id=(
+                snapshot.egress_node_id if snapshot is not None else run.get("original_egress_node_id")
+            ),
+            legacy_original_mode=(
+                snapshot.egress_assignment_mode
+                if snapshot is not None
+                else str(run.get("original_egress_assignment_mode") or "")
+            ),
             route_id=str(run.get("temporary_route_id") or ""),
             client_key_id=str(run.get("temporary_client_key_id") or ""),
-            execution_mode=str(run.get("execution_mode") or "chat"),
+            restore_egress=restore_egress,
             source="manual",
             account_restore_started=True,
         )
@@ -1398,13 +1525,48 @@ class ProbeManager:
 
     @staticmethod
     def _target_key(target: dict[str, Any]) -> str:
-        return "direct" if target.get("kind") == "direct" else f"egress:{int(target.get('id') or 0)}"
+        kind = target.get("kind")
+        if kind in {"current", "direct"}:
+            return str(kind)
+        return f"egress:{int(target.get('id') or 0)}"
+
+    @staticmethod
+    def _run_changes_egress(run: dict[str, Any]) -> bool:
+        if str(run.get("execution_mode") or "chat") != "chat":
+            return False
+        return any(target.get("kind") in {"direct", "egress"} for target in run.get("proxy_targets") or [])
+
+    @staticmethod
+    def _verify_probe_egress(
+        *,
+        target: dict[str, Any],
+        original_node_id: int | None,
+        result: Any,
+    ) -> None:
+        kind = str(target.get("kind") or "")
+        verified_node_id = result.verified_egress_node_id
+        expected_node_id = original_node_id if kind == "current" else int(target.get("id") or 0) or None
+        if kind == "direct" or expected_node_id == verified_node_id:
+            return
+        label = "账号当前出口" if kind == "current" else "指定诊断出口"
+        actual = str(verified_node_id) if verified_node_id is not None else "本地/未知出口"
+        error = IntegrationError(
+            f"{label}应为节点 {expected_node_id}，但请求审计记录为 {actual}",
+            request_id=str(result.request_id or ""),
+        )
+        error.audit_id = result.audit_id
+        error.verified_account_id = result.verified_account_id
+        error.verified_egress_node_id = result.verified_egress_node_id
+        error.probe_result = result
+        raise error
 
     def _error_sample(
         self,
         round_number: int,
         target: dict[str, Any],
         error: BaseException | str,
+        *,
+        current_node_id: int | None = None,
     ) -> dict[str, Any]:
         status_code = int(getattr(error, "status_code", 0) or 0)
         error_code = str(getattr(error, "error_code", "") or "")
@@ -1412,7 +1574,8 @@ class ProbeManager:
         retry_after = float(getattr(error, "retry_after_seconds", 0.0) or 0.0)
         attempt_count = int(getattr(error, "attempt_count", 1) or 1)
         message = str(error)
-        usage: dict[str, Any] = {}
+        result = getattr(error, "probe_result", None)
+        usage: dict[str, Any] = dict(result.usage or {}) if result is not None else {}
         if error_code or status_code or retry_after or attempt_count > 1:
             usage["probeError"] = {
                 "code": error_code,
@@ -1425,29 +1588,29 @@ class ProbeManager:
             "round_number": round_number,
             "target_key": self._target_key(target),
             "target_kind": str(target.get("kind") or ""),
-            "egress_node_id": target.get("id"),
+            "egress_node_id": (current_node_id if target.get("kind") == "current" else target.get("id")),
             "egress_name": str(target.get("name") or ""),
             "request_id": request_id,
-            "audit_id": None,
-            "verified_account_id": None,
-            "verified_egress_node_id": None,
+            "audit_id": getattr(error, "audit_id", None),
+            "verified_account_id": getattr(error, "verified_account_id", None),
+            "verified_egress_node_id": getattr(error, "verified_egress_node_id", None),
             "status": "error",
-            "status_code": status_code,
+            "status_code": result.status_code if result is not None else status_code,
             "error_code": error_code,
             "retry_count": max(0, attempt_count - 1),
             "retry_after_seconds": retry_after,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "visible_tokens": 0,
-            "chunk_count": 0,
-            "first_token_ms": 0,
-            "duration_ms": 0,
-            "generation_ms": 0,
-            "first_token_share": 0.0,
-            "tps": 0.0,
-            "expected_matched": None,
-            "response_sha256": "",
-            "response_text": "",
+            "output_tokens": result.output_tokens if result is not None else 0,
+            "reasoning_tokens": result.reasoning_tokens if result is not None else 0,
+            "visible_tokens": result.visible_tokens if result is not None else 0,
+            "chunk_count": result.chunk_count if result is not None else 0,
+            "first_token_ms": result.first_token_ms if result is not None else 0,
+            "duration_ms": result.duration_ms if result is not None else 0,
+            "generation_ms": result.generation_ms if result is not None else 0,
+            "first_token_share": result.first_token_share if result is not None else 0.0,
+            "tps": result.tps if result is not None else 0.0,
+            "expected_matched": result.expected_matched if result is not None else None,
+            "response_sha256": result.response_sha256 if result is not None else "",
+            "response_text": result.response_text if result is not None else "",
             "usage": usage,
             "classification": "error",
             "severity": 1,

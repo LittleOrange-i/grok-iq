@@ -76,7 +76,7 @@ export type ProbeProfile = {
 }
 
 export type ProxyTarget = {
-  kind: 'direct' | 'egress'
+  kind: 'current' | 'direct' | 'egress'
   id: number | null
   name?: string
 }

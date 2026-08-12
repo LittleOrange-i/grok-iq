@@ -100,7 +100,10 @@ describe('UserAuthForm', () => {
       screen.getByRole('textbox', { name: '管理员用户名' }),
       'monitor-admin'
     )
-    await userEvent.fill(screen.getByLabelText('密码'), 'password123')
+    await userEvent.fill(
+      screen.getByRole('textbox', { name: '密码', exact: true }),
+      'password123'
+    )
     await userEvent.fill(screen.getByLabelText('确认密码'), 'password123')
     await userEvent.click(
       screen.getByRole('button', { name: '创建账号并进入' })

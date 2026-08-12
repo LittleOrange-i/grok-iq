@@ -21,6 +21,7 @@ import {
   Eye,
   Gauge,
   History,
+  ListChecks,
   Loader2,
   Play,
   Power,
@@ -39,6 +40,8 @@ import {
   type ProbeProfile,
   type ProbeRun,
   type ProbeSample,
+  type RunSelectionAction,
+  type RunSelectionItem,
 } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
@@ -174,13 +177,17 @@ export function RunsPage() {
   const [deferredSearch, searchPending] = useDebouncedValue(search.trim())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
-  const [selectedRunIds, setSelectedRunIds] = useState<string[]>([])
+  const [selection, setSelection] = useState<Map<string, RunSelectionItem>>(
+    () => new Map()
+  )
+  const [allFilteredSelected, setAllFilteredSelected] = useState(false)
   const [probeSelection, setProbeSelection] = useState<{
     accountIds: number[]
     taskCount: number
   } | null>(null)
   const [bulkCancelOpen, setBulkCancelOpen] = useState(false)
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollTopRef = useRef(0)
@@ -248,48 +255,86 @@ export function RunsPage() {
     () => query.data?.items ?? [],
     [query.data?.items]
   )
-  const currentPageRunIdSet = useMemo(
-    () => new Set(currentPageRuns.map((run) => run.id)),
+  const currentPageRunMap = useMemo(
+    () => new Map(currentPageRuns.map((run) => [run.id, run])),
     [currentPageRuns]
   )
-  const selectedRunIdSet = useMemo(
-    () => new Set(selectedRunIds),
-    [selectedRunIds]
+  const currentPageActionable = useMemo(
+    () =>
+      currentPageRuns
+        .map((run) => runSelectionItem(run))
+        .filter((item): item is RunSelectionItem => item != null),
+    [currentPageRuns]
   )
-  const selectedRuns = useMemo(
-    () => currentPageRuns.filter((run) => selectedRunIdSet.has(run.id)),
-    [currentPageRuns, selectedRunIdSet]
+  const selectedItems = useMemo(
+    () => Array.from(selection.values()),
+    [selection]
+  )
+  const selectedRunIds = useMemo(
+    () => selectedItems.map((item) => item.id),
+    [selectedItems]
   )
   const selectedAccountIds = useMemo(
     () =>
       Array.from(
         new Set(
-          selectedRuns
-            .map((run) => Number(run.account_id))
+          selectedItems
+            .map((item) => item.accountId)
             .filter((accountId) => accountId > 0)
         )
       ),
-    [selectedRuns]
+    [selectedItems]
   )
-  const selectedCancellableRuns = selectedRuns.filter(isRunCancellable)
-  const selectedDeletableRuns = selectedRuns.filter(isRunDeletable)
-  const selectedCurrentPageCount = selectedRuns.length
+  const selectedCancellableRuns = useMemo(
+    () => selectedItems.filter((item) => item.action === 'cancel'),
+    [selectedItems]
+  )
+  const selectedDeletableRuns = useMemo(
+    () => selectedItems.filter((item) => item.action === 'delete'),
+    [selectedItems]
+  )
+  const selectedRestorableRuns = useMemo(
+    () => selectedItems.filter((item) => item.action === 'restore'),
+    [selectedItems]
+  )
+  const selectedCurrentPageCount = useMemo(
+    () =>
+      currentPageActionable.filter((item) => selection.has(item.id)).length,
+    [currentPageActionable, selection]
+  )
   const allCurrentPageSelected =
-    currentPageRuns.length > 0 &&
-    selectedCurrentPageCount === currentPageRuns.length
+    currentPageActionable.length > 0 &&
+    selectedCurrentPageCount === currentPageActionable.length
   const selectAllChecked = allCurrentPageSelected
     ? true
     : selectedCurrentPageCount > 0
       ? 'indeterminate'
       : false
   useEffect(() => {
-    // Keep selection scoped to the current server-side result page.
+    // Refresh cached metadata for selected runs visible on the current page,
+    // and drop any that are no longer actionable. Off-page selections (from a
+    // filter-wide "select all") are preserved with their fetched metadata.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedRunIds((current) => {
-      const next = current.filter((id) => currentPageRunIdSet.has(id))
-      return next.length === current.length ? current : next
+    setSelection((current) => {
+      let changed = false
+      const next = new Map(current)
+      for (const [id, item] of current) {
+        const run = currentPageRunMap.get(id)
+        if (!run) continue
+        const fresh = runSelectionItem(run)
+        if (!fresh) {
+          next.delete(id)
+          changed = true
+          continue
+        }
+        if (fresh.action !== item.action || fresh.accountId !== item.accountId) {
+          next.set(id, fresh)
+          changed = true
+        }
+      }
+      return changed ? next : current
     })
-  }, [currentPageRunIdSet])
+  }, [currentPageRunMap])
   useLayoutEffect(() => {
     const element = detailScrollRef.current
     if (!element || detailId == null) return
@@ -324,9 +369,12 @@ export function RunsPage() {
       if (variables.action === 'delete') {
         detailScrollTopRef.current = 0
         setDetailId(null)
-        setSelectedRunIds((current) =>
-          current.filter((id) => id !== variables.id)
-        )
+        setSelection((current) => {
+          if (!current.has(variables.id)) return current
+          const next = new Map(current)
+          next.delete(variables.id)
+          return next
+        })
       }
       void client.invalidateQueries({ queryKey: ['runs'] })
       void client.invalidateQueries({ queryKey: ['run'] })
@@ -335,14 +383,23 @@ export function RunsPage() {
   })
   const bulkDelete = useMutation({
     mutationFn: api.deleteRuns,
-    onSuccess: (result, deletedIds) => {
-      toast.success(`已删除 ${result.deleted} 个任务及其历史样本`)
-      const deletedIdSet = new Set(deletedIds)
-      setSelectedRunIds((current) =>
-        current.filter((id) => !deletedIdSet.has(id))
+    onSuccess: (result, requestedIds) => {
+      const skipped = new Set(result.skippedRunIds)
+      toast.success(
+        result.skippedRunIds.length
+          ? `已删除 ${result.deleted} 个任务及其历史样本，${result.skippedRunIds.length} 个任务不可删除`
+          : `已删除 ${result.deleted} 个任务及其历史样本`
       )
+      setSelection((current) => {
+        const next = new Map(current)
+        for (const id of requestedIds) {
+          if (!skipped.has(id)) next.delete(id)
+        }
+        return next
+      })
+      setAllFilteredSelected(false)
       setBulkDeleteOpen(false)
-      if (detailId && deletedIdSet.has(detailId)) {
+      if (detailId && requestedIds.includes(detailId) && !skipped.has(detailId)) {
         detailScrollTopRef.current = 0
         setDetailId(null)
       }
@@ -356,7 +413,7 @@ export function RunsPage() {
   })
   const bulkCancel = useMutation({
     mutationFn: api.cancelRuns,
-    onSuccess: (result) => {
+    onSuccess: (result, requestedIds) => {
       const messages = []
       if (result.cancelled) messages.push(`${result.cancelled} 个排队任务已取消`)
       if (result.cancelRequested) {
@@ -371,6 +428,12 @@ export function RunsPage() {
       } else {
         toast.success(messages.join('，') || '所选任务已进入停止流程')
       }
+      setSelection((current) => {
+        const next = new Map(current)
+        for (const id of requestedIds) next.delete(id)
+        return next
+      })
+      setAllFilteredSelected(false)
       setBulkCancelOpen(false)
       void client.invalidateQueries({ queryKey: ['runs'] })
       void client.invalidateQueries({ queryKey: ['run'] })
@@ -378,22 +441,91 @@ export function RunsPage() {
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
+  const bulkRestore = useMutation({
+    mutationFn: api.restoreRunsAccountSettings,
+    onSuccess: (result, requestedIds) => {
+      const failed = new Set(result.failedRunIds)
+      if (result.failed) {
+        toast.warning(
+          `${result.restored} 个任务已按记录同步账号原设置，${result.failed} 个任务同步失败`
+        )
+      } else {
+        toast.success(`已按记录同步 ${result.restored} 个任务的账号原设置`)
+      }
+      setSelection((current) => {
+        const next = new Map(current)
+        for (const id of requestedIds) {
+          if (!failed.has(id)) next.delete(id)
+        }
+        return next
+      })
+      setAllFilteredSelected(false)
+      setBulkRestoreOpen(false)
+      void client.invalidateQueries({ queryKey: ['runs'] })
+      void client.invalidateQueries({ queryKey: ['run'] })
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['account'] })
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const selectionMutation = useMutation({
+    mutationFn: () =>
+      api.runSelection({
+        status: status === 'all' ? '' : status,
+        search: deferredSearch,
+      }),
+    onSuccess: (result) => {
+      setSelection(new Map(result.items.map((item) => [item.id, item])))
+      setAllFilteredSelected(result.selectable > 0)
+      if (!result.selectable) {
+        toast.warning('当前筛选下没有可操作的任务')
+        return
+      }
+      toast.success(
+        result.excluded
+          ? `已选择全部 ${result.selectable} 个可操作任务，跳过 ${result.excluded} 个执行中的任务`
+          : `已选择全部 ${result.selectable} 个可操作任务`
+      )
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
 
-  const toggleRunSelection = (id: string, checked: boolean) => {
-    setSelectedRunIds((current) =>
-      checked
-        ? current.includes(id)
-          ? current
-          : [...current, id]
-        : current.filter((value) => value !== id)
-    )
+  const clearSelection = () => {
+    setSelection(new Map())
+    setAllFilteredSelected(false)
+  }
+
+  const toggleRunSelection = (run: ProbeRun, checked: boolean) => {
+    setAllFilteredSelected(false)
+    setSelection((current) => {
+      const next = new Map(current)
+      if (checked) {
+        const item = runSelectionItem(run)
+        if (item) next.set(run.id, item)
+      } else {
+        next.delete(run.id)
+      }
+      return next
+    })
   }
 
   const toggleCurrentPageSelection = (checked: boolean) => {
-    setSelectedRunIds(checked ? currentPageRuns.map((run) => run.id) : [])
+    setAllFilteredSelected(false)
+    setSelection((current) => {
+      const next = new Map(current)
+      if (checked) {
+        for (const item of currentPageActionable) next.set(item.id, item)
+      } else {
+        for (const run of currentPageRuns) next.delete(run.id)
+      }
+      return next
+    })
   }
 
-  const bulkPending = bulkCancel.isPending || bulkDelete.isPending
+  const bulkPending =
+    bulkCancel.isPending || bulkDelete.isPending || bulkRestore.isPending
+  const selectionActionPending = bulkPending || selectionMutation.isPending
 
   return (
     <Page>
@@ -401,15 +533,111 @@ export function RunsPage() {
         title='任务中心'
         description='Cron 和手动探针共用持久队列；支持进度查看、批量重测、取消、重试与删除。'
         actions={
-          <ActionToolbar label='任务列表操作'>
-            <ToolbarAction
-              label='刷新任务列表'
-              pending={query.isFetching}
-              onClick={() => void query.refetch()}
+          <>
+            <ActionToolbar label='任务列表操作'>
+              <ToolbarAction
+                label='刷新任务列表'
+                pending={query.isFetching}
+                onClick={() => void query.refetch()}
+              >
+                <RefreshCw />
+              </ToolbarAction>
+              <ToolbarAction
+                label={
+                  allFilteredSelected
+                    ? '清除当前筛选的全选'
+                    : '全选当前筛选下的所有可操作任务'
+                }
+                active={allFilteredSelected}
+                pending={selectionMutation.isPending}
+                disabled={
+                  showTableLoading ||
+                  bulkPending ||
+                  (query.data?.total ?? 0) === 0
+                }
+                onClick={() => {
+                  if (allFilteredSelected) {
+                    clearSelection()
+                    toast.success('已清除当前筛选的全选')
+                    return
+                  }
+                  selectionMutation.mutate()
+                }}
+              >
+                <ListChecks />
+              </ToolbarAction>
+            </ActionToolbar>
+            <SelectionToolbar
+              selectedCount={selectedRunIds.length}
+              entityLabel='任务'
+              disabled={selectionActionPending}
+              onClear={clearSelection}
             >
-              <RefreshCw />
-            </ToolbarAction>
-          </ActionToolbar>
+              <ToolbarAction
+                label={
+                  selectedAccountIds.length
+                    ? `测试已选任务中的 ${selectedAccountIds.length} 个账号`
+                    : '所选任务中没有可测试账号'
+                }
+                disabled={
+                  selectedAccountIds.length === 0 || selectionActionPending
+                }
+                onClick={() => {
+                  setProbeSelection({
+                    accountIds: selectedAccountIds,
+                    taskCount: selectedRunIds.length,
+                  })
+                  void egress.refetch()
+                  void profiles.refetch()
+                }}
+              >
+                <Play />
+              </ToolbarAction>
+              <ToolbarAction
+                label={
+                  selectedCancellableRuns.length
+                    ? `停止 ${selectedCancellableRuns.length} 个可取消任务`
+                    : '所选任务中没有可停止任务'
+                }
+                disabled={
+                  selectedCancellableRuns.length === 0 || selectionActionPending
+                }
+                pending={bulkCancel.isPending}
+                onClick={() => setBulkCancelOpen(true)}
+              >
+                <Square />
+              </ToolbarAction>
+              <ToolbarAction
+                label={
+                  selectedRestorableRuns.length
+                    ? `同步 ${selectedRestorableRuns.length} 个任务的账号原设置`
+                    : '所选任务无需同步账号原设置'
+                }
+                disabled={
+                  selectedRestorableRuns.length === 0 || selectionActionPending
+                }
+                pending={bulkRestore.isPending}
+                onClick={() => setBulkRestoreOpen(true)}
+              >
+                <Undo2 />
+              </ToolbarAction>
+              <ToolbarAction
+                label={
+                  selectedDeletableRuns.length
+                    ? `删除 ${selectedDeletableRuns.length} 个可删除任务`
+                    : '所选任务尚未结束或账号设置待恢复'
+                }
+                destructive
+                disabled={
+                  selectedDeletableRuns.length === 0 || selectionActionPending
+                }
+                pending={bulkDelete.isPending}
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                <Trash2 />
+              </ToolbarAction>
+            </SelectionToolbar>
+          </>
         }
       />
       <Card>
@@ -426,7 +654,7 @@ export function RunsPage() {
                   beginTableInteraction()
                   setSearch(event.target.value)
                   setPage(1)
-                  setSelectedRunIds([])
+                  clearSelection()
                 }}
                 placeholder='搜索账号名称、邮箱或账号 ID'
                 className='pr-9 pl-9'
@@ -436,65 +664,13 @@ export function RunsPage() {
               )}
             </div>
             <div className='flex flex-wrap items-center justify-end gap-2'>
-              <SelectionToolbar
-                selectedCount={selectedRunIds.length}
-                entityLabel='任务'
-                disabled={bulkPending}
-                onClear={() => setSelectedRunIds([])}
-              >
-                <ToolbarAction
-                  label={
-                    selectedAccountIds.length
-                      ? `测试已选任务中的 ${selectedAccountIds.length} 个账号`
-                      : '所选任务中没有可测试账号'
-                  }
-                  disabled={selectedAccountIds.length === 0 || bulkPending}
-                  onClick={() => {
-                    setProbeSelection({
-                      accountIds: selectedAccountIds,
-                      taskCount: selectedRuns.length,
-                    })
-                    void egress.refetch()
-                    void profiles.refetch()
-                  }}
-                >
-                  <Play />
-                </ToolbarAction>
-                <ToolbarAction
-                  label={
-                    selectedCancellableRuns.length
-                      ? `停止 ${selectedCancellableRuns.length} 个可取消任务`
-                      : '所选任务中没有可停止任务'
-                  }
-                  disabled={
-                    selectedCancellableRuns.length === 0 || bulkPending
-                  }
-                  pending={bulkCancel.isPending}
-                  onClick={() => setBulkCancelOpen(true)}
-                >
-                  <Square />
-                </ToolbarAction>
-                <ToolbarAction
-                  label={
-                    selectedDeletableRuns.length
-                      ? `删除 ${selectedDeletableRuns.length} 个可删除任务`
-                      : '所选任务尚未结束或账号设置待恢复'
-                  }
-                  destructive
-                  disabled={selectedDeletableRuns.length === 0 || bulkPending}
-                  pending={bulkDelete.isPending}
-                  onClick={() => setBulkDeleteOpen(true)}
-                >
-                  <Trash2 />
-                </ToolbarAction>
-              </SelectionToolbar>
               <Select
                 value={status}
                 onValueChange={(value) => {
                   beginTableInteraction()
                   setStatus(value)
                   setPage(1)
-                  setSelectedRunIds([])
+                  clearSelection()
                 }}
               >
                 <SelectTrigger className='w-48'>
@@ -534,7 +710,8 @@ export function RunsPage() {
                               toggleCurrentPageSelection(value === true)
                             }
                             disabled={
-                              currentPageRuns.length === 0 || bulkPending
+                              currentPageActionable.length === 0 ||
+                              selectionActionPending
                             }
                             aria-label='选择当前页全部任务'
                           />
@@ -556,15 +733,16 @@ export function RunsPage() {
                           key={run.id}
                           run={run}
                           egressNodeNames={egressNodeNames}
-                          selected={selectedRunIdSet.has(run.id)}
+                          selected={selection.has(run.id)}
+                          selectable={runSelectionAction(run) != null}
                           onSelectedChange={(checked) =>
-                            toggleRunSelection(run.id, checked)
+                            toggleRunSelection(run, checked)
                           }
                           onDetail={() => openDetail(run.id)}
                           onAction={(action) =>
                             mutate.mutate({ action, id: run.id })
                           }
-                          pending={mutate.isPending || bulkPending}
+                          pending={mutate.isPending || selectionActionPending}
                         />
                       ))}
                     </TableBody>
@@ -601,14 +779,12 @@ export function RunsPage() {
                   itemLabel='任务'
                   onPageChange={(value) => {
                     beginTableInteraction()
-                    setSelectedRunIds([])
                     setPage(value)
                   }}
                   onPageSizeChange={(value) => {
                     beginTableInteraction()
                     setPageSize(value)
                     setPage(1)
-                    setSelectedRunIds([])
                   }}
                 />
               )}
@@ -629,7 +805,7 @@ export function RunsPage() {
         egressError={egress.isError ? getErrorMessage(egress.error) : ''}
         onRefreshEgress={() => void egress.refetch()}
         onCreated={() => {
-          setSelectedRunIds([])
+          clearSelection()
           setProbeSelection(null)
           void client.invalidateQueries({ queryKey: ['runs'] })
           void client.invalidateQueries({ queryKey: ['dashboard'] })
@@ -653,10 +829,10 @@ export function RunsPage() {
               <span className='block'>
                 任务、已产生的样本和历史记录仍会保留，进入终态后可继续使用批量删除。
               </span>
-              {selectedRuns.length > selectedCancellableRuns.length && (
+              {selectedItems.length > selectedCancellableRuns.length && (
                 <span className='block'>
                   另外{' '}
-                  {selectedRuns.length - selectedCancellableRuns.length}{' '}
+                  {selectedItems.length - selectedCancellableRuns.length}{' '}
                   个已结束或已在停止的任务保持不变。
                 </span>
               )}
@@ -671,7 +847,7 @@ export function RunsPage() {
                 bulkCancel.isPending || selectedCancellableRuns.length === 0
               }
               onClick={() =>
-                bulkCancel.mutate(selectedCancellableRuns.map((run) => run.id))
+                bulkCancel.mutate(selectedCancellableRuns.map((item) => item.id))
               }
             >
               <Square />
@@ -700,9 +876,9 @@ export function RunsPage() {
                 grok2api
                 中的账号及其当前设置不会被删除；账号设置尚未恢复的任务不可删除。
               </span>
-              {selectedRuns.length > selectedDeletableRuns.length && (
+              {selectedItems.length > selectedDeletableRuns.length && (
                 <span className='block'>
-                  另外 {selectedRuns.length - selectedDeletableRuns.length}{' '}
+                  另外 {selectedItems.length - selectedDeletableRuns.length}{' '}
                   个未结束或账号设置待恢复的任务保持不变。
                 </span>
               )}
@@ -718,11 +894,58 @@ export function RunsPage() {
                 bulkDelete.isPending || selectedDeletableRuns.length === 0
               }
               onClick={() =>
-                bulkDelete.mutate(selectedDeletableRuns.map((run) => run.id))
+                bulkDelete.mutate(selectedDeletableRuns.map((item) => item.id))
               }
             >
               <Trash2 />
               删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={bulkRestoreOpen}
+        onOpenChange={(open) => {
+          if (!bulkRestore.isPending) setBulkRestoreOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              同步 {selectedRestorableRuns.length} 个任务的账号原设置？
+            </AlertDialogTitle>
+            <AlertDialogDescription className='space-y-2'>
+              <span className='block'>
+                将按任务记录，把这些账号在 grok2api
+                中的模型、代理等设置恢复为探针执行前的原始值。
+              </span>
+              <span className='block'>
+                仅对账号设置待恢复（恢复失败或诊断激活未回滚）的任务生效，同步成功后即可删除对应任务。
+              </span>
+              {selectedItems.length > selectedRestorableRuns.length && (
+                <span className='block'>
+                  另外 {selectedItems.length - selectedRestorableRuns.length}{' '}
+                  个无需同步的任务保持不变。
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkRestore.isPending}>
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                bulkRestore.isPending || selectedRestorableRuns.length === 0
+              }
+              onClick={() =>
+                bulkRestore.mutate(
+                  selectedRestorableRuns.map((item) => item.id)
+                )
+              }
+            >
+              <Undo2 />
+              同步原设置
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -777,6 +1000,7 @@ function RunRow({
   run,
   egressNodeNames,
   selected,
+  selectable,
   onSelectedChange,
   onDetail,
   onAction,
@@ -785,6 +1009,7 @@ function RunRow({
   run: ProbeRun
   egressNodeNames: EgressNodeNameMap
   selected: boolean
+  selectable: boolean
   onSelectedChange: (checked: boolean) => void
   onDetail: () => void
   onAction: (action: 'cancel' | 'retry' | 'delete' | 'restore') => void
@@ -800,7 +1025,7 @@ function RunRow({
         <Checkbox
           checked={selected}
           onCheckedChange={(value) => onSelectedChange(value === true)}
-          disabled={pending}
+          disabled={pending || (!selectable && !selected)}
           aria-label={`选择任务 ${run.id}`}
         />
       </TableCell>
@@ -1293,6 +1518,7 @@ function AccountRestoreCard({
 }) {
   if (!run.account_settings_snapshot_at) return null
   const status = run.account_restore_status || 'pending'
+  if (status === 'not_recorded') return null
   const restored = isAccountRestored(status)
   return (
     <div className='rounded-lg border bg-muted/15 p-4'>
@@ -1368,8 +1594,18 @@ function isRunCancellable(run: ProbeRun) {
   return cancellableRunStatuses.has(run.status)
 }
 
-function isRunDeletable(run: ProbeRun) {
-  return terminal.has(run.status) && !accountRestoreNeedsAttention(run)
+function runSelectionAction(run: ProbeRun): RunSelectionAction | null {
+  if (isRunCancellable(run)) return 'cancel'
+  if (terminal.has(run.status)) {
+    return accountRestoreNeedsAttention(run) ? 'restore' : 'delete'
+  }
+  return null
+}
+
+function runSelectionItem(run: ProbeRun): RunSelectionItem | null {
+  const action = runSelectionAction(run)
+  if (!action) return null
+  return { id: run.id, accountId: Number(run.account_id) || 0, action }
 }
 
 function TargetKeyLabel({
@@ -1380,7 +1616,8 @@ function TargetKeyLabel({
   egressNodeNames: EgressNodeNameMap
 }) {
   if (!value) return null
-  if (value === 'direct') return '上游调度'
+  if (value === 'current') return '账号当前出口'
+  if (value === 'direct') return '上游调度（诊断）'
   if (!value.startsWith('egress:')) return value
   const nodeId = value.slice(7)
   return (
@@ -1488,7 +1725,7 @@ function SampleCard({
   }, [responseExpanded, responseText])
   const responsePreview = responseText.slice(0, 240).replace(/\s+/g, ' ').trim()
   const targetEgressMismatch =
-    sample.target_kind === 'egress' &&
+    ['current', 'egress'].includes(sample.target_kind) &&
     sample.egress_node_id != null &&
     sample.verified_egress_node_id != null &&
     Number(sample.egress_node_id) !== Number(sample.verified_egress_node_id)
@@ -1497,10 +1734,10 @@ function SampleCard({
       <div className='flex flex-wrap items-center gap-2 border-b px-4 py-3'>
         <span className='text-sm font-semibold'>
           第 {sample.round_number} 轮 ·{' '}
-          {sample.target_kind === 'direct' ? (
+          {sample.target_kind === 'current' ? (
             sample.verified_egress_node_id ? (
               <>
-                上游调度 ·{' '}
+                账号当前出口 ·{' '}
                 <EgressNodeReference
                   nodeId={sample.verified_egress_node_id}
                   nodeName={getEgressNodeName(
@@ -1510,7 +1747,22 @@ function SampleCard({
                 />
               </>
             ) : (
-              '上游调度 · 本地出口'
+              '账号当前出口 · 未核验'
+            )
+          ) : sample.target_kind === 'direct' ? (
+            sample.verified_egress_node_id ? (
+              <>
+                上游调度诊断 ·{' '}
+                <EgressNodeReference
+                  nodeId={sample.verified_egress_node_id}
+                  nodeName={getEgressNodeName(
+                    egressNodeNames,
+                    sample.verified_egress_node_id
+                  )}
+                />
+              </>
+            ) : (
+              '上游调度诊断 · 本地出口'
             )
           ) : (
             sample.egress_name

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import {
+  CircleCheckBig,
   CircleHelp,
   Layers3,
   ListChecks,
@@ -18,8 +19,10 @@ import {
   type EgressNode,
   type ExecutionMode,
   type ProbeProfile,
+  type ProbeRunBatchResult,
 } from '@/lib/api'
 import { getErrorMessage } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -74,9 +77,15 @@ export function ProbeDialog({
 }: ProbeDialogProps) {
   const [profileIds, setProfileIds] = useState<string[]>(['quality-marker'])
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('chat')
-  const [rounds, setRounds] = useState(3)
-  const [direct, setDirect] = useState(true)
+  const [rounds, setRounds] = useState(1)
+  const [targetMode, setTargetMode] = useState<'current' | 'diagnostic'>(
+    'current'
+  )
+  const [direct, setDirect] = useState(false)
   const [nodes, setNodes] = useState<number[]>([])
+  const [batchResult, setBatchResult] = useState<ProbeRunBatchResult | null>(
+    null
+  )
   const selectableEgress = egress.filter(
     (node) => node.enabled && node.proxyConfigured
   )
@@ -115,26 +124,42 @@ export function ProbeDialog({
       const valid = current.filter((id) => availableProfileIdSet.has(id))
       if (valid.length) return valid
       const fallback =
-        availableProfiles.find(
-          (profile) => profile.id === 'quality-marker'
-        ) ?? availableProfiles[0]
+        availableProfiles.find((profile) => profile.id === 'quality-marker') ??
+        availableProfiles[0]
       return fallback ? [fallback.id] : []
     })
   }, [open, profiles])
 
+  useEffect(() => {
+    if (!open) return
+    // Every manual invocation starts in the non-mutating normal-check mode.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTargetMode('current')
+    setDirect(false)
+    setNodes([])
+    setRounds(1)
+    setExecutionMode('chat')
+    setBatchResult(null)
+  }, [open])
+
   const mutation = useMutation({
     mutationFn: async () => {
       const proxyTargets = [
-        ...(executionMode === 'chat' && direct
+        ...(executionMode === 'chat' && targetMode === 'current'
+          ? [{ kind: 'current', id: null }]
+          : []),
+        ...(executionMode === 'chat' && targetMode === 'diagnostic' && direct
           ? [{ kind: 'direct', id: null }]
           : []),
-        ...selectedNodes.map((id) => ({ kind: 'egress', id })),
+        ...(targetMode === 'diagnostic'
+          ? selectedNodes.map((id) => ({ kind: 'egress', id }))
+          : []),
       ]
       if (!proxyTargets.length) {
         throw new Error(
           executionMode === 'quality_test'
             ? '快速出口质量探针至少选择一个出口节点'
-            : '至少选择一个上游调度或固定出口目标'
+            : '异常诊断至少选择一个上游调度或固定出口'
         )
       }
       if (!effectiveProfileIds.length) {
@@ -154,22 +179,31 @@ export function ProbeDialog({
       })
     },
     onSuccess: (result) => {
-      const skipped = result.skipped
-        ? `，跳过 ${result.skipped} 个账号`
-        : ''
-      if (result.created) {
-        toast.success(`已批量创建 ${result.created} 个探针任务${skipped}`)
-      } else {
-        toast.info(`本次未创建新任务${skipped}`)
-      }
-      onCreated()
-      onOpenChange(false)
+      setBatchResult(result)
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
 
   const targetCount =
-    (executionMode === 'chat' && direct ? 1 : 0) + selectedNodes.length
+    executionMode === 'chat' && targetMode === 'current'
+      ? 1
+      : (executionMode === 'chat' && direct ? 1 : 0) + selectedNodes.length
+
+  const closeDialog = () => {
+    if (batchResult?.created) onCreated()
+    onOpenChange(false)
+  }
+
+  if (batchResult) {
+    return (
+      <ProbeBatchResultDialog
+        open={open}
+        result={batchResult}
+        onBack={() => setBatchResult(null)}
+        onClose={closeDialog}
+      />
+    )
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -178,9 +212,10 @@ export function ProbeDialog({
         className='flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden'
       >
         <DialogHeader className='shrink-0'>
-          <DialogTitle>创建多轮代理探针</DialogTitle>
+          <DialogTitle>创建账号探针</DialogTitle>
           <DialogDescription>
-            每个“账号 × 方案”生成一个持久任务；相同账号串行执行，并持久记录账号原设置用于自动或人工恢复。
+            每个“账号 ×
+            方案”生成一个持久任务；正常定检不修改账号设置，异常诊断的临时修改会自动恢复。
           </DialogDescription>
         </DialogHeader>
         <div className='grid min-h-0 gap-5 overflow-y-auto py-2 pr-1'>
@@ -191,9 +226,12 @@ export function ProbeDialog({
               onValueChange={(value: ExecutionMode) => {
                 setExecutionMode(value)
                 if (value === 'chat') {
-                  setDirect(true)
-                } else if (!selectedNodes.length) {
-                  setNodes(selectableEgress.map((node) => Number(node.id)))
+                  setTargetMode('current')
+                } else {
+                  setTargetMode('diagnostic')
+                  if (!selectedNodes.length) {
+                    setNodes(selectableEgress.map((node) => Number(node.id)))
+                  }
                 }
               }}
             >
@@ -213,7 +251,7 @@ export function ProbeDialog({
             </Select>
             <p className='text-xs leading-5 text-muted-foreground'>
               {executionMode === 'chat'
-                ? '临时固定账号与出口后调用 /v1/chat/completions，保存可预览的完整回复和流式指标。'
+                ? '固定目标账号并调用 /v1/chat/completions；正常定检保持账号现有出口绑定不变。'
                 : '通过 grok2api 出口 quality-test 接口获取哈希和指标，并使用审计记录核验实际账号与出口。'}
             </p>
           </div>
@@ -297,36 +335,62 @@ export function ProbeDialog({
               </div>
             )}
             {executionMode === 'chat' ? (
-              <label className='flex items-center gap-2 rounded-lg border p-3 text-sm'>
-                <Checkbox
-                  checked={direct}
-                  onCheckedChange={(value) => setDirect(value === true)}
-                />
-                <Route className='size-4 text-muted-foreground' />
-                <span className='font-medium'>上游调度</span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      className='inline-flex size-6 cursor-help items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground'
-                      tabIndex={0}
-                      aria-label='上游调度说明'
-                    >
-                      <CircleHelp className='size-3.5' />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent className='max-w-80'>
-                    临时解除账号的固定出口绑定，由 grok2api
-                    从可用出口池或回退策略选择；任务会从审计记录保存实际出口。
-                  </TooltipContent>
-                </Tooltip>
-              </label>
+              <div className='grid gap-2'>
+                <Select
+                  value={targetMode}
+                  onValueChange={(value: 'current' | 'diagnostic') =>
+                    setTargetMode(value)
+                  }
+                >
+                  <SelectTrigger aria-label='探针用途'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='current'>
+                      正常定检 · 账号当前出口
+                    </SelectItem>
+                    <SelectItem value='diagnostic'>
+                      异常诊断 · 临时切换出口
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                {targetMode === 'current' ? (
+                  <div className='rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-5 text-muted-foreground'>
+                    只检测已启用且已绑定固定出口的账号；不会解除、切换或重新写入账号出口。请求前后均使用审计核验实际节点。
+                  </div>
+                ) : (
+                  <label className='flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-sm'>
+                    <Checkbox
+                      checked={direct}
+                      onCheckedChange={(value) => setDirect(value === true)}
+                    />
+                    <Route className='size-4 text-muted-foreground' />
+                    <span className='font-medium'>上游调度</span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className='inline-flex size-6 cursor-help items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground'
+                          tabIndex={0}
+                          aria-label='上游调度说明'
+                        >
+                          <CircleHelp className='size-3.5' />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className='max-w-80'>
+                        仅用于人工异常诊断：临时解除固定出口绑定，由 grok2api
+                        选择节点，并在任务结束后恢复原绑定。
+                      </TooltipContent>
+                    </Tooltip>
+                  </label>
+                )}
+              </div>
             ) : (
               <div className='rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs leading-5 text-muted-foreground'>
                 快速模式由 grok2api 的出口节点接口执行，仅支持已配置代理的
                 grok_build 出口，不包含上游调度目标。
               </div>
             )}
-            {selectableEgress.length ? (
+            {targetMode === 'diagnostic' && selectableEgress.length ? (
               <div className='grid max-h-56 gap-2 overflow-auto sm:grid-cols-2'>
                 {selectableEgress.map((node) => {
                   const id = Number(node.id)
@@ -355,7 +419,7 @@ export function ProbeDialog({
                   )
                 })}
               </div>
-            ) : (
+            ) : targetMode === 'diagnostic' ? (
               <div className='flex items-start gap-3 rounded-lg border border-dashed p-3'>
                 {egressLoading ? (
                   <RefreshCw className='mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground' />
@@ -369,7 +433,7 @@ export function ProbeDialog({
                   <p className='mt-1 text-xs leading-5 text-muted-foreground'>
                     {egressLoading
                       ? '正在从 grok2api 同步最新的出口节点配置。'
-                      : 'grok2api 当前没有已启用且已配置代理的 grok_build 出口节点。完整对话探针仍可使用上游调度。'}
+                      : 'grok2api 当前没有已启用且已配置代理的 grok_build 出口节点。正常定检仍可使用账号当前绑定。'}
                   </p>
                   {executionMode === 'quality_test' && (
                     <Button
@@ -379,16 +443,16 @@ export function ProbeDialog({
                       className='mt-2'
                       onClick={() => {
                         setExecutionMode('chat')
-                        setDirect(true)
+                        setTargetMode('current')
                       }}
                     >
                       <Route />
-                      使用上游调度
+                      使用账号当前出口
                     </Button>
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
           <div className='flex flex-wrap items-center gap-2 rounded-lg bg-muted/60 p-3'>
             {sourceTaskCount > 0 && (
@@ -452,7 +516,7 @@ export function ProbeDialog({
                     单账号任务按顺序执行
                   </div>
                   多个方案会拆成 {effectiveProfileIds.length}{' '}
-                  个任务，每个任务中的出口也按轮次依次切换。账号出口和原设置属于共享状态，因此即使配置多个
+                  个任务。诊断模式中的出口按轮次依次切换；账号出口和原设置属于共享状态，因此即使配置多个
                   Worker，也不会同时接管同一个账号；选择多个账号后才会并行。
                 </div>
               </div>
@@ -476,6 +540,119 @@ export function ProbeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function ProbeBatchResultDialog({
+  open,
+  result,
+  onBack,
+  onClose,
+}: {
+  open: boolean
+  result: ProbeRunBatchResult
+  onBack: () => void
+  onClose: () => void
+}) {
+  const skippedAccounts = getSkippedAccounts(result)
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className='max-w-2xl'>
+        <DialogHeader>
+          <DialogTitle>探针任务创建结果</DialogTitle>
+          <DialogDescription>
+            {skippedAccounts.length
+              ? '已完成本次创建请求，未创建的账号和原因如下。'
+              : '所选账号的探针任务均已创建。'}
+          </DialogDescription>
+        </DialogHeader>
+        <div className='grid gap-4'>
+          <div className='flex items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4'>
+            <CircleCheckBig className='size-5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            <div>
+              <div className='text-2xl font-semibold tabular-nums'>
+                {result.created}
+              </div>
+              <div className='text-xs text-muted-foreground'>已创建任务</div>
+            </div>
+          </div>
+          {skippedAccounts.length > 0 && (
+            <div className='grid gap-2'>
+              <div className='flex items-center gap-2 text-sm font-medium'>
+                <TriangleAlert className='size-4 text-amber-500' />
+                {skippedAccounts.length} 个账号未创建
+              </div>
+              <div className='max-h-72 overflow-y-auto rounded-lg border'>
+                {skippedAccounts.map((account) => (
+                  <div
+                    key={account.id}
+                    className='grid gap-1 border-b px-4 py-3 last:border-b-0'
+                  >
+                    <div className='flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium'>
+                      <span>{account.name || `账号 ${account.id}`}</span>
+                      <Badge variant='outline'>ID {account.id}</Badge>
+                      {account.email && (
+                        <span className='text-xs font-normal text-muted-foreground'>
+                          {account.email}
+                        </span>
+                      )}
+                    </div>
+                    <p className='text-xs leading-5 text-muted-foreground'>
+                      {account.reason}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          {!result.created && (
+            <Button variant='outline' onClick={onBack}>
+              返回调整
+            </Button>
+          )}
+          <Button onClick={onClose}>关闭</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function getSkippedAccounts(result: ProbeRunBatchResult) {
+  if (result.skippedAccounts?.length) return result.skippedAccounts
+  const invalid = result.invalidAccounts.map((account) => ({
+    ...account,
+    name: '',
+    email: '',
+    code: 'invalid' as const,
+  }))
+  return [
+    ...invalid,
+    ...result.restoreBlockedAccountIds.map((id) => ({
+      id,
+      name: '',
+      email: '',
+      code: 'restore_blocked' as const,
+      reason: `账号 ${id} 存在未完成的原设置恢复，请先在历史任务中同步`,
+    })),
+    ...result.activeAccountIds.map((id) => ({
+      id,
+      name: '',
+      email: '',
+      code: 'active_run' as const,
+      reason: `账号 ${id} 已有排队或执行中的探针任务，请等待其结束`,
+    })),
+    ...result.missingAccountIds.map((id) => ({
+      id,
+      name: '',
+      email: '',
+      code: 'missing' as const,
+      reason: `账号 ${id} 已不在 grok2api 账号列表中`,
+    })),
+  ].filter(
+    (account, index, accounts) =>
+      accounts.findIndex((item) => item.id === account.id) === index
   )
 }
 

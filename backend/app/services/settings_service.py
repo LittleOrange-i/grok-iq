@@ -10,6 +10,8 @@ from apscheduler.triggers.cron import CronTrigger
 from app.core.config import Settings
 from app.persistence.settings_repository import SettingsRepository
 
+REGISTER_CURRENT_EGRESS_MIGRATION_KEY = "register_probe_current_egress_v1"
+
 
 class RuntimeSettingsService:
     """Validates, persists, masks, and hot-applies operator settings."""
@@ -20,6 +22,30 @@ class RuntimeSettingsService:
 
     def load(self) -> None:
         overrides = self.repository.load()
+        if not self.repository.migration_applied(
+            REGISTER_CURRENT_EGRESS_MIGRATION_KEY
+        ):
+            targets = overrides.get("register_probe_proxy_targets")
+            if (
+                overrides.get("register_probe_execution_mode", "chat") == "chat"
+                and isinstance(targets, list)
+                and len(targets) == 1
+                and isinstance(targets[0], dict)
+                and targets[0].get("kind") == "direct"
+            ):
+                overrides["register_probe_proxy_targets"] = [
+                    {"kind": "current", "id": None}
+                ]
+                self.repository.save(
+                    {
+                        "register_probe_proxy_targets": overrides[
+                            "register_probe_proxy_targets"
+                        ]
+                    }
+                )
+            self.repository.mark_migration_applied(
+                REGISTER_CURRENT_EGRESS_MIGRATION_KEY
+            )
         if not overrides:
             return
         candidate = self._validate(self.settings.model_dump() | overrides)
@@ -71,7 +97,7 @@ class RuntimeSettingsService:
         for raw in candidate.register_probe_proxy_targets:
             kind = str(raw.get("kind") or "").strip()
             raw_id = raw.get("id")
-            if kind == "direct":
+            if kind in {"current", "direct"}:
                 target_id = None
             elif kind == "egress":
                 try:
@@ -92,6 +118,10 @@ class RuntimeSettingsService:
             target["kind"] != "egress" for target in targets
         ):
             raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        if any(target["kind"] == "current" for target in targets) and any(
+            target["kind"] != "current" for target in targets
+        ):
+            raise ValueError("账号当前出口不能与诊断出口混用")
         candidate.register_probe_profile_ids = profile_ids
         candidate.register_probe_proxy_targets = targets
 
@@ -136,6 +166,7 @@ class RuntimeSettingsService:
             "probeWorkerConcurrency": s.probe_worker_concurrency,
             "probeQueueLimit": s.probe_queue_limit,
             "probeStepDelaySeconds": s.probe_step_delay_seconds,
+            "probeCurrentEgressIntervalSeconds": s.probe_current_egress_interval_seconds,
             "probeTransientRetryAttempts": s.probe_transient_retry_attempts,
             "probeTransientRetryBaseSeconds": s.probe_transient_retry_base_seconds,
             "probeTransientRetryMaxSeconds": s.probe_transient_retry_max_seconds,

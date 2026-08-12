@@ -15,6 +15,32 @@ from app.services.account_service import QUARANTINE_RECOVERY_PRIORITY, AccountSe
 
 
 class AccountListClient:
+    async def list_accounts(self, **_: Any) -> dict[str, Any]:
+        return {
+            "items": [
+                {
+                    "id": "1",
+                    "name": "Alpha",
+                    "email": "alpha@example.test",
+                    "enabled": True,
+                    "authStatus": "active",
+                    "egressNodeId": "12",
+                    "egressAssignmentMode": "manual",
+                },
+                {
+                    "id": "2",
+                    "name": "Bravo",
+                    "email": "bravo@example.test",
+                    "enabled": True,
+                    "authStatus": "active",
+                    "egressNodeId": None,
+                },
+            ],
+            "total": 2,
+            "page": 1,
+            "pageSize": 50,
+        }
+
     async def list_all_accounts(self, **_: Any) -> list[dict[str, Any]]:
         return [
             {
@@ -101,6 +127,24 @@ async def test_select_account_ids_applies_filters_and_excludes_auth_failures(tmp
     assert suspect["accountIds"] == [1]
     assert suspect["matched"] == 2
     assert suspect["excluded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_account_options_include_egress_binding(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "monitor.db"),
+        client=AccountListClient(),  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    result = await service.list_account_options(page=1, page_size=50)
+
+    assert result["items"][0]["egressNodeId"] == "12"
+    assert result["items"][0]["egressAssignmentMode"] == "manual"
+    assert result["items"][1]["egressNodeId"] is None
 
 
 @pytest.mark.asyncio

@@ -46,9 +46,9 @@ class Settings(BaseSettings):
         default_factory=lambda: ["quality-marker"]
     )
     register_probe_execution_mode: str = "chat"
-    register_probe_rounds: int = Field(default=3, ge=1, le=20)
+    register_probe_rounds: int = Field(default=1, ge=1, le=20)
     register_probe_proxy_targets: list[dict[str, Any]] = Field(
-        default_factory=lambda: [{"kind": "direct", "id": None}]
+        default_factory=lambda: [{"kind": "current", "id": None}]
     )
 
     # The WeChat public-platform test account uses the same template-message
@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     probe_worker_concurrency: int = Field(default=2, ge=1, le=32)
     probe_queue_limit: int = Field(default=10_000, ge=1, le=100_000)
     probe_step_delay_seconds: float = Field(default=0.6, ge=0, le=60)
+    probe_current_egress_interval_seconds: float = Field(default=10.0, ge=0, le=300)
     # A failed proxy can put the pinned account into grok2api's short health
     # cooldown.  Probe retries are bounded and independently configurable so a
     # short Cron interval cannot create a retry storm.
@@ -117,6 +118,7 @@ class Settings(BaseSettings):
         "probe_worker_concurrency",
         "probe_queue_limit",
         "probe_step_delay_seconds",
+        "probe_current_egress_interval_seconds",
         "probe_transient_retry_attempts",
         "probe_transient_retry_base_seconds",
         "probe_transient_retry_max_seconds",

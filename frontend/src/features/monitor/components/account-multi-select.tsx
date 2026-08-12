@@ -8,11 +8,13 @@ import {
   ChevronsUpDown,
   ListChecks,
   Loader2,
+  Network,
   RefreshCw,
+  Route,
   UsersRound,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, type AccountOption } from '@/lib/api'
+import { api, type AccountOption, type EgressNode } from '@/lib/api'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,12 +49,14 @@ const SEARCH_DEBOUNCE_MS = 300
 type AccountMultiSelectProps = {
   value: number[]
   onChange: (value: number[]) => void
+  egress?: EgressNode[]
   invalid?: boolean
 }
 
 export function AccountMultiSelect({
   value,
   onChange,
+  egress = [],
   invalid = false,
 }: AccountMultiSelectProps) {
   const [open, setOpen] = useState(false)
@@ -66,6 +70,10 @@ export function AccountMultiSelect({
   )
   const selectedIds = useMemo(() => uniqueIds(value), [value])
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const egressNames = useMemo(
+    () => new Map(egress.map((node) => [String(node.id), node.name])),
+    [egress]
+  )
 
   useEffect(() => {
     const normalized = search.trim()
@@ -78,12 +86,7 @@ export function AccountMultiSelect({
   }, [debouncedSearch, search])
 
   const accountsQuery = useQuery({
-    queryKey: [
-      'plan-account-options',
-      page,
-      debouncedSearch,
-      upstreamStatus,
-    ],
+    queryKey: ['plan-account-options', page, debouncedSearch, upstreamStatus],
     queryFn: ({ signal }) =>
       api.accountOptions(
         {
@@ -105,14 +108,9 @@ export function AccountMultiSelect({
   const total = searchPending ? 0 : (accountsQuery.data?.total ?? 0)
   const responsePageSize = accountsQuery.data?.pageSize || PAGE_SIZE
   const totalPages = Math.max(1, Math.ceil(total / responsePageSize))
-  const currentPage = Math.min(
-    accountsQuery.data?.page ?? page,
-    totalPages
-  )
+  const currentPage = Math.min(accountsQuery.data?.page ?? page, totalPages)
   const firstItem = total ? (currentPage - 1) * responsePageSize + 1 : 0
-  const lastItem = total
-    ? Math.min(currentPage * responsePageSize, total)
-    : 0
+  const lastItem = total ? Math.min(currentPage * responsePageSize, total) : 0
   const loading = searchPending || accountsQuery.isFetching
   const currentPageSelectable = accounts.filter(isDetectableAccount).length
 
@@ -152,9 +150,7 @@ export function AccountMultiSelect({
       const added = next.length - selectedIds.length
       onChange(next)
       toast.success(
-        added > 0
-          ? `已加入 ${added} 个可检测账号`
-          : '当前搜索结果已全部选中'
+        added > 0 ? `已加入 ${added} 个可检测账号` : '当前搜索结果已全部选中'
       )
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -329,8 +325,15 @@ export function AccountMultiSelect({
                         </span>
                         <span className='min-w-0 flex-1'>
                           <span className='block truncate'>{title}</span>
-                          <span className='block truncate text-xs text-muted-foreground'>
-                            {account.email || `ID ${account.id}`}
+                          <span className='flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground'>
+                            <span className='truncate'>
+                              {account.email || `ID ${account.id}`}
+                            </span>
+                            <span aria-hidden='true'>·</span>
+                            <AccountEgressLabel
+                              account={account}
+                              egressNames={egressNames}
+                            />
                           </span>
                         </span>
                         {!account.enabled && (
@@ -352,7 +355,7 @@ export function AccountMultiSelect({
               )}
             </CommandList>
             <div className='flex items-center justify-between gap-3 border-t px-3 py-2'>
-              <span className='text-xs tabular-nums text-muted-foreground'>
+              <span className='text-xs text-muted-foreground tabular-nums'>
                 {firstItem}–{lastItem} / {total}
               </span>
               <div className='flex items-center gap-1'>
@@ -368,7 +371,7 @@ export function AccountMultiSelect({
                 >
                   <ChevronLeft />
                 </Button>
-                <span className='min-w-16 text-center text-xs tabular-nums text-muted-foreground'>
+                <span className='min-w-16 text-center text-xs text-muted-foreground tabular-nums'>
                   {currentPage} / {totalPages}
                 </span>
                 <Button
@@ -414,6 +417,38 @@ export function AccountMultiSelect({
 
 function isDetectableAccount(account: AccountOption): boolean {
   return !account.authStatus || account.authStatus === 'active'
+}
+
+function AccountEgressLabel({
+  account,
+  egressNames,
+}: {
+  account: AccountOption
+  egressNames: Map<string, string>
+}) {
+  const nodeId = account.egressNodeId ? String(account.egressNodeId) : ''
+  if (!nodeId) {
+    return (
+      <span className='inline-flex shrink-0 items-center gap-1 text-amber-600 dark:text-amber-400'>
+        <Route className='size-3' />
+        未绑定固定出口
+      </span>
+    )
+  }
+  const mode =
+    account.egressAssignmentMode === 'auto'
+      ? '自动'
+      : account.egressAssignmentMode === 'manual'
+        ? '手动'
+        : '固定'
+  return (
+    <span className='inline-flex min-w-0 items-center gap-1'>
+      <Network className='size-3 shrink-0' />
+      <span className='max-w-36 truncate'>
+        {egressNames.get(nodeId) || `出口节点 #${nodeId}`} · {mode}
+      </span>
+    </span>
+  )
 }
 
 function uniqueIds(ids: number[]): number[] {

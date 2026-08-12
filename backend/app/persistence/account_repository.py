@@ -57,7 +57,7 @@ class AccountRepository:
             marker = [row for row in anomalies if row.classification == "marker_miss"]
             egress_count = len({self._observed_egress_key(row) for row in anomalies})
             streak = maximum_anomaly_streak(row.classification for row in rows)
-            measurable = [row for row in rows if row.tps > 0]
+            measurable = [row for row in rows if row.status == "done" and row.tps > 0]
             status, score, reasons = risk_status(
                 anomaly_count=len(anomalies),
                 hard_count=len(hard),
@@ -78,6 +78,7 @@ class AccountRepository:
             ):
                 status = "quarantined"
             latest = rows[-1] if rows else None
+            latest_measurable = measurable[-1] if measurable else None
             assessment.monitor_status = status
             assessment.risk_score = score
             assessment.sample_count = len(measurable)
@@ -89,7 +90,7 @@ class AccountRepository:
             assessment.anomaly_streak = streak
             assessment.avg_tps = sum(row.tps for row in measurable) / len(measurable) if measurable else 0.0
             assessment.max_tps = max((row.tps for row in measurable), default=0.0)
-            assessment.latest_tps = latest.tps if latest else 0.0
+            assessment.latest_tps = latest_measurable.tps if latest_measurable else 0.0
             assessment.latest_classification = latest.classification if latest else ""
             assessment.latest_sample_at = latest.created_at if latest else None
             assessment.last_anomaly_at = anomalies[-1].created_at if anomalies else None
@@ -105,7 +106,9 @@ class AccountRepository:
 
         if sample.verified_egress_node_id is not None:
             return f"egress:{sample.verified_egress_node_id}"
-        return "direct" if sample.target_kind == "direct" else sample.target_key
+        if sample.target_kind == "direct":
+            return "direct"
+        return sample.target_key
 
     def set_manual_status(
         self,

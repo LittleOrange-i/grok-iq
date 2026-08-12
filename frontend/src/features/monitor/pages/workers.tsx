@@ -477,7 +477,8 @@ function WorkerTargetLabel({
   egressNodeNames: EgressNodeNameMap
 }) {
   if (!value) return <span>等待步骤</span>
-  if (value === 'direct') return <span>上游调度</span>
+  if (value === 'current') return <span>账号当前出口</span>
+  if (value === 'direct') return <span>上游调度（诊断）</span>
   if (!value.startsWith('egress:')) return <span>{value}</span>
   const nodeId = value.slice(7)
   return (

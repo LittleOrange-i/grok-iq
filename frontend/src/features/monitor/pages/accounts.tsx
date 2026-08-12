@@ -105,6 +105,7 @@ export function AccountsPage() {
   const [batchAction, setBatchAction] = useState<AccountBatchAction | null>(
     null
   )
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [sampleToDelete, setSampleToDelete] = useState<ProbeSample | null>(null)
@@ -272,6 +273,40 @@ export function AccountsPage() {
     },
   })
 
+  const deleteAccountsMutation = useMutation({
+    mutationFn: (accountIds: number[]) => api.deleteAccounts(accountIds),
+    onSuccess: (result) => {
+      const skippedAccountIds = result.skippedAccountIds ?? []
+      const failedAccountIds = result.failedAccountIds ?? []
+      const retainedAccountIds = Array.from(
+        new Set([...skippedAccountIds, ...failedAccountIds])
+      )
+      setDeleteConfirmOpen(false)
+      setSelected(retainedAccountIds)
+      setSelectedDisabled(
+        selectedDisabledIds.filter((id) => retainedAccountIds.includes(id))
+      )
+      setAllFilteredSelected(false)
+      if (failedAccountIds.length > 0 || skippedAccountIds.length > 0) {
+        const details = [`已删除 ${result.deleted} 个账号`]
+        if (failedAccountIds.length) {
+          details.push(`${failedAccountIds.length} 个删除失败并保留选择`)
+        }
+        if (skippedAccountIds.length) {
+          details.push(`${skippedAccountIds.length} 个设置受任务保护并跳过`)
+        }
+        toast.warning(details.join('；'))
+      } else {
+        toast.success(`已删除 ${result.deleted} 个账号`)
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+
   const batchTargetIds =
     batchAction === 'enable'
       ? selectedDisabledIds
@@ -280,6 +315,8 @@ export function AccountsPage() {
         : []
   const batchActionLabel = batchAction === 'enable' ? '启用' : '停用'
   const batchActionPending = batchAccountMutation.isPending
+  const deletePending = deleteAccountsMutation.isPending
+  const selectionActionPending = batchActionPending || deletePending
 
   return (
     <Page>
@@ -324,7 +361,7 @@ export function AccountsPage() {
             <SelectionToolbar
               selectedCount={selected.length}
               entityLabel='账号'
-              disabled={batchActionPending}
+              disabled={selectionActionPending}
               onClear={() => {
                 setSelected([])
                 setSelectedDisabled([])
@@ -333,7 +370,7 @@ export function AccountsPage() {
             >
               <ToolbarAction
                 label={`测试已选 ${selected.length} 个账号`}
-                disabled={batchActionPending}
+                disabled={selectionActionPending}
                 onClick={() => {
                   setProbeOpen(true)
                   void egress.refetch()
@@ -349,7 +386,7 @@ export function AccountsPage() {
                 }
                 pending={batchActionPending && batchAction === 'enable'}
                 disabled={
-                  batchActionPending || selectedDisabledIds.length === 0
+                  selectionActionPending || selectedDisabledIds.length === 0
                 }
                 onClick={() => setBatchAction('enable')}
               >
@@ -363,10 +400,21 @@ export function AccountsPage() {
                 }
                 destructive
                 pending={batchActionPending && batchAction === 'disable'}
-                disabled={batchActionPending || selectedEnabledIds.length === 0}
+                disabled={
+                  selectionActionPending || selectedEnabledIds.length === 0
+                }
                 onClick={() => setBatchAction('disable')}
               >
                 <PowerOff />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`批量删除 ${selected.length} 个已选账号`}
+                destructive
+                pending={deletePending}
+                disabled={selectionActionPending || selected.length === 0}
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                <Trash2 />
               </ToolbarAction>
             </SelectionToolbar>
           </>
@@ -791,6 +839,48 @@ export function AccountsPage() {
           })
         }
       />
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) setDeleteConfirmOpen(false)
+        }}
+        title={`删除 ${selected.length} 个账号？`}
+        desc={
+          <div className='space-y-2'>
+            <p>
+              将通过 grok2api API 永久删除当前选择的 {selected.length}{' '}
+              个账号，此操作不可撤销。
+            </p>
+            <p className='font-medium text-foreground'>
+              账号删除后无法通过本页面恢复，请谨慎操作。
+            </p>
+            <p className='text-muted-foreground'>
+              正在执行探针或等待账号设置恢复的账号会被跳过并保留选择，避免删除正在使用的账号。
+            </p>
+            <p className='text-muted-foreground'>
+              已产生的探针样本、历史任务和本地监控判定不会随账号删除。
+            </p>
+          </div>
+        }
+        cancelBtnText='取消'
+        confirmText={
+          deletePending ? (
+            <>
+              <Loader2 className='animate-spin' />
+              删除中…
+            </>
+          ) : (
+            <>
+              <Trash2 />
+              确认删除
+            </>
+          )
+        }
+        destructive
+        isLoading={deletePending}
+        disabled={selected.length === 0}
+        handleConfirm={() => deleteAccountsMutation.mutate(selected)}
+      />
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent size='wide' className='overflow-hidden'>
           <DialogHeader className='shrink-0'>
@@ -982,14 +1072,18 @@ function AccountDetail({
                 <span
                   className='min-w-0 leading-5 font-medium break-all'
                   title={
-                    item.target_kind === 'direct'
-                      ? '上游调度'
-                      : item.egress_name
+                    item.target_kind === 'current'
+                      ? '账号当前出口'
+                      : item.target_kind === 'direct'
+                        ? '上游调度（诊断）'
+                        : item.egress_name
                   }
                 >
-                  {item.target_kind === 'direct'
-                    ? '上游调度'
-                    : item.egress_name}
+                  {item.target_kind === 'current'
+                    ? '账号当前出口'
+                    : item.target_kind === 'direct'
+                      ? '上游调度（诊断）'
+                      : item.egress_name}
                 </span>
                 <span className='whitespace-nowrap tabular-nums sm:text-right'>
                   {formatNumber(item.max_tps)} TPS max
@@ -1189,7 +1283,7 @@ function SampleDetail({
                 ? getEgressNodeName(egressNodeNames, sample.egress_node_id) ||
                   `Node ${sample.egress_node_id}`
                 : sample.target_kind === 'direct'
-                  ? '上游调度'
+                  ? '上游调度（诊断）'
                   : sample.egress_name
             }
           />
@@ -1257,11 +1351,18 @@ function sampleTargetText(
   sample: ProbeSample,
   egressNodeNames: EgressNodeNameMap
 ): string {
+  if (sample.target_kind === 'current') {
+    const node =
+      sample.verified_egress_node_id ?? sample.egress_node_id ?? undefined
+    return `账号当前出口 · ${
+      getEgressNodeName(egressNodeNames, node) || `Node ${node ?? '未核验'}`
+    }`
+  }
   if (sample.target_kind !== 'direct') {
     return sample.egress_name || `出口 ${sample.egress_node_id ?? '—'}`
   }
-  if (!sample.verified_egress_node_id) return '上游调度 · 本地出口'
-  return `上游调度 · ${
+  if (!sample.verified_egress_node_id) return '上游调度诊断 · 本地出口'
+  return `上游调度诊断 · ${
     getEgressNodeName(egressNodeNames, sample.verified_egress_node_id) ||
     `Node ${sample.verified_egress_node_id}`
   }`

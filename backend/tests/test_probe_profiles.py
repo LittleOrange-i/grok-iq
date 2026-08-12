@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from app.core.config import Settings
-from app.integrations.grok2api.client import Grok2APIClient
+from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.database import Database
 from app.persistence.models import ProbeProfile
 from app.persistence.probe_repository import ProbeRepository
@@ -114,6 +114,42 @@ async def test_chat_probe_only_sends_explicit_output_limit(
     )
 
     assert request_body.get("max_tokens") == expected
+
+
+@pytest.mark.asyncio
+async def test_chat_probe_keeps_response_evidence_when_audit_hits_wrong_account(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request_body: dict[str, Any] = {}
+    client = Grok2APIClient(Settings())
+    monkeypatch.setattr(client, "_session", lambda: StubStreamSession(request_body))
+
+    async def find_audit(_: str) -> dict[str, Any]:
+        return {"id": "9", "accountId": "8", "egressNodeId": "2"}
+
+    monkeypatch.setattr(client, "find_audit", find_audit)
+
+    with pytest.raises(IntegrationError, match="实际命中账号 8") as caught:
+        await client.chat_probe(
+            api_key="key",
+            public_model="model",
+            account_id=7,
+            system_prompt="",
+            prompt="prompt",
+            expected="OK",
+            max_output_tokens=0,
+            temperature=None,
+            extra_body={},
+        )
+
+    error = caught.value
+    result = error.probe_result
+    assert error.request_id == result.request_id
+    assert error.audit_id == 9
+    assert error.verified_account_id == 8
+    assert error.verified_egress_node_id == 2
+    assert result.response_text == "OK"
+    assert result.output_tokens == 1
 
 
 @pytest.mark.asyncio

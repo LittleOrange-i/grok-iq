@@ -26,6 +26,7 @@ from app.services.wechat_notification import WeChatAccountNotificationService
 from .auth import build_admin_auth_dependency
 from .schemas import (
     AccountActionInput,
+    AccountBatchDeleteInput,
     AccountBatchUpdateInput,
     AuthLoginInput,
     AuthSetupInput,
@@ -245,6 +246,17 @@ def build_router(
             return await account_service.set_accounts_enabled(
                 account_ids=payload.account_ids,
                 enabled=payload.enabled,
+            )
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @protected_router.delete("/accounts/batch")
+    async def batch_delete_accounts(
+        payload: AccountBatchDeleteInput,
+    ) -> dict[str, Any]:
+        try:
+            return await account_service.delete_upstream_accounts(
+                account_ids=payload.account_ids,
             )
         except Exception as exc:
             raise _http_error(exc) from exc
@@ -480,6 +492,29 @@ def build_router(
         except Exception as exc:
             raise _http_error(exc) from exc
 
+    @protected_router.post("/probe-runs/batch/restore-account-settings")
+    async def restore_probe_runs_account_settings(
+        payload: BulkIdsInput,
+    ) -> dict[str, Any]:
+        try:
+            return await probe_manager.restore_many(payload.ids)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @protected_router.get("/probe-runs/selection")
+    def select_probe_runs(
+        status: str = "",
+        search: str = "",
+        account_id: int | None = Query(default=None, alias="accountId"),
+        plan_id: str | None = Query(default=None, alias="planId"),
+    ) -> dict[str, Any]:
+        return probe_repository.select_run_ids(
+            status=status,
+            search=search,
+            account_id=account_id,
+            plan_id=plan_id,
+        )
+
     @protected_router.get("/probe-runs/{run_id}")
     def probe_run_detail(run_id: str) -> dict[str, Any]:
         value = probe_repository.run_detail(run_id)
@@ -536,16 +571,20 @@ def build_router(
         return Response(status_code=204)
 
     @protected_router.delete("/probe-runs")
-    def delete_probe_runs(payload: BulkIdsInput) -> dict[str, int]:
+    def delete_probe_runs(payload: BulkIdsInput) -> dict[str, Any]:
         try:
-            deleted, account_ids = probe_repository.delete_runs(payload.ids)
+            deleted, account_ids, skipped = probe_repository.delete_runs(payload.ids)
             for account_id in account_ids:
                 account_repository.recalculate(
                     account_id,
                     probe_manager.thresholds,
                     settings.analysis_window_hours,
                 )
-            return {"deleted": deleted}
+            return {
+                "requested": len(payload.ids),
+                "deleted": deleted,
+                "skippedRunIds": skipped,
+            }
         except Exception as exc:
             raise _http_error(exc) from exc
 

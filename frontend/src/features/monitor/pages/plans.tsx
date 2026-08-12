@@ -70,9 +70,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { AccountMultiSelect } from '@/features/monitor/components/account-multi-select'
 import { ProfileMultiSelect } from '@/features/monitor/components/profile-multi-select'
@@ -110,9 +110,7 @@ export function PlansPage() {
   const [viewingPlan, setViewingPlan] = useState<ProbePlan | null>(null)
   const [deletingPlan, setDeletingPlan] = useState<ProbePlan | null>(null)
   const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([])
-  const [selectedExecutionIds, setSelectedExecutionIds] = useState<string[]>(
-    []
-  )
+  const [selectedExecutionIds, setSelectedExecutionIds] = useState<string[]>([])
   const [schedulerForm, setSchedulerForm] =
     useState<SchedulerSettingsForm | null>(null)
   const [bulkRunOpen, setBulkRunOpen] = useState(false)
@@ -547,7 +545,7 @@ export function PlansPage() {
               <div className='lg:col-span-2'>
                 <EmptyState
                   title='暂无 Cron 计划'
-                  description='创建计划并选择具体账号、轮数、上游调度或固定出口。'
+                  description='创建正常定检计划，或为异常账号配置临时出口诊断。'
                 />
               </div>
             )}
@@ -611,7 +609,8 @@ export function PlansPage() {
         title='删除 Cron 计划？'
         desc={
           <>
-            将删除「{deletingPlan?.name}」。历史任务和样本继续保留；仍有排队或执行任务时会保留计划。
+            将删除「{deletingPlan?.name}
+            」。历史任务和样本继续保留；仍有排队或执行任务时会保留计划。
           </>
         }
         confirmText={
@@ -781,7 +780,8 @@ function SystemCronPanel({
         <div className='mb-4'>
           <h2 className='text-sm font-semibold'>系统 Cron 设置</h2>
           <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-            系统 Cron 只恢复到期的暂时停用账号，不会恢复账号列表中的人工批量停用。
+            系统 Cron
+            只恢复到期的暂时停用账号，不会恢复账号列表中的人工批量停用。
           </p>
         </div>
         <div className='space-y-4'>
@@ -935,7 +935,9 @@ function ExecutionHistory({
               </div>
               <div className='text-right text-xs text-muted-foreground'>
                 <div>{formatDate(item.started_at)}</div>
-                <div className='mt-0.5'>完成 {formatDate(item.completed_at)}</div>
+                <div className='mt-0.5'>
+                  完成 {formatDate(item.completed_at)}
+                </div>
               </div>
               <ActionToolbar label={`${title} 调用记录操作`}>
                 {plan && (
@@ -1064,7 +1066,8 @@ function PlanDetailDialog({
             {accountPreview.join(', ') || '—'}
             {remainingAccounts > 0 && (
               <div className='mt-2 font-sans text-muted-foreground'>
-                还有 {remainingAccounts} 个账号未在预览中展开，可使用复制按钮取得全部 ID。
+                还有 {remainingAccounts}{' '}
+                个账号未在预览中展开，可使用复制按钮取得全部 ID。
               </div>
             )}
           </div>
@@ -1200,11 +1203,7 @@ function PlanCard({
             >
               <Trash2 />
             </ToolbarAction>
-            <ToolbarAction
-              label='编辑计划'
-              disabled={pending}
-              onClick={onEdit}
-            >
+            <ToolbarAction label='编辑计划' disabled={pending} onClick={onEdit}>
               <Edit3 />
             </ToolbarAction>
             <ToolbarAction
@@ -1244,14 +1243,13 @@ function PlanDialog({
     const fallback =
       profiles.find(
         (profile) => profile.id === 'quality-marker' && profile.enabled
-      ) ??
-      profiles.find((profile) => profile.enabled)
+      ) ?? profiles.find((profile) => profile.enabled)
     return fallback ? [fallback.id] : []
   })
   const [accountIds, setAccountIds] = useState<number[]>(
     initial?.account_ids ?? []
   )
-  const [rounds, setRounds] = useState(initial?.rounds ?? 3)
+  const [rounds, setRounds] = useState(initial?.rounds ?? 1)
   const [cron, setCron] = useState(initial?.cron_expression ?? '15 */6 * * *')
   const [timezone, setTimezone] = useState(initial?.timezone ?? 'UTC')
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
@@ -1261,8 +1259,14 @@ function PlanDialog({
   const [executionMode, setExecutionMode] = useState<ExecutionMode>(
     initial?.execution_mode ?? 'chat'
   )
+  const [targetMode, setTargetMode] = useState<'current' | 'diagnostic'>(
+    initial?.proxy_targets.some((target) => target.kind === 'current') ||
+      !initial
+      ? 'current'
+      : 'diagnostic'
+  )
   const [direct, setDirect] = useState(
-    initial?.proxy_targets.some((target) => target.kind === 'direct') ?? true
+    initial?.proxy_targets.some((target) => target.kind === 'direct') ?? false
   )
   const [nodes, setNodes] = useState<number[]>(
     initial?.proxy_targets
@@ -1291,15 +1295,22 @@ function PlanDialog({
   const qualityTestAvailable =
     selectableEgress.length > 0 && quickProfile != null
   const targetCount =
-    (executionMode === 'chat' && direct ? 1 : 0) + selectedNodes.length
+    executionMode === 'chat' && targetMode === 'current'
+      ? 1
+      : (executionMode === 'chat' && direct ? 1 : 0) + selectedNodes.length
   const mutation = useMutation({
     mutationFn: () => {
       const ids = Array.from(new Set(accountIds.filter((id) => id > 0)))
       const proxy_targets = [
-        ...(executionMode === 'chat' && direct
+        ...(executionMode === 'chat' && targetMode === 'current'
+          ? [{ kind: 'current', id: null }]
+          : []),
+        ...(executionMode === 'chat' && targetMode === 'diagnostic' && direct
           ? [{ kind: 'direct', id: null }]
           : []),
-        ...selectedNodes.map((id) => ({ kind: 'egress', id })),
+        ...(targetMode === 'diagnostic'
+          ? selectedNodes.map((id) => ({ kind: 'egress', id }))
+          : []),
       ]
       const body = {
         name,
@@ -1387,7 +1398,8 @@ function PlanDialog({
               value={executionMode}
               onValueChange={(value: ExecutionMode) => {
                 setExecutionMode(value)
-                if (value === 'chat') setDirect(true)
+                if (value === 'chat') setTargetMode('current')
+                else setTargetMode('diagnostic')
               }}
             >
               <SelectTrigger>
@@ -1406,7 +1418,7 @@ function PlanDialog({
             </Select>
             <p className='text-xs leading-5 text-muted-foreground'>
               {executionMode === 'chat'
-                ? '固定账号与出口后调用 /v1/chat/completions，保存完整回复。'
+                ? '固定目标账号并调用 /v1/chat/completions；正常定检保持账号当前出口绑定不变。'
                 : '固定账号路由后调用 grok2api 出口 quality-test，仅保存指标、哈希和审计核验结果。'}
             </p>
           </Field>
@@ -1433,10 +1445,12 @@ function PlanDialog({
             <AccountMultiSelect
               value={accountIds}
               onChange={setAccountIds}
+              egress={egress}
               invalid={!accountIds.length}
             />
             <p className='text-xs leading-5 text-muted-foreground'>
-              列表按页实时读取 grok2api；支持服务端搜索、跨页多选和全选当前搜索结果。
+              列表按页实时读取
+              grok2api；支持服务端搜索、跨页多选和全选当前搜索结果。
               停用但鉴权正常的账号仍可用于诊断探针。
             </p>
           </Field>
@@ -1470,55 +1484,81 @@ function PlanDialog({
             </Select>
           </Field>
           <Field label='出口目标' required className='sm:col-span-2'>
-            <div className='grid gap-2 sm:grid-cols-2'>
-              {executionMode === 'chat' && (
-                <label className='flex items-center gap-2 rounded-lg border p-3 text-sm'>
-                  <Checkbox
-                    checked={direct}
-                    onCheckedChange={(checked) => setDirect(checked === true)}
-                  />
-                  <Route className='size-4 text-muted-foreground' />
-                  <span>上游调度</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span
-                        className='inline-flex size-6 cursor-help items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground'
-                        tabIndex={0}
-                        aria-label='上游调度说明'
-                      >
-                        <CircleHelp className='size-3.5' />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent className='max-w-80'>
-                      临时解除固定出口绑定，由 grok2api
-                      选择可用节点或回退出口；任务保存审计中的实际出口。
-                    </TooltipContent>
-                  </Tooltip>
-                </label>
-              )}
-              {selectableEgress.map((node) => {
-                const id = Number(node.id)
-                return (
-                  <label
-                    key={id}
-                    className='flex items-center gap-2 rounded-lg border p-3 text-sm'
-                  >
+            {executionMode === 'chat' && (
+              <Select
+                value={targetMode}
+                onValueChange={(value: 'current' | 'diagnostic') =>
+                  setTargetMode(value)
+                }
+              >
+                <SelectTrigger aria-label='计划用途'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='current'>
+                    正常定检 · 账号当前出口
+                  </SelectItem>
+                  <SelectItem value='diagnostic'>
+                    异常诊断 · 临时切换出口
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {executionMode === 'chat' && targetMode === 'current' ? (
+              <div className='rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-5 text-muted-foreground'>
+                每次计划执行实时读取账号绑定，只巡检已启用且已绑定固定出口的账号；不修改出口绑定，并核验审计中的实际节点。
+              </div>
+            ) : (
+              <div className='grid gap-2 sm:grid-cols-2'>
+                {executionMode === 'chat' && (
+                  <label className='flex items-center gap-2 rounded-lg border p-3 text-sm'>
                     <Checkbox
-                      checked={nodes.includes(id)}
-                      onCheckedChange={(checked) =>
-                        setNodes((current) =>
-                          checked
-                            ? [...current, id]
-                            : current.filter((item) => item !== id)
-                        )
-                      }
+                      checked={direct}
+                      onCheckedChange={(checked) => setDirect(checked === true)}
                     />
-                    <span className='truncate'>{node.name}</span>
+                    <Route className='size-4 text-muted-foreground' />
+                    <span>上游调度（诊断）</span>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className='inline-flex size-6 cursor-help items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground'
+                          tabIndex={0}
+                          aria-label='上游调度说明'
+                        >
+                          <CircleHelp className='size-3.5' />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent className='max-w-80'>
+                        仅用于异常诊断：临时解除固定出口绑定，由 grok2api
+                        选择可用节点或回退出口；任务结束后恢复原绑定。
+                      </TooltipContent>
+                    </Tooltip>
                   </label>
-                )
-              })}
-            </div>
-            {!selectableEgress.length && (
+                )}
+                {selectableEgress.map((node) => {
+                  const id = Number(node.id)
+                  return (
+                    <label
+                      key={id}
+                      className='flex items-center gap-2 rounded-lg border p-3 text-sm'
+                    >
+                      <Checkbox
+                        checked={nodes.includes(id)}
+                        onCheckedChange={(checked) =>
+                          setNodes((current) =>
+                            checked
+                              ? [...current, id]
+                              : current.filter((item) => item !== id)
+                          )
+                        }
+                      />
+                      <span className='truncate'>{node.name}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            {targetMode === 'diagnostic' && !selectableEgress.length && (
               <div className='flex items-start gap-3 rounded-lg border border-dashed p-3'>
                 <TriangleAlert className='mt-0.5 size-4 shrink-0 text-amber-500' />
                 <div className='min-w-0 flex-1'>
@@ -1535,11 +1575,11 @@ function PlanDialog({
                       className='mt-2'
                       onClick={() => {
                         setExecutionMode('chat')
-                        setDirect(true)
+                        setTargetMode('current')
                       }}
                     >
                       <Route />
-                      使用上游调度
+                      使用账号当前出口
                     </Button>
                   )}
                 </div>
@@ -1548,7 +1588,7 @@ function PlanDialog({
             {executionMode === 'quality_test' && (
               <p className='text-xs leading-5 text-muted-foreground'>
                 快速模式仅支持已配置代理的 grok_build
-                出口节点，不生成上游调度步骤。
+                出口节点；这是诊断操作，不用于正常定检。
               </p>
             )}
           </Field>
@@ -1710,9 +1750,7 @@ function CronExample({
 }
 
 function getPlanProfileIds(plan: ProbePlan): string[] {
-  const values = plan.profile_ids?.length
-    ? plan.profile_ids
-    : [plan.profile_id]
+  const values = plan.profile_ids?.length ? plan.profile_ids : [plan.profile_id]
   return Array.from(new Set(values.map((id) => id.trim()).filter(Boolean)))
 }
 
@@ -1753,7 +1791,8 @@ function executionDetailSummary(detail: Record<string, unknown>) {
     return typeof value === 'number' ? [`${label} ${value}`] : []
   })
   const failed = detail.failed
-  if (Array.isArray(failed) && failed.length) values.push(`失败 ${failed.length}`)
+  if (Array.isArray(failed) && failed.length)
+    values.push(`失败 ${failed.length}`)
   return values.join(' · ') || '无附加明细'
 }
 
@@ -1773,7 +1812,8 @@ function executionLabel(status: string) {
 }
 
 function proxyTargetLabel(target: ProbePlan['proxy_targets'][number]) {
-  if (target.kind === 'direct') return target.name || '上游调度'
+  if (target.kind === 'current') return '账号当前出口'
+  if (target.kind === 'direct') return '上游调度（诊断）'
   return target.name || `出口 #${target.id}`
 }
 

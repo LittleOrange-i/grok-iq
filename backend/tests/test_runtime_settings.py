@@ -85,6 +85,51 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
         )
 
 
+def test_legacy_registration_target_migrates_to_current_egress(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    repository = SettingsRepository(database, settings)
+    repository.save(
+        {
+            "register_probe_execution_mode": "chat",
+            "register_probe_proxy_targets": [{"kind": "direct", "id": None}],
+        }
+    )
+
+    service.load()
+
+    assert settings.register_probe_proxy_targets == [
+        {"kind": "current", "id": None}
+    ]
+    assert repository.load()["register_probe_proxy_targets"] == [
+        {"kind": "current", "id": None}
+    ]
+
+    service.update(
+        {"register_probe_proxy_targets": [{"kind": "direct", "id": None}]}
+    )
+    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_probe_proxy_targets == [
+        {"kind": "direct", "id": None}
+    ]
+
+
+def test_runtime_settings_reject_mixed_current_and_diagnostic_targets(tmp_path: Path):
+    _, _, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="不能与诊断出口混用"):
+        service.update(
+            {
+                "register_probe_proxy_targets": [
+                    {"kind": "current", "id": None},
+                    {"kind": "egress", "id": 7},
+                ]
+            }
+        )
+
+
 def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
     with pytest.raises(ValueError, match="AppID、AppSecret、OpenID"):

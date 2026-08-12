@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -185,14 +185,20 @@ class AccountBatchUpdateResult:
     failures: tuple[AccountUpdateFailure, ...] = ()
 
 
+@dataclass(slots=True, frozen=True)
+class AccountBatchDeleteResult:
+    deleted: int
+    failures: tuple[AccountUpdateFailure, ...] = ()
+
+
 class Grok2APIClient:
     """API-only integration with grok2api.
 
     Account and proxy lists are read live. For a probe run this adapter creates
     a temporary account-bound model route and (when needed) a temporary client
-    key, changes the selected account's egress binding, calls the normal
-    ``/v1/chat/completions`` endpoint, verifies the request audit, and restores
-    upstream state.
+    key, calls the normal ``/v1/chat/completions`` endpoint, and verifies the
+    request audit. Normal checks preserve the account's current egress binding;
+    explicit diagnostics may change it temporarily and restore it afterwards.
     """
 
     max_stream_bytes = 4 << 20
@@ -503,6 +509,47 @@ class Grok2APIClient:
             failures=failures,
         )
 
+    async def delete_account(self, account_id: int) -> None:
+        await self.admin_request(
+            "DELETE", f"/api/admin/v1/accounts/{account_id}"
+        )
+
+    async def delete_accounts(
+        self,
+        account_ids: list[int],
+    ) -> AccountBatchDeleteResult:
+        """Delete many accounts concurrently, collecting per-account failures.
+
+        grok2api exposes single-account deletion only, so this fans out bounded
+        concurrent deletes and reports which ids could not be removed instead of
+        aborting the whole selection on the first error.
+        """
+
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
+        semaphore = asyncio.Semaphore(ACCOUNT_BATCH_FALLBACK_CONCURRENCY)
+
+        async def delete(account_id: int) -> AccountUpdateFailure | None:
+            async with semaphore:
+                try:
+                    await self.delete_account(account_id)
+                except IntegrationError as exc:
+                    return AccountUpdateFailure(
+                        account_id=account_id,
+                        error=str(exc),
+                    )
+                return None
+
+        results = await asyncio.gather(
+            *(delete(account_id) for account_id in unique_ids)
+        )
+        failures = tuple(result for result in results if result is not None)
+        return AccountBatchDeleteResult(
+            deleted=len(unique_ids) - len(failures),
+            failures=failures,
+        )
+
     async def set_account_routing_settings(
         self,
         account_id: int,
@@ -787,19 +834,11 @@ class Grok2APIClient:
         tps = output_tokens * 1000 / generation_ms if output_tokens > 0 and generation_ms > 0 else 0.0
         first_token_share = first_token_ms / duration_ms if duration_ms else 0.0
 
-        audit = await self.find_audit(request_id)
-        if audit is None:
-            raise IntegrationError("请求审计未落库，未能核验实际账号和出口")
-        verified_account_id = int(audit.get("accountId") or 0) or None
-        verified_egress_node_id = int(audit.get("egressNodeId") or 0) or None
-        if verified_account_id != account_id:
-            raise IntegrationError(f"请求实际命中账号 {verified_account_id}，目标账号为 {account_id}")
-
-        return ChatProbeResult(
+        result = ChatProbeResult(
             request_id=request_id,
-            audit_id=int(audit.get("id") or 0) or None,
-            verified_account_id=verified_account_id,
-            verified_egress_node_id=verified_egress_node_id,
+            audit_id=None,
+            verified_account_id=None,
+            verified_egress_node_id=None,
             status_code=status_code,
             response_text=response_text,
             response_sha256=hashlib.sha256(response_text.encode()).hexdigest(),
@@ -815,6 +854,33 @@ class Grok2APIClient:
             expected_matched=expected in response_text if expected else True,
             usage=usage,
         )
+        audit = await self.find_audit(request_id)
+        if audit is None:
+            error = IntegrationError(
+                "请求审计未落库，未能核验实际账号和出口",
+                request_id=request_id,
+            )
+            error.probe_result = result
+            raise error
+        verified_account_id = int(audit.get("accountId") or 0) or None
+        verified_egress_node_id = int(audit.get("egressNodeId") or 0) or None
+        result = replace(
+            result,
+            audit_id=int(audit.get("id") or 0) or None,
+            verified_account_id=verified_account_id,
+            verified_egress_node_id=verified_egress_node_id,
+        )
+        if verified_account_id != account_id:
+            error = IntegrationError(
+                f"请求实际命中账号 {verified_account_id}，目标账号为 {account_id}",
+                request_id=request_id,
+            )
+            error.audit_id = result.audit_id
+            error.verified_account_id = verified_account_id
+            error.verified_egress_node_id = verified_egress_node_id
+            error.probe_result = result
+            raise error
+        return result
 
     async def quality_probe(
         self,
@@ -848,14 +914,6 @@ class Grok2APIClient:
         request_id = str(payload.get("requestId") or "")
         if not request_id:
             raise IntegrationError("出口质量探针响应缺少 requestId")
-        audit = await self.find_audit(request_id)
-        if audit is None:
-            raise IntegrationError("出口质量探针审计未落库，未能核验实际账号和出口")
-        verified_account_id = int(audit.get("accountId") or 0) or None
-        verified_egress_node_id = int(audit.get("egressNodeId") or 0) or None
-        if verified_account_id != account_id:
-            raise IntegrationError(f"请求实际命中账号 {verified_account_id}，目标账号为 {account_id}")
-
         duration_ms = int(payload.get("durationMs") or 0)
         first_token_ms = int(payload.get("firstTokenMs") or 0)
         generation_ms = int(payload.get("generationMs") or max(duration_ms - first_token_ms, 0))
@@ -867,11 +925,11 @@ class Grok2APIClient:
             "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
             "quality_test": True,
         }
-        return ChatProbeResult(
+        result = ChatProbeResult(
             request_id=request_id,
-            audit_id=int(audit.get("id") or 0) or None,
-            verified_account_id=verified_account_id,
-            verified_egress_node_id=verified_egress_node_id,
+            audit_id=None,
+            verified_account_id=None,
+            verified_egress_node_id=None,
             status_code=int(payload.get("statusCode") or 0),
             response_text="",
             response_sha256=str(payload.get("responseSha256") or ""),
@@ -887,6 +945,33 @@ class Grok2APIClient:
             expected_matched=bool(payload.get("expectedMatched")),
             usage=usage,
         )
+        audit = await self.find_audit(request_id)
+        if audit is None:
+            error = IntegrationError(
+                "出口质量探针审计未落库，未能核验实际账号和出口",
+                request_id=request_id,
+            )
+            error.probe_result = result
+            raise error
+        verified_account_id = int(audit.get("accountId") or 0) or None
+        verified_egress_node_id = int(audit.get("egressNodeId") or 0) or None
+        result = replace(
+            result,
+            audit_id=int(audit.get("id") or 0) or None,
+            verified_account_id=verified_account_id,
+            verified_egress_node_id=verified_egress_node_id,
+        )
+        if verified_account_id != account_id:
+            error = IntegrationError(
+                f"请求实际命中账号 {verified_account_id}，目标账号为 {account_id}",
+                request_id=request_id,
+            )
+            error.audit_id = result.audit_id
+            error.verified_account_id = verified_account_id
+            error.verified_egress_node_id = verified_egress_node_id
+            error.probe_result = result
+            raise error
+        return result
 
     async def cleanup_stale_resources(self) -> dict[str, int]:
         routes_deleted = await self._cleanup_collection(

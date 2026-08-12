@@ -84,6 +84,7 @@ type SettingsForm = {
   probeWorkerConcurrency: number
   probeQueueLimit: number
   probeStepDelaySeconds: number
+  probeCurrentEgressIntervalSeconds: number
   probeTransientRetryAttempts: number
   probeTransientRetryBaseSeconds: number
   probeTransientRetryMaxSeconds: number
@@ -320,6 +321,9 @@ export function SettingsPage() {
   const availableEgressIdSet = new Set(
     availableEgress.map((node) => Number(node.id))
   )
+  const currentSelected = form.registerProbeProxyTargets.some(
+    (target) => target.kind === 'current'
+  )
   const directSelected = form.registerProbeProxyTargets.some(
     (target) => target.kind === 'direct'
   )
@@ -334,18 +338,25 @@ export function SettingsPage() {
   const allAvailableEgressSelected =
     availableEgress.length > 0 &&
     availableEgress.every((node) => selectedEgressIds.has(Number(node.id)))
+  const setCurrentTarget = () => {
+    set('registerProbeProxyTargets', [{ kind: 'current', id: null }])
+  }
   const setDirectTarget = (checked: boolean) => {
-    const egressTargets = form.registerProbeProxyTargets.filter(
+    const diagnosticTargets = form.registerProbeProxyTargets.filter(
       (target) => target.kind === 'egress'
     )
     set(
       'registerProbeProxyTargets',
-      checked ? [{ kind: 'direct', id: null }, ...egressTargets] : egressTargets
+      checked
+        ? [{ kind: 'direct', id: null }, ...diagnosticTargets]
+        : diagnosticTargets
     )
   }
   const toggleEgressTarget = (id: number, checked: boolean) => {
     const remaining = form.registerProbeProxyTargets.filter(
-      (target) => !(target.kind === 'egress' && Number(target.id) === id)
+      (target) =>
+        target.kind !== 'current' &&
+        !(target.kind === 'egress' && Number(target.id) === id)
     )
     set(
       'registerProbeProxyTargets',
@@ -353,15 +364,15 @@ export function SettingsPage() {
     )
   }
   const toggleAllEgressTargets = () => {
-    const directTargets = form.registerProbeProxyTargets.filter(
+    const diagnosticDirectTargets = form.registerProbeProxyTargets.filter(
       (target) => target.kind === 'direct'
     )
     set(
       'registerProbeProxyTargets',
       allAvailableEgressSelected
-        ? directTargets
+        ? diagnosticDirectTargets
         : [
-            ...directTargets,
+            ...diagnosticDirectTargets,
             ...availableEgress.map((node) => ({
               kind: 'egress' as const,
               id: Number(node.id),
@@ -403,9 +414,7 @@ export function SettingsPage() {
       return {
         ...current,
         registerProbeExecutionMode: value,
-        registerProbeProxyTargets: current.registerProbeProxyTargets.length
-          ? current.registerProbeProxyTargets
-          : [{ kind: 'direct', id: null }],
+        registerProbeProxyTargets: [{ kind: 'current', id: null }],
       }
     })
   }
@@ -568,6 +577,17 @@ export function SettingsPage() {
                 onChange={(value) => set('probeStepDelaySeconds', value)}
               />
               <NumberField
+                label='正常定检启动间隔（秒）'
+                hint='跨全部 Worker 生效；只限制账号当前出口 Chat，0 表示关闭'
+                value={form.probeCurrentEgressIntervalSeconds}
+                min={0}
+                max={300}
+                step={0.5}
+                onChange={(value) =>
+                  set('probeCurrentEgressIntervalSeconds', value)
+                }
+              />
+              <NumberField
                 label='暂时不可调度重试次数'
                 hint='仅对冷却、网络和容量类错误重试；不把它们算作降智'
                 value={form.probeTransientRetryAttempts}
@@ -617,7 +637,8 @@ export function SettingsPage() {
             </div>
             <div className='mt-4 rounded-lg border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground'>
               账号级并发固定为
-              1。手动批量任务使用一次事务快速入队；计划的“跳过重叠”或“补足空位”策略会在入队前执行，队列上限作为第二层保护。
+              1。正常定检启动间隔在所有 Worker 之间共享，用于降低短时间账号扩散；Monitor
+              无法获知 Resin 最终物理 IP，因此该间隔不等同于每 IP 精确限流。
             </div>
           </SettingsCard>
         </TabsContent>
@@ -1020,7 +1041,7 @@ export function SettingsPage() {
                     <ModeOption
                       icon={MessageSquareText}
                       title='完整对话探针'
-                      description='调用聊天接口，支持多方案、上游调度和固定出口。'
+                      description='调用聊天接口；默认保持账号当前出口，诊断时才临时切换。'
                       meta='多方案 · 完整响应'
                       selected={form.registerProbeExecutionMode === 'chat'}
                       onSelect={() => setRegisterExecutionMode('chat')}
@@ -1101,16 +1122,20 @@ export function SettingsPage() {
                             <span className='text-sm font-medium'>
                               出口目标
                             </span>
+                            {currentSelected &&
+                              form.registerProbeExecutionMode === 'chat' && (
+                                <Badge variant='success'>正常定检</Badge>
+                              )}
                             {directSelected &&
                               form.registerProbeExecutionMode === 'chat' && (
-                                <Badge variant='secondary'>上游调度</Badge>
+                                <Badge variant='warning'>上游调度诊断</Badge>
                               )}
                             <Badge variant='outline'>
                               {selectedEgressIds.size} 个固定出口
                             </Badge>
                           </div>
                           <p className='mt-0.5 text-xs text-muted-foreground'>
-                            快速模式仅使用固定出口；完整模式可同时交给上游调度。
+                            账号当前出口与诊断出口互斥；自动首次探针推荐使用正常定检。
                           </p>
                         </div>
                       </div>
@@ -1198,9 +1223,18 @@ export function SettingsPage() {
                     <div className='grid max-h-72 gap-2 overflow-y-auto p-3 sm:grid-cols-2 xl:grid-cols-3'>
                       {form.registerProbeExecutionMode === 'chat' && (
                         <EgressOption
+                          icon={ShieldCheck}
+                          title='账号当前出口'
+                          detail='正常定检，不修改账号绑定'
+                          selected={currentSelected}
+                          onToggle={setCurrentTarget}
+                        />
+                      )}
+                      {form.registerProbeExecutionMode === 'chat' && (
+                        <EgressOption
                           icon={Route}
-                          title='上游调度'
-                          detail='由 grok2api 选择实际出口'
+                          title='上游调度（诊断）'
+                          detail='临时解除账号固定绑定'
                           selected={directSelected}
                           onToggle={() => setDirectTarget(!directSelected)}
                         />
@@ -1212,7 +1246,7 @@ export function SettingsPage() {
                             key={node.id}
                             icon={Network}
                             title={node.name}
-                            detail={node.exitIp || `节点 #${id}`}
+                            detail={`诊断出口 · ${node.exitIp || `节点 #${id}`}`}
                             selected={selectedEgressIds.has(id)}
                             onToggle={() =>
                               toggleEgressTarget(id, !selectedEgressIds.has(id))
@@ -1227,7 +1261,7 @@ export function SettingsPage() {
                         <TriangleAlert className='mt-0.5 size-4 shrink-0 text-amber-500' />
                         <p className='text-xs leading-5 text-muted-foreground'>
                           当前没有已启用且已配置代理的 grok_build
-                          出口；完整模式仍可使用上游调度。
+                          诊断出口；正常定检仍可使用账号当前绑定。
                         </p>
                       </div>
                     )}
@@ -1303,6 +1337,8 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     probeWorkerConcurrency: settings.probeWorkerConcurrency,
     probeQueueLimit: settings.probeQueueLimit,
     probeStepDelaySeconds: settings.probeStepDelaySeconds,
+    probeCurrentEgressIntervalSeconds:
+      settings.probeCurrentEgressIntervalSeconds ?? 10,
     probeTransientRetryAttempts: settings.probeTransientRetryAttempts ?? 2,
     probeTransientRetryBaseSeconds:
       settings.probeTransientRetryBaseSeconds ?? 5,
@@ -1343,6 +1379,8 @@ function buildSettingsPayload(
     probeWorkerConcurrency: form.probeWorkerConcurrency,
     probeQueueLimit: form.probeQueueLimit,
     probeStepDelaySeconds: form.probeStepDelaySeconds,
+    probeCurrentEgressIntervalSeconds:
+      form.probeCurrentEgressIntervalSeconds,
     probeTransientRetryAttempts: form.probeTransientRetryAttempts,
     probeTransientRetryBaseSeconds: form.probeTransientRetryBaseSeconds,
     probeTransientRetryMaxSeconds: form.probeTransientRetryMaxSeconds,
@@ -1431,6 +1469,15 @@ function validateSettings(form: SettingsForm) {
   }
   if (form.initialProbeOnRegister && !form.registerProbeProxyTargets.length) {
     throw new Error('注册后探针至少选择一个出口目标')
+  }
+  const hasCurrentTarget = form.registerProbeProxyTargets.some(
+    (target) => target.kind === 'current'
+  )
+  const hasDiagnosticTarget = form.registerProbeProxyTargets.some(
+    (target) => target.kind !== 'current'
+  )
+  if (hasCurrentTarget && hasDiagnosticTarget) {
+    throw new Error('账号当前出口不能与诊断出口混用')
   }
   if (
     form.registerProbeExecutionMode === 'quality_test' &&

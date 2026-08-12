@@ -137,7 +137,12 @@ export function EgressBindingIndicator({
           aria-label={label}
         >
           <Icon />
-          {bound && !compact ? <span>#{normalizedNodeId}</span> : null}
+          {bound && !compact ? (
+            <span className='max-w-36 truncate'>
+              {normalizedNodeName || `出口节点 #${normalizedNodeId}`}
+              {normalizedNodeName ? ` · #${normalizedNodeId}` : ''}
+            </span>
+          ) : null}
         </Badge>
       </TooltipTrigger>
       <TooltipContent className='max-w-72'>

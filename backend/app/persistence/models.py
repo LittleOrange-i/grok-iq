@@ -153,10 +153,10 @@ class ProbePlan(Base):
     profile_id: Mapped[str] = mapped_column(ForeignKey("probe_profiles.id"), nullable=False)
     profile_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     account_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False)
-    # Each target is {kind: "direct"|"egress", id?: int, name?: str}.
+    # Each target is {kind: "current"|"direct"|"egress", id?: int, name?: str}.
     proxy_targets: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(24), default="chat", nullable=False)
-    rounds: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    rounds: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     cron_expression: Mapped[str] = mapped_column(String(120), nullable=False)
     timezone: Mapped[str] = mapped_column(String(80), default="UTC", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)

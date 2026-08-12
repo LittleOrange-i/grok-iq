@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.core.config import Settings
 
 from .database import Database
-from .models import AppSetting
+from .models import AppSetting, MetadataRow
 
 
 class RuntimeSecretCipher:
@@ -91,3 +91,12 @@ class SettingsRepository:
                     session.add(AppSetting(key=key, value=stored))
                 else:
                     row.value = stored
+
+    def migration_applied(self, key: str) -> bool:
+        with self.database.session() as session:
+            return session.get(MetadataRow, key) is not None
+
+    def mark_migration_applied(self, key: str) -> None:
+        with self.database.transaction() as session:
+            if session.get(MetadataRow, key) is None:
+                session.add(MetadataRow(key=key, value="applied"))

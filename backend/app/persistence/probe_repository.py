@@ -25,6 +25,7 @@ from .models import (
 from .seeds import DEFAULT_PROFILE_IDS, DEFAULT_PROFILES
 
 ACTIVE_RUN_STATUSES = {"queued", "running", "cancel_requested", "recovering"}
+CANCELLABLE_RUN_STATUSES = {"queued", "running", "recovering"}
 EXECUTING_RUN_STATUSES = {"running", "cancel_requested", "recovering"}
 ESTIMATED_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled"}
@@ -37,6 +38,7 @@ DEFAULT_PROFILES_EXPECTED_OUTPUT_MIGRATION_KEY = "default_probe_profiles_expecte
 DEFAULT_QUALITY_MARKER_MIGRATION_KEY = "default_probe_profiles_quality_marker_cn_v1"
 DEFAULT_HTML_PREVIEW_MIGRATION_KEY = "default_probe_profiles_html_preview_pelican_v1"
 PROBE_DURATION_ESTIMATE_BACKFILL_KEY = "probe_duration_estimates_backfill_v1"
+SAFE_CURRENT_EGRESS_MIGRATION_KEY = "probe_targets_current_egress_v1"
 LEGACY_QUALITY_MARKER_FIELDS = {
     "prompt": "先用三点总结为什么天空呈蓝色，最后一行只输出 QUALITY_OK。",
     "expected_text": "QUALITY_OK",
@@ -239,6 +241,44 @@ class ProbeRepository:
                         value=now.isoformat(),
                     )
                 )
+            current_egress_migration = session.get(
+                MetadataRow, SAFE_CURRENT_EGRESS_MIGRATION_KEY
+            )
+            if current_egress_migration is None:
+                for plan in session.scalars(
+                    select(ProbePlan).where(ProbePlan.execution_mode == "chat")
+                ).all():
+                    if self._is_legacy_direct_only(plan.proxy_targets):
+                        plan.proxy_targets = [
+                            {"kind": "current", "id": None, "name": "账号当前出口"}
+                        ]
+                        plan.updated_at = utc_now()
+                for run in session.scalars(
+                    select(ProbeRun).where(
+                        ProbeRun.execution_mode == "chat",
+                        ProbeRun.status == "queued",
+                    )
+                ).all():
+                    if self._is_legacy_direct_only(run.proxy_targets):
+                        run.proxy_targets = [
+                            {"kind": "current", "id": None, "name": "账号当前出口"}
+                        ]
+                        run.current_target_key = None
+                session.add(
+                    MetadataRow(
+                        key=SAFE_CURRENT_EGRESS_MIGRATION_KEY,
+                        value=utc_now().isoformat(),
+                    )
+                )
+
+    @staticmethod
+    def _is_legacy_direct_only(targets: Any) -> bool:
+        return (
+            isinstance(targets, list)
+            and len(targets) == 1
+            and isinstance(targets[0], dict)
+            and targets[0].get("kind") == "direct"
+        )
 
     # Profiles -----------------------------------------------------------------
     def list_profiles(self) -> list[dict[str, Any]]:
@@ -1052,10 +1092,6 @@ class ProbeRepository:
                 run.account_settings_snapshot_at = utc_now()
                 run.diagnostic_priority = diagnostic_priority
                 run.diagnostic_max_concurrent = diagnostic_max_concurrent
-            run.account_restore_status = "pending"
-            run.account_restore_source = ""
-            run.account_restore_error = ""
-            run.account_restored_at = None
             run.heartbeat_at = utc_now()
             return self._account_settings_snapshot(run)
 
@@ -1089,6 +1125,19 @@ class ProbeRepository:
                 run.account_restore_source = ""
                 run.account_restore_error = ""
                 run.account_restored_at = None
+            run.heartbeat_at = utc_now()
+
+    def mark_account_mutation_pending(self, run_id: str) -> None:
+        """Persist restore intent immediately before changing upstream account state."""
+
+        with self.database.transaction() as session:
+            run = session.get(ProbeRun, run_id)
+            if run is None:
+                raise ValueError("探针任务不存在")
+            run.account_restore_status = "pending"
+            run.account_restore_source = ""
+            run.account_restore_error = ""
+            run.account_restored_at = None
             run.heartbeat_at = utc_now()
 
     def begin_account_restore(self, run_id: str, source: str) -> None:
@@ -1377,20 +1426,27 @@ class ProbeRepository:
             self._refresh_run_summary(session, run)
             return account_id
 
-    def delete_runs(self, run_ids: list[str]) -> tuple[int, set[int]]:
+    def delete_runs(self, run_ids: list[str]) -> tuple[int, set[int], list[str]]:
+        """Delete every deletable run, skipping the ones still holding state.
+
+        Selecting across pages regularly mixes in active runs and runs whose
+        account settings are still pending restore. Those are reported back as
+        skipped instead of failing the whole batch.
+        """
+
         deleted = 0
         account_ids: set[int] = set()
+        skipped: list[str] = []
         with self.database.transaction() as session:
             values = session.scalars(select(ProbeRun).where(ProbeRun.id.in_(run_ids))).all()
-            if any(value.status not in TERMINAL_RUN_STATUSES for value in values):
-                raise RunStateError("所选任务中包含排队或执行中的任务")
             for value in values:
-                self._ensure_restore_resolved(value)
-            for value in values:
+                if value.status not in TERMINAL_RUN_STATUSES or self._restore_pending(value):
+                    skipped.append(value.id)
+                    continue
                 account_ids.add(value.account_id)
                 session.delete(value)
                 deleted += 1
-        return deleted, account_ids
+        return deleted, account_ids, skipped
 
     def retry_values(self, run_id: str) -> dict[str, Any]:
         with self.database.session() as session:
@@ -1412,11 +1468,14 @@ class ProbeRepository:
             }
 
     @staticmethod
-    def _ensure_restore_resolved(run: ProbeRun) -> None:
-        if (
+    def _restore_pending(run: ProbeRun) -> bool:
+        return bool(
             run.account_restore_status in BLOCKING_ACCOUNT_RESTORE_STATUSES
             or run.diagnostic_activation_active
-        ):
+        )
+
+    def _ensure_restore_resolved(self, run: ProbeRun) -> None:
+        if self._restore_pending(run):
             raise RunStateError("账号原设置尚未恢复，请先在任务详情中同步原设置")
 
     def interrupted_runs(self) -> list[dict[str, Any]]:
@@ -1457,17 +1516,15 @@ class ProbeRepository:
             if cleanup_error:
                 run.error = f"重启恢复清理: {cleanup_error}"[:4000]
 
-    def list_runs(
+    def _run_list_filters(
         self,
         *,
-        page: int,
-        page_size: int,
-        status: str = "",
-        search: str = "",
-        account_id: int | None = None,
-        plan_id: str | None = None,
-    ) -> dict[str, Any]:
-        filters = []
+        status: str,
+        search: str,
+        account_id: int | None,
+        plan_id: str | None,
+    ) -> list[Any]:
+        filters: list[Any] = []
         if status:
             filters.append(ProbeRun.status == status)
         token = search.strip().lower()
@@ -1483,6 +1540,81 @@ class ProbeRepository:
             filters.append(ProbeRun.account_id == account_id)
         if plan_id is not None:
             filters.append(ProbeRun.plan_id == plan_id)
+        return filters
+
+    def select_run_ids(
+        self,
+        *,
+        status: str = "",
+        search: str = "",
+        account_id: int | None = None,
+        plan_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return every run id matching the current UI filters, split by action.
+
+        The task centre uses this to select across pages: each bulk action then
+        applies to its own subset instead of the visible page only.
+        """
+
+        filters = self._run_list_filters(
+            status=status,
+            search=search,
+            account_id=account_id,
+            plan_id=plan_id,
+        )
+        with self.database.session() as session:
+            values = session.execute(
+                select(
+                    ProbeRun.id,
+                    ProbeRun.account_id,
+                    ProbeRun.status,
+                    ProbeRun.account_restore_status,
+                    ProbeRun.diagnostic_activation_active,
+                ).where(*filters)
+            ).all()
+
+        items: list[dict[str, Any]] = []
+        for run_id, account_id_value, run_status, restore_status, diagnostic_active in values:
+            restore_pending = (
+                restore_status in BLOCKING_ACCOUNT_RESTORE_STATUSES
+                or bool(diagnostic_active)
+            )
+            if run_status in CANCELLABLE_RUN_STATUSES:
+                action = "cancel"
+            elif run_status in TERMINAL_RUN_STATUSES:
+                action = "restore" if restore_pending else "delete"
+            else:
+                continue
+            items.append(
+                {
+                    "id": run_id,
+                    "accountId": int(account_id_value or 0),
+                    "action": action,
+                }
+            )
+        return {
+            "items": items,
+            "matched": len(values),
+            "selectable": len(items),
+            "excluded": len(values) - len(items),
+        }
+
+    def list_runs(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str = "",
+        search: str = "",
+        account_id: int | None = None,
+        plan_id: str | None = None,
+    ) -> dict[str, Any]:
+        filters = self._run_list_filters(
+            status=status,
+            search=search,
+            account_id=account_id,
+            plan_id=plan_id,
+        )
         with self.database.session() as session:
             total, active_count = session.execute(
                 select(

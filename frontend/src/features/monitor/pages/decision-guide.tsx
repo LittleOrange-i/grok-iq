@@ -587,7 +587,7 @@ function RestoreStatusRules() {
       icon: CircleDashed,
       title: '未记录',
       badge: <Badge variant='secondary'>not_recorded</Badge>,
-      summary: '旧任务或无需保存账号原设置的任务没有恢复快照。',
+      summary: '正常定检等未修改账号设置的任务不需要进入恢复流程。',
     },
     {
       icon: Clock3,
@@ -663,7 +663,10 @@ function UpstreamStatusRules() {
           title='enabled'
           badge={<Badge variant='outline'>启用 / 停用</Badge>}
           summary='表示账号是否参与 grok2api 正常调度，不表示凭据有效或模型质量正常。'
-          conditions={['停用账号执行探针时会短时激活，结束后恢复原值']}
+          conditions={[
+            '正常定检只巡检已启用账号，不会修改启停状态',
+            '人工诊断可短时激活停用账号，结束后恢复原值',
+          ]}
           tone='info'
         />
         <RuleCard
@@ -682,32 +685,42 @@ function UpstreamStatusRules() {
           tone='danger'
         />
         <RuleCard
-          icon={Route}
-          title='上游默认出口策略'
-          badge={<Badge variant='secondary'>未固定节点</Badge>}
-          summary='账号没有绑定指定节点，由 grok2api 的节点池、回退或本地出口策略决定。'
+          icon={ShieldCheck}
+          title='账号当前出口'
+          badge={<Badge variant='success'>正常定检</Badge>}
+          summary='每次执行实时读取账号当前绑定节点，不切换出口、不解绑，也不回写账号设置。'
           conditions={[
-            '目标出口为 None 是调度策略，不是错误',
-            '实际出口从请求审计记录',
+            '仅巡检已启用且已绑定固定出口的账号',
+            '请求后核验 grok2api 审计中的实际账号与节点',
+            '审计不一致时样本记为错误，不参与风险分母',
           ]}
+          tone='success'
+        />
+        <RuleCard
+          icon={Route}
+          title='上游调度'
+          badge={<Badge variant='warning'>诊断操作</Badge>}
+          summary='临时解除账号固定绑定，由 grok2api 的节点池、回退或本地出口策略决定。'
+          conditions={['只应在异常诊断中使用', '任务结束后恢复原绑定']}
+          tone='warning'
         />
         <RuleCard
           icon={Network}
-          title='固定出口'
-          badge={<Badge variant='outline'>Node ID</Badge>}
+          title='指定固定出口'
+          badge={<Badge variant='warning'>诊断操作</Badge>}
           summary='探针临时把账号绑定到指定 grok_build 出口节点。'
           conditions={[
-            '审计实际节点与目标节点不同时显示提示，但流式结果仍参与 TPS 判断',
+            '审计实际节点与目标节点不同时样本记为错误',
             '任务结束后恢复原绑定',
           ]}
-          tone='info'
+          tone='warning'
         />
         <RuleCard
           icon={Zap}
           title='快速出口质量探针'
           badge={<Badge variant='info'>quality-test</Badge>}
-          summary='调用指定节点的 quality-test 接口，因此必须选择已配置代理的出口节点。'
-          conditions={['没有出口节点时使用完整对话探针的上游调度']}
+          summary='诊断指定节点的 quality-test 接口，因此必须选择已配置代理的出口节点。'
+          conditions={['没有诊断出口时改用完整对话的账号当前出口定检']}
           tone='info'
         />
         <RuleCard

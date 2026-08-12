@@ -12,9 +12,13 @@ const mocks = vi.hoisted(() => ({
 
 const MOCK_HREF = '/runs?page=2'
 
-vi.mock('@/lib/api', () => ({
-  api: { authLogout: mocks.authLogout },
-}))
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    api: { ...actual.api, authLogout: mocks.authLogout },
+  }
+})
 
 vi.mock('@/stores/auth-store', () => ({
   useAuthStore: () => ({ auth: { reset: mocks.reset } }),

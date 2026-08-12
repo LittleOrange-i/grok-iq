@@ -91,17 +91,34 @@ class AccountBatchUpdateInput(BaseModel):
     enabled: bool
 
 
+class AccountBatchDeleteInput(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+
+
 class ProxyTargetInput(BaseModel):
-    kind: Literal["direct", "egress"]
+    kind: Literal["current", "direct", "egress"]
     id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_target(self) -> ProxyTargetInput:
         if self.kind == "egress" and self.id is None:
             raise ValueError("egress 目标必须填写 id")
-        if self.kind == "direct":
+        if self.kind in {"current", "direct"}:
             self.id = None
         return self
+
+
+def _validate_proxy_target_selection(
+    targets: list[ProxyTargetInput], execution_mode: str
+) -> None:
+    if execution_mode == "quality_test" and any(
+        target.kind != "egress" for target in targets
+    ):
+        raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+    if any(target.kind == "current" for target in targets) and any(
+        target.kind != "current" for target in targets
+    ):
+        raise ValueError("账号当前出口不能与诊断出口混用")
 
 
 def _normalize_profile_selection(
@@ -128,7 +145,7 @@ class ProbeRunCreate(BaseModel):
     profile_id: str = "quality-marker"
     profile_ids: list[str] = Field(default_factory=list, max_length=1000)
     execution_mode: Literal["chat", "quality_test"] = "chat"
-    rounds: int = Field(default=3, ge=1, le=20)
+    rounds: int = Field(default=1, ge=1, le=20)
     proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -137,10 +154,7 @@ class ProbeRunCreate(BaseModel):
             self.profile_ids, self.profile_id, fallback="quality-marker"
         )
         self.profile_id = self.profile_ids[0]
-        if self.execution_mode == "quality_test" and any(
-            target.kind != "egress" for target in self.proxy_targets
-        ):
-            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        _validate_proxy_target_selection(self.proxy_targets, self.execution_mode)
         return self
 
 
@@ -149,7 +163,7 @@ class ProbeRunBatchCreate(BaseModel):
     profile_id: str = "quality-marker"
     profile_ids: list[str] = Field(default_factory=list, max_length=1000)
     execution_mode: Literal["chat", "quality_test"] = "chat"
-    rounds: int = Field(default=3, ge=1, le=20)
+    rounds: int = Field(default=1, ge=1, le=20)
     proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -158,10 +172,7 @@ class ProbeRunBatchCreate(BaseModel):
             self.profile_ids, self.profile_id, fallback="quality-marker"
         )
         self.profile_id = self.profile_ids[0]
-        if self.execution_mode == "quality_test" and any(
-            target.kind != "egress" for target in self.proxy_targets
-        ):
-            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        _validate_proxy_target_selection(self.proxy_targets, self.execution_mode)
         return self
 
 
@@ -221,6 +232,9 @@ class RuntimeSettingsInput(BaseModel):
     probe_worker_concurrency: int | None = Field(default=None, alias="probeWorkerConcurrency", ge=1, le=32)
     probe_queue_limit: int | None = Field(default=None, alias="probeQueueLimit", ge=1, le=100_000)
     probe_step_delay_seconds: float | None = Field(default=None, alias="probeStepDelaySeconds", ge=0, le=60)
+    probe_current_egress_interval_seconds: float | None = Field(
+        default=None, alias="probeCurrentEgressIntervalSeconds", ge=0, le=300
+    )
     probe_transient_retry_attempts: int | None = Field(
         default=None, alias="probeTransientRetryAttempts", ge=0, le=5
     )
@@ -296,7 +310,7 @@ class ProbePlanInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=100_000)
     proxy_targets: list[ProxyTargetInput] = Field(min_length=1, max_length=20)
     execution_mode: Literal["chat", "quality_test"] = "chat"
-    rounds: int = Field(default=3, ge=1, le=20)
+    rounds: int = Field(default=1, ge=1, le=20)
     cron_expression: str = Field(min_length=5, max_length=120)
     timezone: str = Field(default="UTC", min_length=1, max_length=80)
     enabled: bool = True
@@ -307,10 +321,7 @@ class ProbePlanInput(BaseModel):
     def validate_request(self) -> ProbePlanInput:
         self.profile_ids = _normalize_profile_selection(self.profile_ids, self.profile_id)
         self.profile_id = self.profile_ids[0]
-        if self.execution_mode == "quality_test" and any(
-            target.kind != "egress" for target in self.proxy_targets
-        ):
-            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
+        _validate_proxy_target_selection(self.proxy_targets, self.execution_mode)
         return self
 
 

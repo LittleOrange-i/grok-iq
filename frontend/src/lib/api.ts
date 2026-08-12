@@ -21,8 +21,7 @@ export type AuthSession = {
 }
 
 export type AuthenticationRequiredCode =
-  | 'authentication_required'
-  | 'setup_required'
+  'authentication_required' | 'setup_required'
 export const AUTH_REQUIRED_EVENT = 'gam-auth-required'
 const AUTH_REQUIRED_CODES = new Set<AuthenticationRequiredCode>([
   'authentication_required',
@@ -111,6 +110,8 @@ export type AccountOption = {
   email?: string
   enabled: boolean
   authStatus?: string
+  egressNodeId?: string | null
+  egressAssignmentMode?: string
 }
 
 export type AccountTargetSummary = {
@@ -165,7 +166,7 @@ export type ProbeProfile = {
 }
 
 export type ProxyTarget = {
-  kind: 'direct' | 'egress'
+  kind: 'current' | 'direct' | 'egress'
   id: number | null
   name?: string
 }
@@ -392,6 +393,7 @@ export type RuntimeSettings = {
   probeWorkerConcurrency: number
   probeQueueLimit: number
   probeStepDelaySeconds: number
+  probeCurrentEgressIntervalSeconds: number
   probeTransientRetryAttempts: number
   probeTransientRetryBaseSeconds: number
   probeTransientRetryMaxSeconds: number
@@ -423,9 +425,7 @@ export type EditableRuntimeSettings = RuntimeSettings & {
 }
 
 export type SecretSettingName =
-  | 'grok2apiAdminPassword'
-  | 'grokRegisterWebhookToken'
-  | 'wechatAppSecret'
+  'grok2apiAdminPassword' | 'grokRegisterWebhookToken' | 'wechatAppSecret'
 
 export type RuntimeSettingsUpdate = Partial<
   Pick<
@@ -449,6 +449,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'probeWorkerConcurrency'
     | 'probeQueueLimit'
     | 'probeStepDelaySeconds'
+    | 'probeCurrentEgressIntervalSeconds'
     | 'probeTransientRetryAttempts'
     | 'probeTransientRetryBaseSeconds'
     | 'probeTransientRetryMaxSeconds'
@@ -476,6 +477,7 @@ type RuntimeSettingsWire = Omit<
   RuntimeSettings,
   | 'degradationTps'
   | 'strongDegradationTps'
+  | 'probeCurrentEgressIntervalSeconds'
   | 'wechatNotificationEnabled'
   | 'wechatAppId'
   | 'wechatAppSecretConfigured'
@@ -486,6 +488,7 @@ type RuntimeSettingsWire = Omit<
   strongDegradationTps?: number
   softTps?: number
   hardTps?: number
+  probeCurrentEgressIntervalSeconds?: number
   wechatNotificationEnabled?: boolean
   wechatAppId?: string
   wechatAppSecretConfigured?: boolean
@@ -496,13 +499,16 @@ type RuntimeSettingsWire = Omit<
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
   return {
     ...value,
-    registerProbeProfileIds:
-      value.registerProbeProfileIds ?? ['quality-marker'],
-    registerProbeExecutionMode:
-      value.registerProbeExecutionMode ?? 'chat',
-    registerProbeRounds: value.registerProbeRounds ?? 3,
-    registerProbeProxyTargets:
-      value.registerProbeProxyTargets ?? [{ kind: 'direct', id: null }],
+    registerProbeProfileIds: value.registerProbeProfileIds ?? [
+      'quality-marker',
+    ],
+    registerProbeExecutionMode: value.registerProbeExecutionMode ?? 'chat',
+    registerProbeRounds: value.registerProbeRounds ?? 1,
+    registerProbeProxyTargets: value.registerProbeProxyTargets ?? [
+      { kind: 'current', id: null },
+    ],
+    probeCurrentEgressIntervalSeconds:
+      value.probeCurrentEgressIntervalSeconds ?? 10,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',
     wechatAppSecretConfigured: value.wechatAppSecretConfigured ?? false,
@@ -519,10 +525,9 @@ async function loadEditableRuntimeSettings(): Promise<EditableRuntimeSettings> {
   )
   const [adminPassword, registerToken, wechatAppSecret] = await Promise.all([
     settings.grok2apiAdminPasswordConfigured
-      ? request<{ value: string }>(
-          '/settings/secrets/grok2apiAdminPassword',
-          { cache: 'no-store' }
-        )
+      ? request<{ value: string }>('/settings/secrets/grok2apiAdminPassword', {
+          cache: 'no-store',
+        })
       : Promise.resolve({ value: '' }),
     settings.grokRegisterWebhookTokenConfigured
       ? request<{ value: string }>(
@@ -570,6 +575,44 @@ export type AccountBatchUpdateResult = {
   failures: { id: number; error: string }[]
 }
 
+export type AccountBatchDeleteResult = {
+  requested: number
+  eligible: number
+  deleted: number
+  skippedAccountIds: number[]
+  failedAccountIds: number[]
+  failures: { id: number; error: string }[]
+}
+
+export type RunSelectionAction = 'cancel' | 'delete' | 'restore'
+
+export type RunSelectionItem = {
+  id: string
+  accountId: number
+  action: RunSelectionAction
+}
+
+export type RunSelection = {
+  items: RunSelectionItem[]
+  matched: number
+  selectable: number
+  excluded: number
+}
+
+export type RunBatchDeleteResult = {
+  requested: number
+  deleted: number
+  skippedRunIds: string[]
+}
+
+export type RunBatchRestoreResult = {
+  requested: number
+  restored: number
+  failed: number
+  failedRunIds: string[]
+  failures: { id: string; error: string }[]
+}
+
 export type ProbeRunBatchResult = {
   requested: number
   requestedTasks?: number
@@ -581,6 +624,13 @@ export type ProbeRunBatchResult = {
   activeAccountIds: number[]
   restoreBlockedAccountIds: number[]
   diagnosticAccountIds: number[]
+  skippedAccounts?: {
+    id: number
+    name: string
+    email?: string
+    code: 'missing' | 'invalid' | 'active_run' | 'restore_blocked'
+    reason: string
+  }[]
   runIds: string[]
 }
 
@@ -763,7 +813,11 @@ async function requestAccountBatchWithRetry(
   accountIds: number[],
   enabled: boolean
 ): Promise<AccountBatchUpdateResult> {
-  for (let attempt = 1; attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS; attempt += 1) {
+  for (
+    let attempt = 1;
+    attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS;
+    attempt += 1
+  ) {
     try {
       return await request<AccountBatchUpdateResult>('/accounts/batch', {
         method: 'PUT',
@@ -788,6 +842,131 @@ function isRetryableAccountBatchError(error: unknown): boolean {
     (error instanceof ApiError &&
       ACCOUNT_BATCH_RETRYABLE_STATUSES.has(error.status))
   )
+}
+
+async function deleteAccounts(
+  accountIds: number[]
+): Promise<AccountBatchDeleteResult> {
+  const uniqueIds = Array.from(
+    new Set(
+      accountIds.filter(
+        (accountId) => Number.isSafeInteger(accountId) && accountId > 0
+      )
+    )
+  )
+  const result: AccountBatchDeleteResult = {
+    requested: 0,
+    eligible: 0,
+    deleted: 0,
+    skippedAccountIds: [],
+    failedAccountIds: [],
+    failures: [],
+  }
+
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += ACCOUNT_BATCH_REQUEST_SIZE
+  ) {
+    const accountBatch = uniqueIds.slice(
+      start,
+      start + ACCOUNT_BATCH_REQUEST_SIZE
+    )
+    const batchResult = await requestAccountBatchDeleteWithRetry(accountBatch)
+    result.requested += batchResult.requested
+    result.eligible += batchResult.eligible
+    result.deleted += batchResult.deleted
+    result.skippedAccountIds.push(...(batchResult.skippedAccountIds ?? []))
+    result.failedAccountIds.push(...(batchResult.failedAccountIds ?? []))
+    result.failures.push(...(batchResult.failures ?? []))
+  }
+
+  result.skippedAccountIds = Array.from(new Set(result.skippedAccountIds))
+  result.failedAccountIds = Array.from(new Set(result.failedAccountIds))
+  return result
+}
+
+async function requestAccountBatchDeleteWithRetry(
+  accountIds: number[]
+): Promise<AccountBatchDeleteResult> {
+  for (
+    let attempt = 1;
+    attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await request<AccountBatchDeleteResult>('/accounts/batch', {
+        method: 'DELETE',
+        body: JSON.stringify({ account_ids: accountIds }),
+      })
+    } catch (error) {
+      const retrying =
+        isRetryableAccountBatchError(error) &&
+        attempt < ACCOUNT_BATCH_NETWORK_ATTEMPTS
+      if (!retrying) throw error
+      await new Promise<void>((resolve) =>
+        globalThis.setTimeout(resolve, attempt * 250)
+      )
+    }
+  }
+  throw new Error('批量删除请求异常结束')
+}
+
+const RUN_DELETE_REQUEST_SIZE = 200
+const RUN_RESTORE_REQUEST_SIZE = 20
+
+async function deleteRuns(runIds: string[]): Promise<RunBatchDeleteResult> {
+  const uniqueIds = Array.from(new Set(runIds.filter(Boolean)))
+  const result: RunBatchDeleteResult = {
+    requested: 0,
+    deleted: 0,
+    skippedRunIds: [],
+  }
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += RUN_DELETE_REQUEST_SIZE
+  ) {
+    const batch = uniqueIds.slice(start, start + RUN_DELETE_REQUEST_SIZE)
+    const batchResult = await request<RunBatchDeleteResult>('/probe-runs', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids: batch }),
+    })
+    result.requested += batchResult.requested ?? batch.length
+    result.deleted += batchResult.deleted ?? 0
+    result.skippedRunIds.push(...(batchResult.skippedRunIds ?? []))
+  }
+  return result
+}
+
+async function restoreRunsAccountSettings(
+  runIds: string[]
+): Promise<RunBatchRestoreResult> {
+  const uniqueIds = Array.from(new Set(runIds.filter(Boolean)))
+  const result: RunBatchRestoreResult = {
+    requested: 0,
+    restored: 0,
+    failed: 0,
+    failedRunIds: [],
+    failures: [],
+  }
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += RUN_RESTORE_REQUEST_SIZE
+  ) {
+    const batch = uniqueIds.slice(start, start + RUN_RESTORE_REQUEST_SIZE)
+    const batchResult = await request<RunBatchRestoreResult>(
+      '/probe-runs/batch/restore-account-settings',
+      { method: 'POST', body: JSON.stringify({ ids: batch }) }
+    )
+    result.requested += batchResult.requested ?? batch.length
+    result.restored += batchResult.restored ?? 0
+    result.failed += batchResult.failed ?? 0
+    result.failedRunIds.push(...(batchResult.failedRunIds ?? []))
+    result.failures.push(...(batchResult.failures ?? []))
+  }
+  return result
 }
 
 function query(
@@ -845,6 +1024,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   updateAccountsEnabled,
+  deleteAccounts,
   deleteAccount: (id: number) =>
     request<{ deleted: boolean; accountId: number }>(`/accounts/${id}`, {
       method: 'DELETE',
@@ -915,6 +1095,8 @@ export const api = {
     params: Record<string, string | number | undefined> = {},
     signal?: AbortSignal
   ) => request<Page<ProbeRun>>(`/probe-runs${query(params)}`, { signal }),
+  runSelection: (params: Record<string, string | number | undefined> = {}) =>
+    request<RunSelection>(`/probe-runs/selection${query(params)}`),
   probeWorkers: () => request<ProbeWorkersResponse>('/probe-workers'),
   probeWorkerLogs: (limit = 300) =>
     request<ProbeWorkerLogsResponse>(
@@ -953,11 +1135,8 @@ export const api = {
     request<void>(`/probe-runs/${id}`, { method: 'DELETE' }),
   deleteSample: (id: string) =>
     request<void>(`/probe-samples/${id}`, { method: 'DELETE' }),
-  deleteRuns: (ids: string[]) =>
-    request<{ deleted: number }>('/probe-runs', {
-      method: 'DELETE',
-      body: JSON.stringify({ ids }),
-    }),
+  deleteRuns,
+  restoreRunsAccountSettings,
   scheduler: () => request<SchedulerResponse>('/scheduler'),
   deleteSchedulerExecution: (id: string) =>
     request<void>(`/scheduler/executions/${id}`, { method: 'DELETE' }),

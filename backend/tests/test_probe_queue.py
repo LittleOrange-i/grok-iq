@@ -15,6 +15,7 @@ from app.persistence.database import Database
 from app.persistence.models import MetadataRow, ProbeDurationEstimate
 from app.persistence.probe_repository import (
     PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
+    SAFE_CURRENT_EGRESS_MIGRATION_KEY,
     ProbeRepository,
     QueueFullError,
     RunStateError,
@@ -112,10 +113,11 @@ def test_terminal_runs_can_be_deleted_in_bulk(repository: ProbeRepository):
     repository.request_cancel(first)
     repository.request_cancel(second)
 
-    deleted, account_ids = repository.delete_runs([first, second])
+    deleted, account_ids, skipped = repository.delete_runs([first, second])
 
     assert deleted == 2
     assert account_ids == {11, 12}
+    assert skipped == []
     assert repository.run_detail(first) is None
     assert repository.run_detail(second) is None
 
@@ -183,11 +185,7 @@ def test_duration_estimate_backfills_once_then_updates_incrementally(
 
     with repository.database.transaction() as session:
         session.execute(delete(ProbeDurationEstimate))
-        session.execute(
-            delete(MetadataRow).where(
-                MetadataRow.key == PROBE_DURATION_ESTIMATE_BACKFILL_KEY
-            )
-        )
+        session.execute(delete(MetadataRow).where(MetadataRow.key == PROBE_DURATION_ESTIMATE_BACKFILL_KEY))
     repository.seed_defaults()
 
     pending_run_id = repository.create_run(
@@ -253,6 +251,43 @@ def test_manual_batch_capacity_failure_does_not_partially_create(repository: Pro
     assert repository.list_runs(page=1, page_size=20)["total"] == 1
 
 
+def test_legacy_direct_only_plans_and_queued_runs_migrate_to_current_egress(
+    repository: ProbeRepository,
+):
+    plan_id = repository.create_plan(
+        {
+            "name": "legacy-normal-check",
+            "description": "",
+            "profile_id": "quality-marker",
+            "profile_ids": ["quality-marker"],
+            "account_ids": [10],
+            "proxy_targets": [{"kind": "direct", "id": None}],
+            "execution_mode": "chat",
+            "rounds": 1,
+            "cron_expression": "15 */6 * * *",
+            "timezone": "UTC",
+            "enabled": True,
+            "overlap_policy": "skip",
+            "priority": 200,
+        }
+    )
+    queued_run_id = create_run(repository, account_id=10)
+    historical_run_id = create_run(repository, account_id=11)
+    repository.request_cancel(historical_run_id)
+    with repository.database.transaction() as session:
+        session.execute(delete(MetadataRow).where(MetadataRow.key == SAFE_CURRENT_EGRESS_MIGRATION_KEY))
+
+    repository.seed_defaults()
+
+    assert repository.get_plan(plan_id)["proxy_targets"] == [
+        {"kind": "current", "id": None, "name": "账号当前出口"}
+    ]
+    assert repository.get_run(queued_run_id)["proxy_targets"] == [
+        {"kind": "current", "id": None, "name": "账号当前出口"}
+    ]
+    assert repository.get_run(historical_run_id)["proxy_targets"][0]["kind"] == "direct"
+
+
 def test_runs_can_be_searched_by_account_name_email_or_id(repository: ProbeRepository):
     create_run(
         repository,
@@ -289,6 +324,8 @@ class FakeGrokClient:
         self.probe_calls = 0
         self.restore_routing_failures = 0
         self.chat_egress_override = 0
+        self.account_egress_node_id: int | None = None
+        self.account_egress_mode = ""
 
     async def get_account(self, account_id: int) -> dict[str, Any]:
         return {
@@ -299,8 +336,8 @@ class FakeGrokClient:
             "authStatus": "active",
             "priority": self.account_priority,
             "maxConcurrent": self.account_max_concurrent,
-            "egressNodeId": None,
-            "egressAssignmentMode": "",
+            "egressNodeId": self.account_egress_node_id,
+            "egressAssignmentMode": self.account_egress_mode,
         }
 
     async def list_all_accounts(self, account_ids: set[int] | None = None) -> list[dict[str, Any]]:
@@ -357,8 +394,9 @@ class FakeGrokClient:
             raise self.probe_errors.pop(0)
         if self.probe_error is not None:
             raise self.probe_error
-        target = self.bindings[-1]
-        target_id = int(target.get("id") or 0) or None
+        target_id = (
+            int(self.bindings[-1].get("id") or 0) or None if self.bindings else self.account_egress_node_id
+        )
         egress_id = self.chat_egress_override or target_id
         return ChatProbeResult(
             request_id="request-1",
@@ -424,6 +462,47 @@ class DisabledFakeGrokClient(FakeGrokClient):
     def __init__(self):
         super().__init__()
         self.account_enabled = False
+
+
+@pytest.mark.asyncio
+async def test_manual_batch_reports_skipped_account_details(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    repository.seed_defaults()
+    client = FakeGrokClient()
+    client.account_egress_node_id = 7
+    manager = ProbeManager(
+        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    created = await manager.enqueue_manual_batch(
+        account_ids=[10],
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[{"kind": "current", "id": None}],
+    )
+    repeated = await manager.enqueue_manual_batch(
+        account_ids=[10],
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[{"kind": "current", "id": None}],
+    )
+
+    assert created["created"] == 1
+    assert repeated["created"] == 0
+    assert repeated["skippedAccounts"] == [
+        {
+            "id": 10,
+            "name": "probe-account",
+            "email": "probe@example.test",
+            "code": "active_run",
+            "reason": "账号 10 已有排队或执行中的探针任务，请等待其结束",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -785,7 +864,7 @@ async def test_worker_persists_result_and_restores_upstream(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_chat_probe_keeps_metrics_when_actual_egress_differs_from_target(tmp_path: Path):
+async def test_chat_probe_marks_actual_egress_mismatch_as_error_with_evidence(tmp_path: Path):
     database = Database(tmp_path / "monitor.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
@@ -813,14 +892,167 @@ async def test_chat_probe_keeps_metrics_when_actual_egress_differs_from_target(t
         )
         detail = await wait_for_terminal_run(probe_repository, run_id)
         sample = detail["samples"][0]
-        assert detail["run"]["status"] == "completed"
-        assert sample["status"] == "done"
+        assert detail["run"]["status"] == "completed_with_errors"
+        assert sample["status"] == "error"
         assert sample["egress_node_id"] == 7
         assert sample["verified_egress_node_id"] == 3
         assert sample["tps"] == 100
-        assert sample["error"] == ""
+        assert sample["request_id"] == "request-1"
+        assert sample["audit_id"] == 1
+        assert sample["response_text"] == "探针校验通过"
+        assert "指定诊断出口应为节点 7" in sample["error"]
     finally:
         await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_current_egress_probe_preserves_binding_and_routing_settings(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.account_egress_node_id = 7
+    client.account_egress_mode = "manual"
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+            probe_current_egress_interval_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "current", "id": None}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        run = detail["run"]
+        sample = detail["samples"][0]
+        assert run["status"] == "completed"
+        assert run["original_egress_node_id"] == 7
+        assert run["original_egress_assignment_mode"] == "manual"
+        assert run["account_restore_status"] == "not_recorded"
+        assert client.bindings == []
+        assert client.routing_updates == []
+        assert client.restored is False
+        assert sample["target_kind"] == "current"
+        assert sample["egress_node_id"] == 7
+        assert sample["verified_egress_node_id"] == 7
+        assert sample["status"] == "done"
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_current_egress_probe_rejects_unbound_or_disabled_account(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    client = FakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        repository=ProbeRepository(database),
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    with pytest.raises(ValueError, match="未绑定固定出口"):
+        await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "current", "id": None}],
+        )
+
+    client.account_egress_node_id = 7
+    client.account_enabled = False
+    with pytest.raises(ValueError, match="正常定检不会临时激活"):
+        await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "current", "id": None}],
+        )
+
+
+@pytest.mark.asyncio
+async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.account_egress_node_id = 7
+    client.account_egress_mode = "manual"
+    client.chat_egress_override = 3
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+            probe_current_egress_interval_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "current", "id": None}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        sample = detail["samples"][0]
+        assert detail["run"]["status"] == "completed_with_errors"
+        assert sample["status"] == "error"
+        assert sample["egress_node_id"] == 7
+        assert sample["verified_egress_node_id"] == 3
+        assert sample["request_id"] == "request-1"
+        assert sample["audit_id"] == 1
+        assert sample["output_tokens"] == 100
+        assert sample["response_text"] == "探针校验通过"
+        assert "账号当前出口应为节点 7" in sample["error"]
+        assert client.bindings == []
+        assert client.restored is False
+        assessment = AccountRepository(database).get_assessment(10)
+        assert assessment is not None
+        assert assessment["sample_count"] == 0
+        assert assessment["latest_tps"] == 0
+        assert assessment["latest_classification"] == "error"
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_current_egress_cannot_be_mixed_with_diagnostic_targets(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    manager = ProbeManager(
+        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        repository=ProbeRepository(database),
+        accounts=AccountRepository(database),
+        client=FakeGrokClient(),  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    with pytest.raises(ValueError, match="不能与诊断出口混用"):
+        await manager.validate_targets(
+            [
+                {"kind": "current", "id": None},
+                {"kind": "egress", "id": 7},
+            ]
+        )
 
 
 @pytest.mark.asyncio

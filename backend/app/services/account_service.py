@@ -38,11 +38,7 @@ class AccountService:
         recovery_guarded: str = "",
     ) -> dict[str, Any]:
         upstream_filters = self._upstream_status_filter(upstream_status)
-        if (
-            monitor_status
-            or recovery_guarded in {"true", "false"}
-            or enabled in {"true", "false"}
-        ):
+        if monitor_status or recovery_guarded in {"true", "false"} or enabled in {"true", "false"}:
             upstream = await self.client.list_all_accounts(**upstream_filters)
             account_ids = [int(item.get("id") or 0) for item in upstream]
             assessments = self.accounts.get_assessments(account_ids)
@@ -155,6 +151,10 @@ class AccountService:
                 "email": str(item.get("email") or ""),
                 "enabled": bool(item.get("enabled")),
                 "authStatus": str(item.get("authStatus") or ""),
+                "egressNodeId": (
+                    str(item.get("egressNodeId")) if int(item.get("egressNodeId") or 0) > 0 else None
+                ),
+                "egressAssignmentMode": str(item.get("egressAssignmentMode") or ""),
             }
             for item in payload.get("items", [])
             if int(item.get("id") or 0) > 0
@@ -256,19 +256,13 @@ class AccountService:
         account_ids: list[int],
         enabled: bool,
     ) -> dict[str, Any]:
-        unique_ids = list(
-            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
-        )
+        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
         if not unique_ids:
             raise ValueError("至少选择一个账号")
         locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
-        eligible_ids = [
-            account_id for account_id in unique_ids if account_id not in locked_ids
-        ]
+        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
         update_result = (
-            await self.client.set_accounts_enabled(eligible_ids, enabled)
-            if eligible_ids
-            else None
+            await self.client.set_accounts_enabled(eligible_ids, enabled) if eligible_ids else None
         )
         failures = list(update_result.failures) if update_result else []
         return {
@@ -278,14 +272,11 @@ class AccountService:
             "enabled": enabled,
             "skippedAccountIds": sorted(locked_ids),
             "failedAccountIds": sorted(failure.account_id for failure in failures),
-            "failures": [
-                {"id": failure.account_id, "error": failure.error}
-                for failure in failures
-            ],
+            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
         }
 
     async def delete_upstream_account(self, account_id: int) -> dict[str, Any]:
-        await self.client.admin_request("DELETE", f"/api/admin/v1/accounts/{account_id}")
+        await self.client.delete_account(account_id)
         self.accounts.create_alert(
             account_id=account_id,
             kind="upstream_delete",
@@ -294,6 +285,38 @@ class AccountService:
             detail={},
         )
         return {"deleted": True, "accountId": account_id}
+
+    async def delete_upstream_accounts(
+        self,
+        *,
+        account_ids: list[int],
+    ) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
+        if not unique_ids:
+            raise ValueError("至少选择一个账号")
+        locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
+        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
+        delete_result = await self.client.delete_accounts(eligible_ids) if eligible_ids else None
+        failures = list(delete_result.failures) if delete_result else []
+        failed_account_ids = {failure.account_id for failure in failures}
+        for account_id in eligible_ids:
+            if account_id in failed_account_ids:
+                continue
+            self.accounts.create_alert(
+                account_id=account_id,
+                kind="upstream_delete",
+                severity="warning",
+                title="账号已通过 grok2api API 删除",
+                detail={},
+            )
+        return {
+            "requested": len(unique_ids),
+            "eligible": len(eligible_ids),
+            "deleted": delete_result.deleted if delete_result else 0,
+            "skippedAccountIds": sorted(locked_ids),
+            "failedAccountIds": sorted(failed_account_ids),
+            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
+        }
 
     async def recover_due_quarantines(self) -> dict[str, Any]:
         restored = 0
