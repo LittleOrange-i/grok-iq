@@ -742,9 +742,7 @@ function SystemCronPanel({
               系统恢复常驻运行；计划开关仅控制用户创建的周期巡检。
             </p>
           </div>
-          <Badge
-            variant={running ? 'success' : 'destructive'}
-          >
+          <Badge variant={running ? 'success' : 'destructive'}>
             {running ? '运行中' : '未运行'}
           </Badge>
         </div>
@@ -1383,7 +1381,9 @@ function PlanDialog({
           <Field label='账号范围' required className='sm:col-span-2'>
             <Select
               value={accountScope}
-              onValueChange={(scope: PlanAccountScope) => setAccountScope(scope)}
+              onValueChange={(scope: PlanAccountScope) =>
+                setAccountScope(scope)
+              }
             >
               <SelectTrigger aria-label='选择计划账号范围'>
                 <SelectValue />
@@ -1410,7 +1410,8 @@ function PlanDialog({
                 invalid={!accountIds.length}
               />
               <p className='text-xs leading-5 text-muted-foreground'>
-                列表按页实时读取 grok2api；仅已启用且绑定固定出口的账号会执行周期巡检。
+                列表按页实时读取
+                grok2api；仅已启用且绑定固定出口的账号会执行周期巡检。
               </p>
             </Field>
           )}

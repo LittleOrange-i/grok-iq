@@ -7,7 +7,6 @@ from fastapi.routing import APIRoute
 from app.core.config import Settings
 from app.web.router import build_router
 
-
 EXPECTED_ROUTES = {
     ("GET", "/api/auth/status"),
     ("POST", "/api/auth/setup"),
@@ -108,12 +107,21 @@ def build_test_router():
     )
 
 
+def effective_routes(router):
+    for route in router.routes:
+        contexts = getattr(route, "effective_route_contexts", None)
+        if contexts is None:
+            yield route
+            continue
+        yield from contexts()
+
+
 def test_business_router_package_preserves_method_and_path_contract():
     router = build_test_router()
     routes = {
         (method, route.path)
-        for route in router.routes
-        if isinstance(route, APIRoute)
+        for route in effective_routes(router)
+        if isinstance(route, APIRoute) or isinstance(route.original_route, APIRoute)
         for method in route.methods
     }
     assert routes == EXPECTED_ROUTES
@@ -121,8 +129,10 @@ def test_business_router_package_preserves_method_and_path_contract():
 
 def test_only_auth_health_and_register_webhooks_are_public():
     router = build_test_router()
-    for route in router.routes:
-        if not isinstance(route, APIRoute):
+    for route in effective_routes(router):
+        if not isinstance(route, APIRoute) and not isinstance(
+            route.original_route, APIRoute
+        ):
             continue
         if route.path in PUBLIC_PATHS:
             assert not route.dependencies, route.path
