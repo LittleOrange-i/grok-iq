@@ -9,6 +9,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "monitor.db"
 
+DEFAULT_REGISTER_PROBE_PROFILE_IDS = ["quality-marker"]
+REGISTER_PROBE_EXECUTION_MODE = "chat"
+REGISTER_PROBE_ROUNDS = 3
+REGISTER_PROBE_PROXY_TARGETS = [{"kind": "current", "id": None}]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="GAM_", env_file=".env", extra="ignore")
@@ -41,14 +46,16 @@ class Settings(BaseSettings):
     grok2api_http_impersonate: str = "chrome"
 
     grok_register_webhook_token: str = ""
-    initial_probe_on_register: bool = False
+    initial_probe_on_register: bool = True
     register_probe_profile_ids: list[str] = Field(
-        default_factory=lambda: ["quality-marker"]
+        default_factory=lambda: list(DEFAULT_REGISTER_PROBE_PROFILE_IDS)
     )
-    register_probe_execution_mode: str = "chat"
-    register_probe_rounds: int = Field(default=1, ge=1, le=20)
+    register_probe_execution_mode: str = REGISTER_PROBE_EXECUTION_MODE
+    register_probe_rounds: int = Field(default=REGISTER_PROBE_ROUNDS, ge=1, le=20)
     register_probe_proxy_targets: list[dict[str, Any]] = Field(
-        default_factory=lambda: [{"kind": "current", "id": None}]
+        default_factory=lambda: [
+            dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
+        ]
     )
 
     # The WeChat public-platform test account uses the same template-message

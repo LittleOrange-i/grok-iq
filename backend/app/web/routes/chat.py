@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from typing import Any
+
+from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import StreamingResponse
+
+from app.services.chat_service import ChatService
+from app.web.schemas import ChatProviderCreateInput, ChatProviderUpdateInput
+
+from ._shared import disable_client_cache
+
+
+def build_chat_router(service: ChatService) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/chat/providers")
+    def chat_providers() -> list[dict[str, Any]]:
+        return service.list_providers()
+
+    @router.post("/chat/providers", status_code=201)
+    def create_chat_provider(
+        payload: ChatProviderCreateInput,
+    ) -> dict[str, Any]:
+        return service.create_provider(payload.model_dump())
+
+    @router.put("/chat/providers/{provider_id}")
+    def update_chat_provider(
+        provider_id: str,
+        payload: ChatProviderUpdateInput,
+    ) -> dict[str, Any]:
+        return service.update_provider(provider_id, payload.changes())
+
+    @router.delete("/chat/providers/{provider_id}", status_code=204)
+    def delete_chat_provider(provider_id: str) -> Response:
+        service.delete_provider(provider_id)
+        return Response(status_code=204)
+
+    @router.get("/chat/providers/{provider_id}/api-key")
+    def reveal_chat_provider_api_key(
+        provider_id: str,
+        response: Response,
+    ) -> dict[str, str]:
+        disable_client_cache(response)
+        return {"value": service.reveal_provider_api_key(provider_id)}
+
+    @router.post("/chat/providers/{provider_id}/sync-models")
+    async def sync_chat_provider_models(provider_id: str) -> dict[str, Any]:
+        return await service.sync_models(provider_id)
+
+    @router.get("/chat/models")
+    async def chat_models(
+        provider_id: str = Query(default="", alias="providerId"),
+    ) -> list[dict[str, Any]]:
+        return await service.list_models(provider_id)
+
+    @router.post("/chat/completions")
+    async def chat_completions(request: Request) -> StreamingResponse:
+        stream = await service.open_completion(
+            provider_id=request.headers.get("x-chat-provider-id", ""),
+            body=await request.body(),
+            request_headers=request.headers,
+        )
+
+        async def iterator() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in stream.response.aiter_content():
+                    yield chunk
+            finally:
+                await stream.session.close()
+
+        return StreamingResponse(
+            iterator(),
+            media_type=stream.response.headers.get(
+                "content-type", "text/event-stream"
+            ),
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    return router

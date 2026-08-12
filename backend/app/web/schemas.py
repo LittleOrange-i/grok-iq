@@ -91,8 +91,30 @@ class AccountBatchUpdateInput(BaseModel):
     enabled: bool
 
 
+class AccountBatchEgressInput(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=100_000)
+    egress_node_id: int | None = Field(default=None, ge=1)
+
+
 class AccountBatchDeleteInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=100_000)
+
+
+class EgressNodeBatchUpdateInput(BaseModel):
+    node_ids: list[int] = Field(min_length=1, max_length=5000)
+    enabled: bool
+
+
+class EgressNodeBatchDeleteInput(BaseModel):
+    node_ids: list[int] = Field(min_length=1, max_length=5000)
+
+
+class EgressNodeCreateInput(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    proxy_url: str = Field(min_length=1, max_length=8000)
+    proxy_pool: bool = False
+    account_capacity: int = Field(default=0, ge=0, le=100_000)
+    enabled: bool = True
 
 
 class ProxyTargetInput(BaseModel):

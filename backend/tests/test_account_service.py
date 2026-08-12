@@ -8,6 +8,7 @@ import pytest
 
 from app.core.clock import utc_now
 from app.core.config import Settings
+from app.integrations.grok2api.client import AccountBatchUpdateResult
 from app.persistence.account_repository import AccountRepository
 from app.persistence.database import Database
 from app.persistence.probe_repository import ProbeRepository
@@ -99,6 +100,77 @@ class RecoveryClient:
         account["priority"] = priority
 
 
+class EgressClient:
+    def __init__(self) -> None:
+        self.nodes = [
+            {
+                "id": "1",
+                "name": "unhealthy",
+                "enabled": True,
+                "proxyConfigured": True,
+                "probeStatus": "unhealthy",
+                "assignedAccountCount": 0,
+                "accountCapacity": 0,
+            },
+            {
+                "id": "2",
+                "name": "full",
+                "enabled": True,
+                "proxyConfigured": True,
+                "probeStatus": "healthy",
+                "assignedAccountCount": 10,
+                "accountCapacity": 10,
+            },
+            {
+                "id": "3",
+                "name": "busier",
+                "enabled": True,
+                "proxyConfigured": True,
+                "probeStatus": "healthy",
+                "assignedAccountCount": 5,
+                "accountCapacity": 0,
+            },
+            {
+                "id": "4",
+                "name": "least-loaded",
+                "enabled": True,
+                "proxyConfigured": True,
+                "probeStatus": "healthy",
+                "assignedAccountCount": 2,
+                "accountCapacity": 0,
+            },
+        ]
+        self.bindings: list[tuple[list[int], int | None, str]] = []
+
+    async def list_egress_nodes(self, **_: Any) -> dict[str, Any]:
+        return {"items": self.nodes}
+
+    async def set_accounts_egress(
+        self,
+        account_ids: list[int],
+        node_id: int | None,
+        *,
+        mode: str,
+    ) -> AccountBatchUpdateResult:
+        self.bindings.append((account_ids, node_id, mode))
+        return AccountBatchUpdateResult(updated=len(account_ids))
+
+    async def get_account(self, account_id: int) -> dict[str, Any]:
+        node_id = self.bindings[-1][1] if self.bindings else None
+        return {
+            "id": str(account_id),
+            "enabled": True,
+            "authStatus": "active",
+            "egressNodeId": str(node_id) if node_id is not None else None,
+            "egressAssignmentMode": self.bindings[-1][2] if node_id is not None else "",
+        }
+
+
+class LockedProbeSettings:
+    def account_settings_locked_ids(self, account_ids: set[int]) -> set[int]:
+        return account_ids & {2}
+
+
 @pytest.mark.asyncio
 async def test_select_account_ids_applies_filters_and_excludes_auth_failures(tmp_path: Path):
     database = Database(tmp_path / "monitor.db")
@@ -145,6 +217,59 @@ async def test_account_options_include_egress_binding(tmp_path: Path):
     assert result["items"][0]["egressNodeId"] == "12"
     assert result["items"][0]["egressAssignmentMode"] == "manual"
     assert result["items"][1]["egressNodeId"] is None
+
+
+@pytest.mark.asyncio
+async def test_webhook_account_auto_binding_uses_least_loaded_healthy_node(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    client = EgressClient()
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "monitor.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    result = await service.ensure_account_egress({"id": "41", "egressNodeId": None})
+
+    assert client.bindings == [([41], 4, "manual")]
+    assert result["egressNodeId"] == "4"
+    assert result["egressAssignmentMode"] == "manual"
+
+    same = await service.ensure_account_egress(result)
+    assert same is result
+    assert client.bindings == [([41], 4, "manual")]
+
+
+@pytest.mark.asyncio
+async def test_batch_egress_binding_skips_probe_locked_accounts(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    client = EgressClient()
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "monitor.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=LockedProbeSettings(),  # type: ignore[arg-type]
+    )
+
+    result = await service.set_accounts_egress(
+        account_ids=[1, 2, 3, 2],
+        egress_node_id=9,
+    )
+
+    assert client.bindings == [([1, 3], 9, "manual")]
+    assert result == {
+        "requested": 3,
+        "eligible": 2,
+        "updated": 2,
+        "egressNodeId": 9,
+        "assignmentMode": "manual",
+        "skippedAccountIds": [2],
+        "failedAccountIds": [],
+        "failures": [],
+    }
 
 
 @pytest.mark.asyncio

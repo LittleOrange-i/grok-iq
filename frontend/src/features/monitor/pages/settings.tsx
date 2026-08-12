@@ -4,14 +4,11 @@ import {
   Activity,
   ArrowRight,
   BellRing,
-  Check,
-  CheckCheck,
   CheckCircle2,
   Copy,
   Database,
   Eye,
   EyeOff,
-  Gauge,
   Inbox,
   KeyRound,
   Layers3,
@@ -19,17 +16,13 @@ import {
   MessageSquareText,
   Network,
   Power,
-  RefreshCw,
-  Route,
   Save,
   Send,
   ServerCog,
   ShieldCheck,
   TestTube2,
-  TriangleAlert,
   Webhook,
   Workflow,
-  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -124,6 +117,11 @@ const secretMetadata: Record<
 }
 
 const REGISTER_WEBHOOK_PATH = '/api/integrations/grok-register/account-imported'
+const REGISTER_PROBE_EXECUTION_MODE: ExecutionMode = 'chat'
+const REGISTER_PROBE_ROUNDS = 3
+const REGISTER_PROBE_PROXY_TARGETS: ProxyTarget[] = [
+  { kind: 'current', id: null },
+]
 const REGISTER_WEBHOOK_MINIMAL_BODY = `{
   "email": "user@example.com"
 }`
@@ -159,10 +157,6 @@ export function SettingsPage() {
   const profiles = useQuery({
     queryKey: ['probe-profiles'],
     queryFn: api.profiles,
-  })
-  const egress = useQuery({
-    queryKey: ['egress-nodes', 'register-policy'],
-    queryFn: () => api.egress({ pageSize: 500 }),
   })
   const [form, setForm] = useState<SettingsForm | null>(null)
   const [clearSecrets, setClearSecrets] = useState<SecretSettingName[]>([])
@@ -303,122 +297,10 @@ export function SettingsPage() {
     )
     const field = name as keyof Pick<
       SettingsForm,
-      | 'grok2apiAdminPassword'
-      | 'grokRegisterWebhookToken'
-      | 'wechatAppSecret'
+      'grok2apiAdminPassword' | 'grokRegisterWebhookToken' | 'wechatAppSecret'
     >
     set(field, '' as SettingsForm[typeof field])
   }
-  const availableEgress = (egress.data?.items ?? []).filter(
-    (node) => node.enabled && node.proxyConfigured
-  )
-  const enabledProfiles = (profiles.data ?? []).filter(
-    (profile) => profile.enabled
-  )
-  const quickProfile =
-    enabledProfiles.find((profile) => profile.id === 'quality-marker') ??
-    enabledProfiles[0]
-  const availableEgressIdSet = new Set(
-    availableEgress.map((node) => Number(node.id))
-  )
-  const currentSelected = form.registerProbeProxyTargets.some(
-    (target) => target.kind === 'current'
-  )
-  const directSelected = form.registerProbeProxyTargets.some(
-    (target) => target.kind === 'direct'
-  )
-  const selectedEgressIds = new Set(
-    form.registerProbeProxyTargets
-      .filter((target) => target.kind === 'egress' && target.id != null)
-      .map((target) => Number(target.id))
-  )
-  const unavailableSelectedEgressIds = Array.from(selectedEgressIds).filter(
-    (id) => !availableEgressIdSet.has(id)
-  )
-  const allAvailableEgressSelected =
-    availableEgress.length > 0 &&
-    availableEgress.every((node) => selectedEgressIds.has(Number(node.id)))
-  const setCurrentTarget = () => {
-    set('registerProbeProxyTargets', [{ kind: 'current', id: null }])
-  }
-  const setDirectTarget = (checked: boolean) => {
-    const diagnosticTargets = form.registerProbeProxyTargets.filter(
-      (target) => target.kind === 'egress'
-    )
-    set(
-      'registerProbeProxyTargets',
-      checked
-        ? [{ kind: 'direct', id: null }, ...diagnosticTargets]
-        : diagnosticTargets
-    )
-  }
-  const toggleEgressTarget = (id: number, checked: boolean) => {
-    const remaining = form.registerProbeProxyTargets.filter(
-      (target) =>
-        target.kind !== 'current' &&
-        !(target.kind === 'egress' && Number(target.id) === id)
-    )
-    set(
-      'registerProbeProxyTargets',
-      checked ? [...remaining, { kind: 'egress', id }] : remaining
-    )
-  }
-  const toggleAllEgressTargets = () => {
-    const diagnosticDirectTargets = form.registerProbeProxyTargets.filter(
-      (target) => target.kind === 'direct'
-    )
-    set(
-      'registerProbeProxyTargets',
-      allAvailableEgressSelected
-        ? diagnosticDirectTargets
-        : [
-            ...diagnosticDirectTargets,
-            ...availableEgress.map((node) => ({
-              kind: 'egress' as const,
-              id: Number(node.id),
-            })),
-          ]
-    )
-  }
-  const removeUnavailableEgressTargets = () => {
-    set(
-      'registerProbeProxyTargets',
-      form.registerProbeProxyTargets.filter(
-        (target) =>
-          target.kind !== 'egress' ||
-          (target.id != null && availableEgressIdSet.has(Number(target.id)))
-      )
-    )
-  }
-  const setRegisterExecutionMode = (value: ExecutionMode) => {
-    setForm((current) => {
-      if (!current) return current
-      const currentEgress = current.registerProbeProxyTargets.filter(
-        (target) => target.kind === 'egress'
-      )
-      if (value === 'quality_test') {
-        return {
-          ...current,
-          registerProbeExecutionMode: value,
-          registerProbeProfileIds: quickProfile
-            ? [quickProfile.id]
-            : current.registerProbeProfileIds,
-          registerProbeProxyTargets: currentEgress.length
-            ? currentEgress
-            : availableEgress.map((node) => ({
-                kind: 'egress' as const,
-                id: Number(node.id),
-              })),
-        }
-      }
-      return {
-        ...current,
-        registerProbeExecutionMode: value,
-        registerProbeProxyTargets: [{ kind: 'current', id: null }],
-      }
-    })
-  }
-
   return (
     <Page>
       <PageHeader
@@ -636,9 +518,9 @@ export function SettingsPage() {
               />
             </div>
             <div className='mt-4 rounded-lg border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground'>
-              账号级并发固定为
-              1。正常定检启动间隔在所有 Worker 之间共享，用于降低短时间账号扩散；Monitor
-              无法获知 Resin 最终物理 IP，因此该间隔不等同于每 IP 精确限流。
+              账号级并发固定为 1。正常定检启动间隔在所有 Worker
+              之间共享，用于降低短时间账号扩散；Monitor 无法获知 Resin 最终物理
+              IP，因此该间隔不等同于每 IP 精确限流。
             </div>
           </SettingsCard>
         </TabsContent>
@@ -762,9 +644,7 @@ export function SettingsPage() {
                 >
                   <Input
                     value={form.wechatAppId}
-                    onChange={(event) =>
-                      set('wechatAppId', event.target.value)
-                    }
+                    onChange={(event) => set('wechatAppId', event.target.value)}
                     placeholder='wxxxxxxxxxxxxxxxxxxxxxxxx'
                     autoComplete='off'
                   />
@@ -821,9 +701,7 @@ export function SettingsPage() {
                       onClick={() =>
                         void copyText(WECHAT_TEMPLATE_BODY)
                           .then(() => toast.success('已复制微信模板内容'))
-                          .catch((error) =>
-                            toast.error(getErrorMessage(error))
-                          )
+                          .catch((error) => toast.error(getErrorMessage(error)))
                       }
                     >
                       <Copy />
@@ -835,9 +713,13 @@ export function SettingsPage() {
                   </pre>
                 </div>
                 <div className='rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 text-xs leading-5 text-muted-foreground'>
-                  <div className='font-medium text-foreground'>推荐模板标题</div>
+                  <div className='font-medium text-foreground'>
+                    推荐模板标题
+                  </div>
                   <p className='mt-1'>账号异常提醒</p>
-                  <div className='mt-3 font-medium text-foreground'>字段说明</div>
+                  <div className='mt-3 font-medium text-foreground'>
+                    字段说明
+                  </div>
                   <p className='mt-1'>
                     first、account、status、score、tps、reason、time、remark
                     会由系统自动填充。
@@ -998,7 +880,7 @@ export function SettingsPage() {
                             注册后创建探针
                           </div>
                           <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                            匹配上游账号后，按默认策略自动加入持久队列。
+                            匹配上游账号后，先补齐账号的稳定出口绑定，再自动加入持久队列。
                           </p>
                         </div>
                       </div>
@@ -1020,7 +902,7 @@ export function SettingsPage() {
                         )}
                       />
                       {form.initialProbeOnRegister
-                        ? '新账号匹配成功后自动入队'
+                        ? '未绑定账号自动选择健康且负载最低的出口并固定，然后入队'
                         : '事件入库后结束，不创建探针任务'}
                     </div>
                   </div>
@@ -1031,240 +913,47 @@ export function SettingsPage() {
 
               <IntegrationSection
                 icon={Layers3}
-                eyebrow='默认策略'
+                eyebrow='首次策略'
                 title='新账号首次探针'
-                description='该策略只由监控端维护，注册机无需了解方案、轮次或出口节点。'
+                description='探针方案可多选；执行方式、轮次和出口策略由系统固定。'
                 className='border-t'
               >
                 <div className='space-y-5'>
-                  <div className='grid gap-3 lg:grid-cols-2'>
-                    <ModeOption
+                  <Field
+                    label='探针方案'
+                    hint='可多选；每个方案分别生成一个持久任务'
+                  >
+                    <ProfileMultiSelect
+                      profiles={profiles.data ?? []}
+                      value={form.registerProbeProfileIds}
+                      onChange={(value) =>
+                        set('registerProbeProfileIds', value)
+                      }
+                      enabledOnly
+                      disabled={profiles.isLoading}
+                      invalid={
+                        form.initialProbeOnRegister &&
+                        !form.registerProbeProfileIds.length
+                      }
+                    />
+                  </Field>
+
+                  <div className='grid divide-y overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
+                    <FixedProbeSetting
                       icon={MessageSquareText}
-                      title='完整对话探针'
-                      description='调用聊天接口；默认保持账号当前出口，诊断时才临时切换。'
-                      meta='多方案 · 完整响应'
-                      selected={form.registerProbeExecutionMode === 'chat'}
-                      onSelect={() => setRegisterExecutionMode('chat')}
+                      label='执行方式'
+                      value='完整对话'
                     />
-                    <ModeOption
-                      icon={Gauge}
-                      title='快速出口质量'
-                      description='使用质量基线快速验证固定出口，适合首次筛查。'
-                      meta={
-                        !availableEgress.length || !quickProfile
-                          ? '缺少可用出口或基线'
-                          : '固定出口 · 快速筛查'
-                      }
-                      selected={
-                        form.registerProbeExecutionMode === 'quality_test'
-                      }
-                      disabled={!availableEgress.length || !quickProfile}
-                      onSelect={() => setRegisterExecutionMode('quality_test')}
+                    <FixedProbeSetting
+                      icon={Layers3}
+                      label='执行轮数'
+                      value='每个方案 3 轮'
                     />
-                  </div>
-
-                  <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_12rem]'>
-                    {form.registerProbeExecutionMode === 'chat' ? (
-                      <Field
-                        label='探针方案'
-                        hint='可多选；每个方案分别生成一个持久任务'
-                      >
-                        <ProfileMultiSelect
-                          profiles={profiles.data ?? []}
-                          value={form.registerProbeProfileIds}
-                          onChange={(value) =>
-                            set('registerProbeProfileIds', value)
-                          }
-                          enabledOnly
-                          disabled={profiles.isLoading}
-                          invalid={
-                            form.initialProbeOnRegister &&
-                            !form.registerProbeProfileIds.length
-                          }
-                        />
-                      </Field>
-                    ) : (
-                      <Field
-                        label='快速质量基线'
-                        hint='快速模式自动使用当前已启用基线'
-                      >
-                        <div className='flex h-9 min-w-0 items-center gap-3 rounded-md border border-sky-500/20 bg-sky-500/5 px-3 shadow-xs'>
-                          <Gauge className='size-4 shrink-0 text-sky-600 dark:text-sky-400' />
-                          <span className='min-w-0 flex-1 truncate text-sm font-medium'>
-                            {quickProfile?.name ?? '暂无可用基线'}
-                          </span>
-                          {quickProfile && (
-                            <span className='shrink-0 text-xs text-muted-foreground'>
-                              {quickProfile.model}
-                            </span>
-                          )}
-                        </div>
-                      </Field>
-                    )}
-                    <NumberField
-                      label='每个出口轮数'
-                      hint='1–20 轮'
-                      value={form.registerProbeRounds}
-                      min={1}
-                      max={20}
-                      onChange={(value) => set('registerProbeRounds', value)}
+                    <FixedProbeSetting
+                      icon={ShieldCheck}
+                      label='出口策略'
+                      value='账号当前绑定出口'
                     />
-                  </div>
-
-                  <div className='overflow-hidden rounded-xl border'>
-                    <div className='flex flex-col gap-3 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
-                      <div className='flex min-w-0 items-center gap-3'>
-                        <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-xs ring-1 ring-border'>
-                          <Route className='size-4' />
-                        </div>
-                        <div className='min-w-0'>
-                          <div className='flex flex-wrap items-center gap-2'>
-                            <span className='text-sm font-medium'>
-                              出口目标
-                            </span>
-                            {currentSelected &&
-                              form.registerProbeExecutionMode === 'chat' && (
-                                <Badge variant='success'>正常定检</Badge>
-                              )}
-                            {directSelected &&
-                              form.registerProbeExecutionMode === 'chat' && (
-                                <Badge variant='warning'>上游调度诊断</Badge>
-                              )}
-                            <Badge variant='outline'>
-                              {selectedEgressIds.size} 个固定出口
-                            </Badge>
-                          </div>
-                          <p className='mt-0.5 text-xs text-muted-foreground'>
-                            账号当前出口与诊断出口互斥；自动首次探针推荐使用正常定检。
-                          </p>
-                        </div>
-                      </div>
-                      <div className='flex shrink-0 items-center gap-1 self-end sm:self-auto'>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type='button'
-                              size='icon'
-                              variant='ghost'
-                              className='size-8'
-                              disabled={egress.isFetching}
-                              onClick={() => void egress.refetch()}
-                              aria-label='刷新出口节点'
-                            >
-                              <RefreshCw
-                                className={cn(
-                                  'size-4',
-                                  egress.isFetching && 'animate-spin'
-                                )}
-                              />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>刷新出口节点</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type='button'
-                              size='icon'
-                              variant='ghost'
-                              className='size-8'
-                              disabled={!availableEgress.length}
-                              onClick={toggleAllEgressTargets}
-                              aria-label={
-                                allAvailableEgressSelected
-                                  ? '清空固定出口'
-                                  : '全选固定出口'
-                              }
-                            >
-                              {allAvailableEgressSelected ? (
-                                <X className='size-4' />
-                              ) : (
-                                <CheckCheck className='size-4' />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {allAvailableEgressSelected
-                              ? '清空固定出口'
-                              : '全选固定出口'}
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </div>
-
-                    {egress.isError && (
-                      <div className='mx-3 mt-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive'>
-                        <TriangleAlert className='mt-0.5 size-4 shrink-0' />
-                        <span>{getErrorMessage(egress.error)}</span>
-                      </div>
-                    )}
-                    {unavailableSelectedEgressIds.length > 0 && (
-                      <div className='mx-3 mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-300'>
-                        <div className='flex min-w-0 items-start gap-2'>
-                          <TriangleAlert className='mt-0.5 size-4 shrink-0' />
-                          <span className='break-all'>
-                            节点 {unavailableSelectedEgressIds.join(', ')}
-                            当前不可用
-                          </span>
-                        </div>
-                        <Button
-                          type='button'
-                          size='sm'
-                          variant='ghost'
-                          className='h-7 shrink-0 px-2 text-xs'
-                          onClick={removeUnavailableEgressTargets}
-                        >
-                          <X />
-                          移除
-                        </Button>
-                      </div>
-                    )}
-
-                    <div className='grid max-h-72 gap-2 overflow-y-auto p-3 sm:grid-cols-2 xl:grid-cols-3'>
-                      {form.registerProbeExecutionMode === 'chat' && (
-                        <EgressOption
-                          icon={ShieldCheck}
-                          title='账号当前出口'
-                          detail='正常定检，不修改账号绑定'
-                          selected={currentSelected}
-                          onToggle={setCurrentTarget}
-                        />
-                      )}
-                      {form.registerProbeExecutionMode === 'chat' && (
-                        <EgressOption
-                          icon={Route}
-                          title='上游调度（诊断）'
-                          detail='临时解除账号固定绑定'
-                          selected={directSelected}
-                          onToggle={() => setDirectTarget(!directSelected)}
-                        />
-                      )}
-                      {availableEgress.map((node) => {
-                        const id = Number(node.id)
-                        return (
-                          <EgressOption
-                            key={node.id}
-                            icon={Network}
-                            title={node.name}
-                            detail={`诊断出口 · ${node.exitIp || `节点 #${id}`}`}
-                            selected={selectedEgressIds.has(id)}
-                            onToggle={() =>
-                              toggleEgressTarget(id, !selectedEgressIds.has(id))
-                            }
-                          />
-                        )
-                      })}
-                    </div>
-
-                    {!egress.isLoading && !availableEgress.length && (
-                      <div className='m-3 flex items-start gap-3 rounded-lg border border-dashed p-3'>
-                        <TriangleAlert className='mt-0.5 size-4 shrink-0 text-amber-500' />
-                        <p className='text-xs leading-5 text-muted-foreground'>
-                          当前没有已启用且已配置代理的 grok_build
-                          诊断出口；正常定检仍可使用账号当前绑定。
-                        </p>
-                      </div>
-                    )}
                   </div>
                 </div>
               </IntegrationSection>
@@ -1326,9 +1015,9 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     grokRegisterWebhookToken: settings.grokRegisterWebhookToken,
     initialProbeOnRegister: settings.initialProbeOnRegister,
     registerProbeProfileIds: settings.registerProbeProfileIds,
-    registerProbeExecutionMode: settings.registerProbeExecutionMode,
-    registerProbeRounds: settings.registerProbeRounds,
-    registerProbeProxyTargets: settings.registerProbeProxyTargets,
+    registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
+    registerProbeRounds: REGISTER_PROBE_ROUNDS,
+    registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     wechatNotificationEnabled: settings.wechatNotificationEnabled,
     wechatAppId: settings.wechatAppId,
     wechatAppSecret: settings.wechatAppSecret,
@@ -1369,9 +1058,9 @@ function buildSettingsPayload(
     grok2apiHttpImpersonate: form.grok2apiHttpImpersonate.trim(),
     initialProbeOnRegister: form.initialProbeOnRegister,
     registerProbeProfileIds: form.registerProbeProfileIds,
-    registerProbeExecutionMode: form.registerProbeExecutionMode,
-    registerProbeRounds: form.registerProbeRounds,
-    registerProbeProxyTargets: form.registerProbeProxyTargets,
+    registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
+    registerProbeRounds: REGISTER_PROBE_ROUNDS,
+    registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     wechatNotificationEnabled: form.wechatNotificationEnabled,
     wechatAppId: form.wechatAppId.trim(),
     wechatOpenid: form.wechatOpenid.trim(),
@@ -1379,8 +1068,7 @@ function buildSettingsPayload(
     probeWorkerConcurrency: form.probeWorkerConcurrency,
     probeQueueLimit: form.probeQueueLimit,
     probeStepDelaySeconds: form.probeStepDelaySeconds,
-    probeCurrentEgressIntervalSeconds:
-      form.probeCurrentEgressIntervalSeconds,
+    probeCurrentEgressIntervalSeconds: form.probeCurrentEgressIntervalSeconds,
     probeTransientRetryAttempts: form.probeTransientRetryAttempts,
     probeTransientRetryBaseSeconds: form.probeTransientRetryBaseSeconds,
     probeTransientRetryMaxSeconds: form.probeTransientRetryMaxSeconds,
@@ -1432,9 +1120,7 @@ function mergeEditableSettings(
     grok2apiAdminPassword: clearSecrets.includes('grok2apiAdminPassword')
       ? ''
       : form.grok2apiAdminPassword,
-    grokRegisterWebhookToken: clearSecrets.includes(
-      'grokRegisterWebhookToken'
-    )
+    grokRegisterWebhookToken: clearSecrets.includes('grokRegisterWebhookToken')
       ? ''
       : form.grokRegisterWebhookToken,
     wechatAppSecret: clearSecrets.includes('wechatAppSecret')
@@ -1462,28 +1148,12 @@ function validateSettings(form: SettingsForm) {
       !form.wechatOpenid.trim() ||
       !form.wechatTemplateId.trim())
   ) {
-    throw new Error('开启微信异常推送前请填写 AppID、AppSecret、OpenID 和模板 ID')
+    throw new Error(
+      '开启微信异常推送前请填写 AppID、AppSecret、OpenID 和模板 ID'
+    )
   }
   if (form.initialProbeOnRegister && !form.registerProbeProfileIds.length) {
     throw new Error('注册后探针至少选择一个探针方案')
-  }
-  if (form.initialProbeOnRegister && !form.registerProbeProxyTargets.length) {
-    throw new Error('注册后探针至少选择一个出口目标')
-  }
-  const hasCurrentTarget = form.registerProbeProxyTargets.some(
-    (target) => target.kind === 'current'
-  )
-  const hasDiagnosticTarget = form.registerProbeProxyTargets.some(
-    (target) => target.kind !== 'current'
-  )
-  if (hasCurrentTarget && hasDiagnosticTarget) {
-    throw new Error('账号当前出口不能与诊断出口混用')
-  }
-  if (
-    form.registerProbeExecutionMode === 'quality_test' &&
-    form.registerProbeProxyTargets.some((target) => target.kind !== 'egress')
-  ) {
-    throw new Error('快速出口质量探针仅支持固定出口节点')
   }
 }
 
@@ -1687,7 +1357,7 @@ function WebhookContract() {
               className='grid min-w-0 grid-cols-[minmax(7rem,auto)_1fr] gap-3 text-xs leading-5'
             >
               <div className='min-w-0'>
-                <code className='break-all font-mono text-foreground'>
+                <code className='font-mono break-all text-foreground'>
                   {field.name}
                 </code>
                 <div className='text-[11px] text-muted-foreground'>
@@ -1699,7 +1369,8 @@ function WebhookContract() {
           ))}
         </div>
         <p className='mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground'>
-          返回 HTTP 202 表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
+          返回 HTTP 202
+          表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
         </p>
       </div>
     </div>
@@ -1783,122 +1454,25 @@ function IntegrationSection({
   )
 }
 
-function ModeOption({
+function FixedProbeSetting({
   icon: Icon,
-  title,
-  description,
-  meta,
-  selected,
-  disabled = false,
-  onSelect,
+  label,
+  value,
 }: {
   icon: typeof MessageSquareText
-  title: string
-  description: string
-  meta: string
-  selected: boolean
-  disabled?: boolean
-  onSelect: () => void
+  label: string
+  value: string
 }) {
   return (
-    <button
-      type='button'
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={onSelect}
-      className={cn(
-        'group flex min-h-28 w-full items-start gap-3 rounded-xl border p-4 text-left transition-[border-color,background-color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40',
-        selected
-          ? 'border-primary/40 bg-primary/[0.045] shadow-xs'
-          : 'border-border bg-background hover:border-primary/25 hover:bg-muted/20',
-        disabled && 'cursor-not-allowed opacity-50'
-      )}
-    >
-      <div
-        className={cn(
-          'flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors',
-          selected
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-muted text-muted-foreground group-hover:text-foreground'
-        )}
-      >
+    <div className='flex min-h-20 min-w-0 items-center gap-3 bg-muted/[0.12] px-4 py-3'>
+      <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-xs ring-1 ring-border'>
         <Icon className='size-4' />
       </div>
-      <div className='min-w-0 flex-1'>
-        <div className='text-sm font-medium'>{title}</div>
-        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-          {description}
-        </p>
-        <div className='mt-2 text-[11px] text-muted-foreground'>{meta}</div>
+      <div className='min-w-0'>
+        <div className='text-[11px] text-muted-foreground'>{label}</div>
+        <div className='mt-1 text-sm font-medium break-words'>{value}</div>
       </div>
-      <div
-        className={cn(
-          'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border',
-          selected
-            ? 'border-primary bg-primary text-primary-foreground'
-            : 'border-muted-foreground/30 bg-background'
-        )}
-      >
-        {selected && <Check className='size-3' />}
-      </div>
-    </button>
-  )
-}
-
-function EgressOption({
-  icon: Icon,
-  title,
-  detail,
-  selected,
-  onToggle,
-}: {
-  icon: typeof Network
-  title: string
-  detail: string
-  selected: boolean
-  onToggle: () => void
-}) {
-  return (
-    <button
-      type='button'
-      aria-pressed={selected}
-      onClick={onToggle}
-      className={cn(
-        'flex min-h-16 min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-[border-color,background-color] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40',
-        selected
-          ? 'border-primary/35 bg-primary/[0.04]'
-          : 'border-border/80 bg-background hover:border-primary/20 hover:bg-muted/20'
-      )}
-    >
-      <div
-        className={cn(
-          'flex size-8 shrink-0 items-center justify-center rounded-lg',
-          selected
-            ? 'bg-primary/10 text-primary'
-            : 'bg-muted text-muted-foreground'
-        )}
-      >
-        <Icon className='size-4' />
-      </div>
-      <div className='min-w-0 flex-1'>
-        <div className='text-xs font-medium break-words' title={title}>
-          {title}
-        </div>
-        <div className='mt-1 text-[11px] leading-4 break-all text-muted-foreground'>
-          {detail}
-        </div>
-      </div>
-      <div
-        className={cn(
-          'flex size-5 shrink-0 items-center justify-center rounded-md border',
-          selected
-            ? 'border-primary bg-primary text-primary-foreground'
-            : 'border-muted-foreground/30'
-        )}
-      >
-        {selected && <Check className='size-3' />}
-      </div>
-    </button>
+    </div>
   )
 }
 

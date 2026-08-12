@@ -2,10 +2,16 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
+  BatteryFull,
+  BatteryLow,
+  BatteryMedium,
+  BatteryWarning,
+  CircleHelp,
   Eye,
   Filter,
   ListChecks,
   Loader2,
+  Network,
   Play,
   Power,
   PowerOff,
@@ -22,6 +28,7 @@ import {
   api,
   type AccountDetailResponse,
   type ProbeSample,
+  type UpstreamQuota,
 } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
@@ -60,10 +67,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { FormattedContentPreviewButton } from '@/components/formatted-content'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { FormattedContentPreviewButton } from '@/components/formatted-content'
+import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
   ServerPagination,
@@ -74,15 +81,15 @@ import {
   EgressBindingIndicator,
 } from '@/features/monitor/components/account-state-indicators'
 import {
+  ACCOUNT_UPSTREAM_STATUS_OPTIONS,
+  type UpstreamStatusFilter,
+} from '@/features/monitor/components/account-upstream-status'
+import {
   buildEgressNodeNameMap,
   getEgressNodeName,
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
-import {
-  ACCOUNT_UPSTREAM_STATUS_OPTIONS,
-  type UpstreamStatusFilter,
-} from '@/features/monitor/components/account-upstream-status'
 
 type AccountBatchAction = 'enable' | 'disable'
 type RecoveryGuardFilter = 'all' | 'true' | 'false'
@@ -105,6 +112,8 @@ export function AccountsPage() {
   const [batchAction, setBatchAction] = useState<AccountBatchAction | null>(
     null
   )
+  const [egressBindingOpen, setEgressBindingOpen] = useState(false)
+  const [egressBindingTarget, setEgressBindingTarget] = useState<string>()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -127,8 +136,7 @@ export function AccountsPage() {
           search: deferredSearch,
           monitorStatus: status === 'all' ? '' : status,
           status: upstreamStatus === 'all' ? '' : upstreamStatus,
-          recoveryGuarded:
-            recoveryGuarded === 'all' ? '' : recoveryGuarded,
+          recoveryGuarded: recoveryGuarded === 'all' ? '' : recoveryGuarded,
         },
         signal
       ),
@@ -168,13 +176,11 @@ export function AccountsPage() {
   const allChecked =
     selectableAccounts.length > 0 &&
     selectableAccounts.every((item) => selected.includes(Number(item.id)))
-  const {
-    beginTableInteraction,
-    tableLoading: showTableLoading,
-  } = useServerTableLoading({
-    isFetching: query.isFetching,
-    inputPending: searchPending,
-  })
+  const { beginTableInteraction, tableLoading: showTableLoading } =
+    useServerTableLoading({
+      isFetching: query.isFetching,
+      inputPending: searchPending,
+    })
   const openAccountDetail = (id: number) => {
     setDetailId(id)
     setDetailOpen(true)
@@ -196,8 +202,7 @@ export function AccountsPage() {
         search: deferredSearch,
         monitorStatus: status === 'all' ? '' : status,
         status: upstreamStatus === 'all' ? '' : upstreamStatus,
-        recoveryGuarded:
-          recoveryGuarded === 'all' ? '' : recoveryGuarded,
+        recoveryGuarded: recoveryGuarded === 'all' ? '' : recoveryGuarded,
       }),
     onSuccess: (result) => {
       setSelected(result.accountIds)
@@ -255,9 +260,7 @@ export function AccountsPage() {
         if (skippedAccountIds.length) {
           details.push(`${skippedAccountIds.length} 个设置受任务保护并跳过`)
         }
-        toast.warning(
-          details.join('；')
-        )
+        toast.warning(details.join('；'))
       } else if (result.updated !== result.eligible) {
         toast.warning(
           `批量${actionLabel}完成：上游更新 ${result.updated} / ${result.eligible} 个账号`
@@ -307,6 +310,50 @@ export function AccountsPage() {
     },
   })
 
+  const egressBindingMutation = useMutation({
+    mutationFn: ({
+      accountIds,
+      egressNodeId,
+    }: {
+      accountIds: number[]
+      egressNodeId: number | null
+    }) => api.updateAccountsEgress(accountIds, egressNodeId),
+    onSuccess: (result, variables) => {
+      const skippedAccountIds = result.skippedAccountIds ?? []
+      const failedAccountIds = result.failedAccountIds ?? []
+      const retainedAccountIds = Array.from(
+        new Set([...skippedAccountIds, ...failedAccountIds])
+      )
+      const actionLabel = variables.egressNodeId == null ? '解绑' : '绑定'
+      setEgressBindingOpen(false)
+      setEgressBindingTarget(undefined)
+      setSelected(retainedAccountIds)
+      setSelectedDisabled(
+        selectedDisabledIds.filter((id) => retainedAccountIds.includes(id))
+      )
+      setAllFilteredSelected(false)
+      if (failedAccountIds.length > 0 || skippedAccountIds.length > 0) {
+        const details = [`已${actionLabel} ${result.updated} 个账号`]
+        if (failedAccountIds.length) {
+          details.push(`${failedAccountIds.length} 个操作失败并保留选择`)
+        }
+        if (skippedAccountIds.length) {
+          details.push(`${skippedAccountIds.length} 个设置受任务保护并跳过`)
+        }
+        toast.warning(details.join('；'))
+      } else {
+        toast.success(`已${actionLabel} ${result.updated} 个账号出口`)
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['account'] })
+      void client.invalidateQueries({ queryKey: ['plan-account-options'] })
+      void client.invalidateQueries({ queryKey: ['egress'] })
+    },
+  })
+
   const batchTargetIds =
     batchAction === 'enable'
       ? selectedDisabledIds
@@ -315,8 +362,13 @@ export function AccountsPage() {
         : []
   const batchActionLabel = batchAction === 'enable' ? '启用' : '停用'
   const batchActionPending = batchAccountMutation.isPending
+  const egressBindingPending = egressBindingMutation.isPending
   const deletePending = deleteAccountsMutation.isPending
-  const selectionActionPending = batchActionPending || deletePending
+  const selectionActionPending =
+    batchActionPending || egressBindingPending || deletePending
+  const bindableEgress = (egress.data?.items ?? []).filter(
+    (node) => node.enabled && node.proxyConfigured
+  )
 
   return (
     <Page>
@@ -341,9 +393,7 @@ export function AccountsPage() {
                 }
                 active={allFilteredSelected}
                 pending={selectionMutation.isPending}
-                disabled={
-                  showTableLoading || (query.data?.total ?? 0) === 0
-                }
+                disabled={showTableLoading || (query.data?.total ?? 0) === 0}
                 onClick={() => {
                   if (allFilteredSelected) {
                     setSelected([])
@@ -377,6 +427,18 @@ export function AccountsPage() {
                 }}
               >
                 <Play />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`批量设置 ${selected.length} 个已选账号的出口`}
+                pending={egressBindingPending}
+                disabled={selectionActionPending || selected.length === 0}
+                onClick={() => {
+                  setEgressBindingTarget(undefined)
+                  setEgressBindingOpen(true)
+                  void egress.refetch()
+                }}
+              >
+                <Network />
               </ToolbarAction>
               <ToolbarAction
                 label={
@@ -518,10 +580,7 @@ export function AccountsPage() {
             <LoadingState />
           ) : accounts.length ? (
             <>
-              <div
-                className='relative min-h-40'
-                aria-busy={showTableLoading}
-              >
+              <div className='relative min-h-40' aria-busy={showTableLoading}>
                 <Table rememberRowKey='monitor-accounts'>
                   <TableHeader>
                     <TableRow>
@@ -572,6 +631,7 @@ export function AccountsPage() {
                       <TableHead>监控判定</TableHead>
                       <TableHead>样本 / 信号</TableHead>
                       <TableHead>TPS</TableHead>
+                      <TableHead className='w-24'>额度</TableHead>
                       <TableHead>出口绑定</TableHead>
                       <TableHead className='text-right'>操作</TableHead>
                     </TableRow>
@@ -580,6 +640,14 @@ export function AccountsPage() {
                     {accounts.map((account) => {
                       const id = Number(account.id)
                       const assessment = account.assessment
+                      const accountLabel =
+                        account.name || account.email || `账号 ${id}`
+                      const secondaryAccountLabel =
+                        account.email &&
+                        account.email.trim().toLowerCase() !==
+                          accountLabel.trim().toLowerCase()
+                          ? `${account.email} · ID ${account.id}`
+                          : `ID ${account.id}`
                       return (
                         <TableRow key={account.id} rowId={id}>
                           <TableCell>
@@ -607,9 +675,9 @@ export function AccountsPage() {
                             />
                           </TableCell>
                           <TableCell>
-                            <div className='font-medium'>{account.name}</div>
+                            <div className='font-medium'>{accountLabel}</div>
                             <div className='max-w-64 truncate text-xs text-muted-foreground'>
-                              {account.email || `ID ${account.id}`}
+                              {secondaryAccountLabel}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -682,6 +750,9 @@ export function AccountsPage() {
                             <div className='text-xs text-muted-foreground'>
                               max {formatNumber(assessment.max_tps)}
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            <QuotaRemainingIndicator quota={account.quota} />
                           </TableCell>
                           <TableCell>
                             <EgressBindingIndicator
@@ -774,6 +845,91 @@ export function AccountsPage() {
           void client.invalidateQueries({ queryKey: ['runs'] })
         }}
       />
+      <Dialog
+        open={egressBindingOpen}
+        onOpenChange={(open) => {
+          if (egressBindingPending) return
+          setEgressBindingOpen(open)
+          if (!open) setEgressBindingTarget(undefined)
+        }}
+      >
+        <DialogContent className='sm:max-w-xl'>
+          <DialogHeader>
+            <DialogTitle>批量设置账号出口</DialogTitle>
+            <DialogDescription>
+              为已选 {selected.length} 个账号设置固定出口，或解除现有绑定。
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-4'>
+            <Select
+              value={egressBindingTarget}
+              onValueChange={setEgressBindingTarget}
+              disabled={egressBindingPending || egress.isFetching}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue
+                  placeholder={
+                    egress.isFetching ? '正在读取出口…' : '选择出口操作'
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {bindableEgress.map((node) => (
+                  <SelectItem key={node.id} value={`node:${node.id}`}>
+                    {node.name} · {node.assignedAccountCount ?? 0}
+                    {node.accountCapacity
+                      ? ` / ${node.accountCapacity}`
+                      : ' / 不限容量'}
+                    {node.probeStatus && node.probeStatus !== 'healthy'
+                      ? ` · ${node.probeStatus}`
+                      : ''}
+                  </SelectItem>
+                ))}
+                <SelectItem value='unbound'>解除出口绑定</SelectItem>
+              </SelectContent>
+            </Select>
+            {!egress.isFetching && !bindableEgress.length && (
+              <p className='text-sm text-amber-600 dark:text-amber-400'>
+                当前没有已启用且配置了代理的 grok_build 出口；仍可选择解除绑定。
+              </p>
+            )}
+            <div className='rounded-md border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground'>
+              绑定操作写入 manual，后续 grok2api
+              自动均衡不会迁移这些账号。正在执行探针或等待设置恢复的账号会跳过并保留选择。
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={egressBindingPending}
+              onClick={() => setEgressBindingOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type='button'
+              disabled={!egressBindingTarget || egressBindingPending}
+              onClick={() => {
+                const nodeId = egressBindingTarget?.startsWith('node:')
+                  ? Number(egressBindingTarget.slice(5))
+                  : null
+                egressBindingMutation.mutate({
+                  accountIds: selected,
+                  egressNodeId: nodeId,
+                })
+              }}
+            >
+              {egressBindingPending ? (
+                <Loader2 className='animate-spin' />
+              ) : (
+                <Network />
+              )}
+              确认设置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={batchAction != null}
         onOpenChange={(open) => {
@@ -783,8 +939,7 @@ export function AccountsPage() {
         desc={
           <div className='space-y-2'>
             <p>
-              将通过 grok2api
-              批量接口{batchActionLabel}当前选择中的
+              将通过 grok2api 批量接口{batchActionLabel}当前选择中的
               {batchAction === 'enable' ? '停用' : '启用'}账号；
               {batchAction === 'enable'
                 ? '启用后，这些账号会重新参与上游正常调度。'
@@ -903,7 +1058,7 @@ export function AccountsPage() {
                   egressNodeNames={egressNodeNames}
                   deletingSampleId={
                     deleteSampleMutation.isPending
-                      ? sampleToDelete?.id ?? null
+                      ? (sampleToDelete?.id ?? null)
                       : null
                   }
                   onDeleteSample={setSampleToDelete}
@@ -963,9 +1118,7 @@ export function AccountsPage() {
                 </div>
               </div>
             )}
-            <p>
-              该样本会被永久删除，并重新计算账号判定与所属任务的样本统计。
-            </p>
+            <p>该样本会被永久删除，并重新计算账号判定与所属任务的样本统计。</p>
             <p className='text-muted-foreground'>
               此操作只删除本地监控证据，不会修改上游账号。
             </p>
@@ -1161,7 +1314,10 @@ function RecentSamplesPanel({
                     {formatDate(sample.created_at)}
                   </span>
                 </div>
-                <div className='mt-2 truncate text-sm font-medium' title={target}>
+                <div
+                  className='mt-2 truncate text-sm font-medium'
+                  title={target}
+                >
                   {target}
                 </div>
                 <div className='mt-2 grid grid-cols-3 gap-2 text-xs tabular-nums'>
@@ -1239,11 +1395,7 @@ function SampleDetail({
                 onClick={onDelete}
                 aria-label='删除当前样本'
               >
-                {deleting ? (
-                  <Loader2 className='animate-spin' />
-                ) : (
-                  <Trash2 />
-                )}
+                {deleting ? <Loader2 className='animate-spin' /> : <Trash2 />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>删除样本</TooltipContent>
@@ -1272,10 +1424,7 @@ function SampleDetail({
           <SampleEvidence label='HTTP' value={sample.status_code || '—'} />
           <SampleEvidence label='Request ID' value={sample.request_id} />
           <SampleEvidence label='响应哈希' value={sample.response_sha256} />
-          <SampleEvidence
-            label='核验账号'
-            value={sample.verified_account_id}
-          />
+          <SampleEvidence label='核验账号' value={sample.verified_account_id} />
           <SampleEvidence
             label='目标出口'
             value={
@@ -1334,6 +1483,130 @@ function SampleDetail({
       </div>
     </div>
   )
+}
+
+function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
+  if (!quota || quota.type === 'unknown') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex h-7 w-20 items-center gap-1.5 text-xs text-muted-foreground'
+            tabIndex={0}
+            aria-label='额度尚未同步'
+          >
+            <CircleHelp className='size-4 shrink-0' />
+            待同步
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>grok2api 尚未提供可用的额度数据。</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  const usagePercent = Math.min(100, Math.max(0, quota.usagePercent || 0))
+  const hasQuotaRange =
+    quota.limitKnown ||
+    quota.limit > 0 ||
+    quota.unit === 'percent' ||
+    quota.status !== 'active'
+
+  if (!hasQuotaRange) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex h-7 w-20 items-center gap-1.5 text-xs text-muted-foreground'
+            tabIndex={0}
+            aria-label='额度总量未知'
+          >
+            <CircleHelp className='size-4 shrink-0' />
+            未估算
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className='max-w-72'>
+          已观测使用 {formatQuotaAmount(quota.used, quota.unit)}
+          ，但上游未提供额度总量。
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  const remainingPercent =
+    quota.status === 'waitingReset' ? 0 : Math.max(0, 100 - usagePercent)
+  const approximate = !quota.limitKnown && quota.type === 'free'
+  const displayValue = `${approximate ? '≈' : ''}${formatNumber(remainingPercent, 0)}%`
+  const Icon =
+    remainingPercent <= 0
+      ? BatteryWarning
+      : remainingPercent <= 25
+        ? BatteryLow
+        : remainingPercent <= 60
+          ? BatteryMedium
+          : BatteryFull
+  const tone =
+    remainingPercent <= 0
+      ? 'text-destructive'
+      : remainingPercent <= 25
+        ? 'text-amber-600 dark:text-amber-400'
+        : remainingPercent <= 60
+          ? 'text-sky-600 dark:text-sky-400'
+          : 'text-emerald-600 dark:text-emerald-400'
+  const recoveryAt = quota.nextProbeAt || quota.periodEnd
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            'inline-flex h-7 w-20 items-center gap-1.5 text-xs font-medium tabular-nums',
+            tone
+          )}
+          tabIndex={0}
+          aria-label={`额度剩余 ${displayValue}`}
+        >
+          <Icon className='size-4 shrink-0' />
+          {displayValue}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className='max-w-72 space-y-1'>
+        <div>额度剩余 {displayValue}</div>
+        {quota.limit > 0 && quota.unit !== 'percent' && (
+          <div className='text-muted-foreground'>
+            {approximate ? '估算剩余' : '剩余'}{' '}
+            {formatQuotaAmount(quota.remaining, quota.unit)} / 总量{' '}
+            {formatQuotaAmount(quota.limit, quota.unit)}
+          </div>
+        )}
+        <div className='text-muted-foreground'>
+          已使用 {formatNumber(usagePercent)}%
+          {quota.confirmed
+            ? ' · 上游确认'
+            : quota.observed
+              ? ' · 本地观测'
+              : approximate
+                ? ' · 估算'
+                : ''}
+        </div>
+        {recoveryAt && (
+          <div className='text-muted-foreground'>
+            {quota.status === 'waitingReset' ? '预计恢复' : '周期结束'}{' '}
+            {formatDate(recoveryAt)}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function formatQuotaAmount(
+  value: number,
+  unit: UpstreamQuota['unit']
+): string {
+  const digits = unit === 'credits' ? 2 : 0
+  const suffix =
+    unit === 'credits' ? ' credits' : unit === 'tokens' ? ' Token' : ''
+  return `${formatNumber(value, digits)}${suffix}`
 }
 
 function SampleListMetric({ label, value }: { label: string; value: string }) {

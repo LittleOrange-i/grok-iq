@@ -954,6 +954,42 @@ class ProbeRepository:
                 ).all()
             )
 
+    def active_egress_references(self) -> dict[str, set[int]]:
+        """Return node and current-account references that active runs still need."""
+
+        with self.database.session() as session:
+            values = session.execute(
+                select(
+                    ProbeRun.account_id,
+                    ProbeRun.proxy_targets,
+                    ProbeRun.original_egress_node_id,
+                ).where(
+                    or_(
+                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
+                        ProbeRun.account_restore_status.in_(
+                            BLOCKING_ACCOUNT_RESTORE_STATUSES
+                        ),
+                        ProbeRun.diagnostic_activation_active.is_(True),
+                    )
+                )
+            ).all()
+
+        node_ids: set[int] = set()
+        current_account_ids: set[int] = set()
+        for account_id, targets, original_node_id in values:
+            if int(original_node_id or 0) > 0:
+                node_ids.add(int(original_node_id))
+            for target in targets or []:
+                kind = str(target.get("kind") or "")
+                if kind == "egress" and int(target.get("id") or 0) > 0:
+                    node_ids.add(int(target["id"]))
+                elif kind == "current" and int(account_id or 0) > 0:
+                    current_account_ids.add(int(account_id))
+        return {
+            "nodeIds": node_ids,
+            "currentAccountIds": current_account_ids,
+        }
+
     def has_blocking_account_restore(
         self,
         *,

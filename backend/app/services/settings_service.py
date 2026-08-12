@@ -7,10 +7,26 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.cron import CronTrigger
 
-from app.core.config import Settings
+from app.core.config import (
+    DEFAULT_REGISTER_PROBE_PROFILE_IDS,
+    REGISTER_PROBE_EXECUTION_MODE,
+    REGISTER_PROBE_PROXY_TARGETS,
+    REGISTER_PROBE_ROUNDS,
+    Settings,
+)
 from app.persistence.settings_repository import SettingsRepository
 
-REGISTER_CURRENT_EGRESS_MIGRATION_KEY = "register_probe_current_egress_v1"
+REGISTER_FIXED_STRATEGY_MIGRATION_KEY = "register_probe_fixed_strategy_v2"
+
+
+def fixed_register_probe_strategy() -> dict[str, Any]:
+    return {
+        "register_probe_execution_mode": REGISTER_PROBE_EXECUTION_MODE,
+        "register_probe_rounds": REGISTER_PROBE_ROUNDS,
+        "register_probe_proxy_targets": [
+            dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
+        ],
+    }
 
 
 class RuntimeSettingsService:
@@ -23,28 +39,23 @@ class RuntimeSettingsService:
     def load(self) -> None:
         overrides = self.repository.load()
         if not self.repository.migration_applied(
-            REGISTER_CURRENT_EGRESS_MIGRATION_KEY
+            REGISTER_FIXED_STRATEGY_MIGRATION_KEY
         ):
-            targets = overrides.get("register_probe_proxy_targets")
-            if (
-                overrides.get("register_probe_execution_mode", "chat") == "chat"
-                and isinstance(targets, list)
-                and len(targets) == 1
-                and isinstance(targets[0], dict)
-                and targets[0].get("kind") == "direct"
+            migrated = {
+                "initial_probe_on_register": True,
+                **fixed_register_probe_strategy(),
+            }
+            profiles = overrides.get("register_probe_profile_ids")
+            if not isinstance(profiles, list) or not any(
+                str(profile or "").strip() for profile in profiles
             ):
-                overrides["register_probe_proxy_targets"] = [
-                    {"kind": "current", "id": None}
-                ]
-                self.repository.save(
-                    {
-                        "register_probe_proxy_targets": overrides[
-                            "register_probe_proxy_targets"
-                        ]
-                    }
+                migrated["register_probe_profile_ids"] = list(
+                    DEFAULT_REGISTER_PROBE_PROFILE_IDS
                 )
+            overrides.update(migrated)
+            self.repository.save(migrated)
             self.repository.mark_migration_applied(
-                REGISTER_CURRENT_EGRESS_MIGRATION_KEY
+                REGISTER_FIXED_STRATEGY_MIGRATION_KEY
             )
         if not overrides:
             return
@@ -52,7 +63,9 @@ class RuntimeSettingsService:
         self.settings.apply_runtime(candidate)
 
     def update(self, values: dict[str, Any]) -> list[str]:
-        changes = {key: value for key, value in values.items() if key in Settings.RUNTIME_FIELDS}
+        changes = {
+            key: value for key, value in values.items() if key in Settings.RUNTIME_FIELDS
+        }
         if not changes:
             return []
         candidate = self._validate(self.settings.model_dump() | changes)
@@ -63,7 +76,7 @@ class RuntimeSettingsService:
 
     @staticmethod
     def _validate(values: dict[str, Any]) -> Settings:
-        candidate = Settings.model_validate(values)
+        candidate = Settings.model_validate(values | fixed_register_probe_strategy())
         if candidate.degradation_tps >= candidate.strong_degradation_tps:
             raise ValueError("降智信号 TPS 下限必须小于强降智信号 TPS 下限")
         if candidate.probe_transient_retry_base_seconds > candidate.probe_transient_retry_max_seconds:

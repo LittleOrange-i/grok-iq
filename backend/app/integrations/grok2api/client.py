@@ -416,6 +416,53 @@ class Grok2APIClient:
         query = {"scope": "grok_build", "page": 1, "pageSize": 100} | params
         return await self.admin_request("GET", "/api/admin/v1/egress-nodes", params=query)
 
+    async def set_egress_nodes_enabled(
+        self,
+        node_ids: list[int],
+        enabled: bool,
+    ) -> dict[str, Any]:
+        return await self.admin_request(
+            "PATCH",
+            "/api/admin/v1/egress-nodes/batch",
+            json={"ids": [str(node_id) for node_id in node_ids], "enabled": enabled},
+        )
+
+    async def create_egress_node(
+        self,
+        *,
+        name: str,
+        proxy_url: str,
+        proxy_pool: bool,
+        account_capacity: int,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        return await self.admin_request(
+            "POST",
+            "/api/admin/v1/egress-nodes",
+            json={
+                "name": name,
+                "scope": "grok_build",
+                "enabled": enabled,
+                "proxyPool": proxy_pool,
+                "accountCapacity": account_capacity,
+                "proxyURL": proxy_url,
+                "userAgent": "",
+            },
+        )
+
+    async def delete_egress_nodes(self, node_ids: list[int]) -> dict[str, Any]:
+        return await self.admin_request(
+            "DELETE",
+            "/api/admin/v1/egress-nodes",
+            json={"ids": [str(node_id) for node_id in node_ids]},
+        )
+
+    async def test_egress_node(self, node_id: int) -> dict[str, Any]:
+        return await self.admin_request(
+            "POST",
+            f"/api/admin/v1/egress-nodes/{node_id}/test",
+        )
+
     async def set_account_enabled(self, account_id: int, enabled: bool) -> dict[str, Any]:
         return await self.admin_request(
             "PATCH", f"/api/admin/v1/accounts/{account_id}", json={"enabled": enabled}
@@ -572,19 +619,116 @@ class Grok2APIClient:
 
     async def set_account_egress(self, account_id: int, target: dict[str, Any]) -> None:
         if target.get("kind") == "direct":
-            await self.admin_request(
-                "DELETE",
-                "/api/admin/v1/egress-nodes/accounts",
-                json={"provider": "grok_build", "ids": [str(account_id)]},
+            updated = await self._set_accounts_egress_native(
+                [account_id],
+                None,
+                mode="manual",
             )
+            if updated != 1:
+                raise IntegrationError("grok2api 未解除账号出口绑定")
             return
         node_id = int(target.get("id") or 0)
         if node_id <= 0:
             raise IntegrationError("代理目标缺少有效的出口节点 ID")
-        await self.admin_request(
-            "POST",
-            f"/api/admin/v1/egress-nodes/{node_id}/accounts",
-            json={"provider": "grok_build", "ids": [str(account_id)], "mode": "manual"},
+        updated = await self._set_accounts_egress_native(
+            [account_id],
+            node_id,
+            mode="manual",
+        )
+        if updated != 1:
+            raise IntegrationError("grok2api 未更新账号出口绑定")
+
+    async def set_accounts_egress(
+        self,
+        account_ids: list[int],
+        node_id: int | None,
+        *,
+        mode: str = "manual",
+    ) -> AccountBatchUpdateResult:
+        """Bind or unbind accounts with per-account fallback for stale batches."""
+
+        if mode not in {"manual", "auto"}:
+            raise IntegrationError("账号出口绑定模式无效")
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
+        updated = 0
+        failures: list[AccountUpdateFailure] = []
+        for start in range(0, len(unique_ids), ACCOUNT_BATCH_UPDATE_SIZE):
+            batch = unique_ids[start : start + ACCOUNT_BATCH_UPDATE_SIZE]
+            try:
+                updated += await self._set_accounts_egress_native(
+                    batch,
+                    node_id,
+                    mode=mode,
+                )
+            except IntegrationError as exc:
+                if exc.status_code not in ACCOUNT_BATCH_FALLBACK_STATUSES:
+                    raise
+                logger.warning(
+                    "native egress batch update failed with HTTP %s; "
+                    "falling back to %s single-account updates",
+                    exc.status_code,
+                    len(batch),
+                )
+                fallback = await self._set_accounts_egress_individually(
+                    batch,
+                    node_id,
+                    mode=mode,
+                )
+                updated += fallback.updated
+                failures.extend(fallback.failures)
+        return AccountBatchUpdateResult(updated=updated, failures=tuple(failures))
+
+    async def _set_accounts_egress_native(
+        self,
+        account_ids: list[int],
+        node_id: int | None,
+        *,
+        mode: str,
+    ) -> int:
+        path = (
+            f"/api/admin/v1/egress-nodes/{node_id}/accounts"
+            if node_id is not None
+            else "/api/admin/v1/egress-nodes/accounts"
+        )
+        result = await self.admin_request(
+            "POST" if node_id is not None else "DELETE",
+            path,
+            json={
+                "provider": "grok_build",
+                "ids": [str(account_id) for account_id in account_ids],
+                "mode": mode,
+            },
+        )
+        return int(result.get("assigned") or 0)
+
+    async def _set_accounts_egress_individually(
+        self,
+        account_ids: list[int],
+        node_id: int | None,
+        *,
+        mode: str,
+    ) -> AccountBatchUpdateResult:
+        semaphore = asyncio.Semaphore(ACCOUNT_BATCH_FALLBACK_CONCURRENCY)
+
+        async def update(account_id: int) -> AccountUpdateFailure | None:
+            async with semaphore:
+                try:
+                    await self._set_accounts_egress_native(
+                        [account_id],
+                        node_id,
+                        mode=mode,
+                    )
+                except IntegrationError as exc:
+                    return AccountUpdateFailure(account_id=account_id, error=str(exc))
+                return None
+
+        results = await asyncio.gather(*(update(account_id) for account_id in account_ids))
+        failures = tuple(result for result in results if result is not None)
+        return AccountBatchUpdateResult(
+            updated=len(account_ids) - len(failures),
+            failures=failures,
         )
 
     async def restore_account_egress(
@@ -594,21 +738,19 @@ class Grok2APIClient:
         original_mode: str,
     ) -> None:
         if original_node_id:
-            await self.admin_request(
-                "POST",
-                f"/api/admin/v1/egress-nodes/{original_node_id}/accounts",
-                json={
-                    "provider": "grok_build",
-                    "ids": [str(account_id)],
-                    "mode": original_mode if original_mode in {"manual", "auto"} else "manual",
-                },
+            updated = await self._set_accounts_egress_native(
+                [account_id],
+                original_node_id,
+                mode=original_mode if original_mode in {"manual", "auto"} else "manual",
             )
         else:
-            await self.admin_request(
-                "DELETE",
-                "/api/admin/v1/egress-nodes/accounts",
-                json={"provider": "grok_build", "ids": [str(account_id)]},
+            updated = await self._set_accounts_egress_native(
+                [account_id],
+                None,
+                mode="manual",
             )
+        if updated != 1:
+            raise IntegrationError("grok2api 未恢复账号出口绑定")
 
     async def create_probe_route(
         self,

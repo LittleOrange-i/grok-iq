@@ -275,6 +275,82 @@ class AccountService:
             "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
         }
 
+    async def set_accounts_egress(
+        self,
+        *,
+        account_ids: list[int],
+        egress_node_id: int | None,
+    ) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
+        if not unique_ids:
+            raise ValueError("至少选择一个账号")
+        locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
+        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
+        update_result = (
+            await self.client.set_accounts_egress(
+                eligible_ids,
+                egress_node_id,
+                mode="manual",
+            )
+            if eligible_ids
+            else None
+        )
+        failures = list(update_result.failures) if update_result else []
+        return {
+            "requested": len(unique_ids),
+            "eligible": len(eligible_ids),
+            "updated": update_result.updated if update_result else 0,
+            "egressNodeId": egress_node_id,
+            "assignmentMode": "manual" if egress_node_id is not None else "",
+            "skippedAccountIds": sorted(locked_ids),
+            "failedAccountIds": sorted(failure.account_id for failure in failures),
+            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
+        }
+
+    async def ensure_account_egress(self, account: dict[str, Any]) -> dict[str, Any]:
+        """Pin one unbound webhook account to the least-loaded healthy egress."""
+
+        account_id = int(account.get("id") or 0)
+        if account_id <= 0:
+            raise ValueError("Webhook 账号缺少有效 ID")
+        if int(account.get("egressNodeId") or 0) > 0:
+            return account
+
+        payload = await self.client.list_egress_nodes(page=1, pageSize=500)
+        candidates: list[dict[str, Any]] = []
+        for node in payload.get("items", []):
+            capacity = int(node.get("accountCapacity") or 0)
+            assigned = int(node.get("assignedAccountCount") or 0)
+            if not bool(node.get("enabled")) or not bool(node.get("proxyConfigured")):
+                continue
+            if str(node.get("probeStatus") or "") != "healthy":
+                continue
+            if capacity > 0 and assigned >= capacity:
+                continue
+            candidates.append(node)
+        if not candidates:
+            raise ValueError("当前没有可用于自动绑定的健康 grok_build 出口")
+
+        selected = min(
+            candidates,
+            key=lambda node: (
+                int(node.get("assignedAccountCount") or 0),
+                int(node.get("id") or 0),
+            ),
+        )
+        node_id = int(selected.get("id") or 0)
+        if node_id <= 0:
+            raise ValueError("自动绑定选出的出口节点 ID 无效")
+        result = await self.client.set_accounts_egress(
+            [account_id],
+            node_id,
+            mode="manual",
+        )
+        if result.updated != 1:
+            reason = result.failures[0].error if result.failures else "上游未更新账号绑定"
+            raise ValueError(f"Webhook 新账号自动绑定出口失败：{reason}")
+        return await self.client.get_account(account_id)
+
     async def delete_upstream_account(self, account_id: int) -> dict[str, Any]:
         await self.client.delete_account(account_id)
         self.accounts.create_alert(

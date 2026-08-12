@@ -85,49 +85,71 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
         )
 
 
-def test_legacy_registration_target_migrates_to_current_egress(tmp_path: Path):
+def test_registration_strategy_migrates_to_fixed_current_egress_policy(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
     repository = SettingsRepository(database, settings)
     repository.save(
         {
-            "register_probe_execution_mode": "chat",
-            "register_probe_proxy_targets": [{"kind": "direct", "id": None}],
+            "initial_probe_on_register": False,
+            "register_probe_profile_ids": ["custom-profile"],
+            "register_probe_execution_mode": "quality_test",
+            "register_probe_rounds": 8,
+            "register_probe_proxy_targets": [{"kind": "egress", "id": 7}],
         }
     )
 
     service.load()
 
+    assert settings.initial_probe_on_register is True
+    assert settings.register_probe_profile_ids == ["custom-profile"]
+    assert settings.register_probe_execution_mode == "chat"
+    assert settings.register_probe_rounds == 3
     assert settings.register_probe_proxy_targets == [
         {"kind": "current", "id": None}
     ]
-    assert repository.load()["register_probe_proxy_targets"] == [
+    stored = repository.load()
+    assert stored["register_probe_profile_ids"] == ["custom-profile"]
+    assert stored["register_probe_execution_mode"] == "chat"
+    assert stored["register_probe_rounds"] == 3
+    assert stored["register_probe_proxy_targets"] == [
         {"kind": "current", "id": None}
     ]
 
+
+def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    service.load()
+
     service.update(
-        {"register_probe_proxy_targets": [{"kind": "direct", "id": None}]}
+        {
+            "register_probe_profile_ids": ["profile-a", "profile-b"],
+            "register_probe_execution_mode": "quality_test",
+            "register_probe_rounds": 9,
+            "register_probe_proxy_targets": [{"kind": "egress", "id": 7}],
+        }
     )
+
+    assert settings.register_probe_profile_ids == ["profile-a", "profile-b"]
+    assert settings.register_probe_execution_mode == "chat"
+    assert settings.register_probe_rounds == 3
+    assert settings.register_probe_proxy_targets == [
+        {"kind": "current", "id": None}
+    ]
+
     reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
     reloaded = RuntimeSettingsService(
         reloaded_settings, SettingsRepository(database, reloaded_settings)
     )
     reloaded.load()
-    assert reloaded_settings.register_probe_proxy_targets == [
-        {"kind": "direct", "id": None}
+    assert reloaded_settings.register_probe_profile_ids == [
+        "profile-a",
+        "profile-b",
     ]
-
-
-def test_runtime_settings_reject_mixed_current_and_diagnostic_targets(tmp_path: Path):
-    _, _, service = build_service(tmp_path)
-    with pytest.raises(ValueError, match="不能与诊断出口混用"):
-        service.update(
-            {
-                "register_probe_proxy_targets": [
-                    {"kind": "current", "id": None},
-                    {"kind": "egress", "id": 7},
-                ]
-            }
-        )
+    assert reloaded_settings.register_probe_execution_mode == "chat"
+    assert reloaded_settings.register_probe_rounds == 3
+    assert reloaded_settings.register_probe_proxy_targets == [
+        {"kind": "current", "id": None}
+    ]
 
 
 def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):

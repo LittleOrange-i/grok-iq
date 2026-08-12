@@ -4,7 +4,12 @@ import asyncio
 import logging
 from typing import Any
 
-from app.core.config import Settings
+from app.core.config import (
+    REGISTER_PROBE_EXECUTION_MODE,
+    REGISTER_PROBE_PROXY_TARGETS,
+    REGISTER_PROBE_ROUNDS,
+    Settings,
+)
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import QueueFullError, RunStateError
 from app.persistence.register_event_repository import RegisterEventRepository
@@ -115,13 +120,17 @@ class RegisterIntegrationService:
 
             run_ids: list[str] = []
             if self.settings.initial_probe_on_register:
+                if int(account.get("egressNodeId") or 0) <= 0:
+                    account = await self.account_service.ensure_account_egress(account)
                 result = await self.probes.enqueue_register_event(
                     source_event_id=event_id,
                     account=account,
                     profile_ids=self.settings.register_probe_profile_ids,
-                    execution_mode=self.settings.register_probe_execution_mode,
-                    rounds=self.settings.register_probe_rounds,
-                    proxy_targets=self.settings.register_probe_proxy_targets,
+                    execution_mode=REGISTER_PROBE_EXECUTION_MODE,
+                    rounds=REGISTER_PROBE_ROUNDS,
+                    proxy_targets=[
+                        dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
+                    ],
                 )
                 run_ids = list(result.get("runIds") or [])
             self.repository.complete(event_id, account_id, run_ids)

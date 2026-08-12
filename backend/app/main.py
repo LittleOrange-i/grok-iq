@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.analyzer import Thresholds
 from app.core.config import get_settings
@@ -21,12 +20,13 @@ from app.persistence.settings_repository import SettingsRepository
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
+from app.services.egress_service import EgressService
 from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
 from app.services.wechat_notification import WeChatAccountNotificationService
-from app.web.auth import AdminAuthenticationRequired
+from app.web.exception_handlers import install_exception_handlers
 from app.web.router import build_router
 
 settings = get_settings()
@@ -71,6 +71,7 @@ account_service = AccountService(
     accounts=account_repository,
     probes=probe_repository,
 )
+egress_service = EgressService(client=grok_client, probes=probe_repository)
 scheduler_service = SchedulerService(
     settings=settings,
     repository=probe_repository,
@@ -107,22 +108,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
-
-
-@app.exception_handler(AdminAuthenticationRequired)
-async def admin_authentication_required(
-    _: Request,
-    exc: AdminAuthenticationRequired,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=401,
-        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
-        content={
-            "detail": exc.message,
-            "code": "setup_required" if exc.setup_required else "authentication_required",
-            "setupRequired": exc.setup_required,
-        },
-    )
+install_exception_handlers(app)
 
 
 app.add_middleware(
@@ -139,6 +125,7 @@ app.include_router(
         account_repository=account_repository,
         probe_repository=probe_repository,
         account_service=account_service,
+        egress_service=egress_service,
         probe_manager=probe_manager,
         scheduler=scheduler_service,
         runtime_settings_service=runtime_settings_service,

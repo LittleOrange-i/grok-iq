@@ -87,6 +87,33 @@ export type Assessment = {
   recovery_guarded?: boolean
 }
 
+export type UpstreamQuota = {
+  type: 'free' | 'paid' | 'unknown'
+  source:
+    | 'unknown'
+    | 'upstreamBilling'
+    | 'upstreamExhaustion'
+    | 'responseModel'
+    | 'billingProfile'
+    | 'buildSuperEntitlement'
+  confidence: 'estimated' | 'observed' | 'confirmed' | ''
+  status: 'active' | 'waitingReset' | 'probing'
+  unit?: 'tokens' | 'credits' | 'percent'
+  used: number
+  limit: number
+  remaining: number
+  usagePercent: number
+  limitKnown: boolean
+  windowHours?: number
+  observed: boolean
+  confirmed: boolean
+  periodStart?: string
+  periodEnd?: string
+  exhaustedAt?: string
+  nextProbeAt?: string
+  lastConfirmedAt?: string
+}
+
 export type UpstreamAccount = {
   id: string
   name: string
@@ -101,6 +128,7 @@ export type UpstreamAccount = {
   egressNodeId?: string | null
   egressAssignmentMode?: string
   buildBotFlagged?: boolean
+  quota?: UpstreamQuota
   assessment: Assessment
 }
 
@@ -140,10 +168,52 @@ export type EgressNode = {
   enabled: boolean
   proxyConfigured: boolean
   proxyPool?: boolean
+  accountBoundProxy?: boolean
+  sourceId?: string
   health?: number
+  failureCount?: number
+  cooldownUntil?: string
+  lastError?: string
   probeStatus?: string
+  lastProbedAt?: string
+  probeLatencyMs?: number
+  probeError?: string
+  probeProvider?: string
   exitIp?: string
+  accountCapacity?: number
   assignedAccountCount?: number
+}
+
+export type EgressNodeUpdateResult = {
+  requested: number
+  eligible: number
+  updated: number
+  enabled: boolean
+  skippedNodeIds: number[]
+}
+
+export type EgressNodeDeleteResult = {
+  requested: number
+  eligible: number
+  deleted: number
+  skippedNodeIds: number[]
+}
+
+export type EgressNodeProbeResult = {
+  status: 'unknown' | 'healthy' | 'unhealthy'
+  testedAt: string
+  latencyMs: number
+  exitIp?: string
+  error?: string
+  probeProvider?: string
+}
+
+export type EgressNodeCreateInput = {
+  name: string
+  proxy_url: string
+  proxy_pool: boolean
+  account_capacity: number
+  enabled: boolean
 }
 
 export type ProbeProfile = {
@@ -503,7 +573,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       'quality-marker',
     ],
     registerProbeExecutionMode: value.registerProbeExecutionMode ?? 'chat',
-    registerProbeRounds: value.registerProbeRounds ?? 1,
+    registerProbeRounds: value.registerProbeRounds ?? 3,
     registerProbeProxyTargets: value.registerProbeProxyTargets ?? [
       { kind: 'current', id: null },
     ],
@@ -570,6 +640,17 @@ export type AccountBatchUpdateResult = {
   eligible: number
   updated: number
   enabled: boolean
+  skippedAccountIds: number[]
+  failedAccountIds: number[]
+  failures: { id: number; error: string }[]
+}
+
+export type AccountBatchEgressResult = {
+  requested: number
+  eligible: number
+  updated: number
+  egressNodeId: number | null
+  assignmentMode: 'manual' | ''
   skippedAccountIds: number[]
   failedAccountIds: number[]
   failures: { id: number; error: string }[]
@@ -836,6 +917,79 @@ async function requestAccountBatchWithRetry(
   throw new Error('批量更新请求异常结束')
 }
 
+async function updateAccountsEgress(
+  accountIds: number[],
+  egressNodeId: number | null
+): Promise<AccountBatchEgressResult> {
+  const uniqueIds = Array.from(
+    new Set(
+      accountIds.filter(
+        (accountId) => Number.isSafeInteger(accountId) && accountId > 0
+      )
+    )
+  )
+  const result: AccountBatchEgressResult = {
+    requested: 0,
+    eligible: 0,
+    updated: 0,
+    egressNodeId,
+    assignmentMode: egressNodeId == null ? '' : 'manual',
+    skippedAccountIds: [],
+    failedAccountIds: [],
+    failures: [],
+  }
+
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += ACCOUNT_BATCH_REQUEST_SIZE
+  ) {
+    const accountBatch = uniqueIds.slice(
+      start,
+      start + ACCOUNT_BATCH_REQUEST_SIZE
+    )
+    let batchResult: AccountBatchEgressResult | undefined
+    for (
+      let attempt = 1;
+      attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        batchResult = await request<AccountBatchEgressResult>(
+          '/accounts/batch/egress',
+          {
+            method: 'PUT',
+            body: JSON.stringify({
+              account_ids: accountBatch,
+              egress_node_id: egressNodeId,
+            }),
+          }
+        )
+        break
+      } catch (error) {
+        const retrying =
+          isRetryableAccountBatchError(error) &&
+          attempt < ACCOUNT_BATCH_NETWORK_ATTEMPTS
+        if (!retrying) throw error
+        await new Promise<void>((resolve) =>
+          globalThis.setTimeout(resolve, attempt * 250)
+        )
+      }
+    }
+    if (!batchResult) throw new Error('批量出口绑定请求异常结束')
+    result.requested += batchResult.requested
+    result.eligible += batchResult.eligible
+    result.updated += batchResult.updated
+    result.skippedAccountIds.push(...(batchResult.skippedAccountIds ?? []))
+    result.failedAccountIds.push(...(batchResult.failedAccountIds ?? []))
+    result.failures.push(...(batchResult.failures ?? []))
+  }
+
+  result.skippedAccountIds = Array.from(new Set(result.skippedAccountIds))
+  result.failedAccountIds = Array.from(new Set(result.failedAccountIds))
+  return result
+}
+
 function isRetryableAccountBatchError(error: unknown): boolean {
   return (
     error instanceof TypeError ||
@@ -1024,6 +1178,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   updateAccountsEnabled,
+  updateAccountsEgress,
   deleteAccounts,
   deleteAccount: (id: number) =>
     request<{ deleted: boolean; accountId: number }>(`/accounts/${id}`, {
@@ -1031,6 +1186,25 @@ export const api = {
     }),
   egress: (params: Record<string, string | number | undefined> = {}) =>
     request<Page<EgressNode>>(`/egress-nodes${query(params)}`),
+  createEgressNode: (body: EgressNodeCreateInput) =>
+    request<EgressNode>('/egress-nodes', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateEgressNodes: (nodeIds: number[], enabled: boolean) =>
+    request<EgressNodeUpdateResult>('/egress-nodes/batch', {
+      method: 'PATCH',
+      body: JSON.stringify({ node_ids: nodeIds, enabled }),
+    }),
+  deleteEgressNodes: (nodeIds: number[]) =>
+    request<EgressNodeDeleteResult>('/egress-nodes', {
+      method: 'DELETE',
+      body: JSON.stringify({ node_ids: nodeIds }),
+    }),
+  testEgressNode: (nodeId: number) =>
+    request<EgressNodeProbeResult>(`/egress-nodes/${nodeId}/test`, {
+      method: 'POST',
+    }),
   profiles: () => request<ProbeProfile[]>('/probe-profiles'),
   createProfile: (body: Record<string, unknown>) =>
     request<{ id: string }>('/probe-profiles', {

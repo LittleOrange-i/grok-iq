@@ -28,6 +28,7 @@ import { Route as ClerkAuthenticatedRouteRouteImport } from './routes/clerk/_aut
 import { Route as AuthenticatedAccountsIndexRouteImport } from './routes/_authenticated/accounts/index'
 import { Route as AuthenticatedAppsIndexRouteImport } from './routes/_authenticated/apps/index'
 import { Route as AuthenticatedChatsIndexRouteImport } from './routes/_authenticated/chats/index'
+import { Route as AuthenticatedEgressNodesIndexRouteImport } from './routes/_authenticated/egress-nodes/index'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedGuideIndexRouteImport } from './routes/_authenticated/guide/index'
 import { Route as AuthenticatedHelpCenterIndexRouteImport } from './routes/_authenticated/help-center/index'
@@ -141,6 +142,12 @@ const AuthenticatedChatsIndexRoute = AuthenticatedChatsIndexRouteImport.update({
   path: '/chats/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedEgressNodesIndexRoute =
+  AuthenticatedEgressNodesIndexRouteImport.update({
+    id: '/egress-nodes/',
+    path: '/egress-nodes/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
     id: '/errors/$error',
@@ -268,6 +275,7 @@ export interface FileRoutesByFullPath {
   '/accounts/': typeof AuthenticatedAccountsIndexRoute
   '/apps/': typeof AuthenticatedAppsIndexRoute
   '/chats/': typeof AuthenticatedChatsIndexRoute
+  '/egress-nodes/': typeof AuthenticatedEgressNodesIndexRoute
   '/guide/': typeof AuthenticatedGuideIndexRoute
   '/help-center/': typeof AuthenticatedHelpCenterIndexRoute
   '/plans/': typeof AuthenticatedPlansIndexRoute
@@ -303,6 +311,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AuthenticatedAccountsIndexRoute
   '/apps': typeof AuthenticatedAppsIndexRoute
   '/chats': typeof AuthenticatedChatsIndexRoute
+  '/egress-nodes': typeof AuthenticatedEgressNodesIndexRoute
   '/guide': typeof AuthenticatedGuideIndexRoute
   '/help-center': typeof AuthenticatedHelpCenterIndexRoute
   '/plans': typeof AuthenticatedPlansIndexRoute
@@ -343,6 +352,7 @@ export interface FileRoutesById {
   '/_authenticated/accounts/': typeof AuthenticatedAccountsIndexRoute
   '/_authenticated/apps/': typeof AuthenticatedAppsIndexRoute
   '/_authenticated/chats/': typeof AuthenticatedChatsIndexRoute
+  '/_authenticated/egress-nodes/': typeof AuthenticatedEgressNodesIndexRoute
   '/_authenticated/guide/': typeof AuthenticatedGuideIndexRoute
   '/_authenticated/help-center/': typeof AuthenticatedHelpCenterIndexRoute
   '/_authenticated/plans/': typeof AuthenticatedPlansIndexRoute
@@ -381,6 +391,7 @@ export interface FileRouteTypes {
     | '/accounts/'
     | '/apps/'
     | '/chats/'
+    | '/egress-nodes/'
     | '/guide/'
     | '/help-center/'
     | '/plans/'
@@ -416,6 +427,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/apps'
     | '/chats'
+    | '/egress-nodes'
     | '/guide'
     | '/help-center'
     | '/plans'
@@ -455,6 +467,7 @@ export interface FileRouteTypes {
     | '/_authenticated/accounts/'
     | '/_authenticated/apps/'
     | '/_authenticated/chats/'
+    | '/_authenticated/egress-nodes/'
     | '/_authenticated/guide/'
     | '/_authenticated/help-center/'
     | '/_authenticated/plans/'
@@ -617,6 +630,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChatsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/egress-nodes/': {
+      id: '/_authenticated/egress-nodes/'
+      path: '/egress-nodes'
+      fullPath: '/egress-nodes/'
+      preLoaderRoute: typeof AuthenticatedEgressNodesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/errors/$error': {
       id: '/_authenticated/errors/$error'
       path: '/errors/$error'
@@ -776,6 +796,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedAccountsIndexRoute: typeof AuthenticatedAccountsIndexRoute
   AuthenticatedAppsIndexRoute: typeof AuthenticatedAppsIndexRoute
   AuthenticatedChatsIndexRoute: typeof AuthenticatedChatsIndexRoute
+  AuthenticatedEgressNodesIndexRoute: typeof AuthenticatedEgressNodesIndexRoute
   AuthenticatedGuideIndexRoute: typeof AuthenticatedGuideIndexRoute
   AuthenticatedHelpCenterIndexRoute: typeof AuthenticatedHelpCenterIndexRoute
   AuthenticatedPlansIndexRoute: typeof AuthenticatedPlansIndexRoute
@@ -794,6 +815,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAccountsIndexRoute: AuthenticatedAccountsIndexRoute,
   AuthenticatedAppsIndexRoute: AuthenticatedAppsIndexRoute,
   AuthenticatedChatsIndexRoute: AuthenticatedChatsIndexRoute,
+  AuthenticatedEgressNodesIndexRoute: AuthenticatedEgressNodesIndexRoute,
   AuthenticatedGuideIndexRoute: AuthenticatedGuideIndexRoute,
   AuthenticatedHelpCenterIndexRoute: AuthenticatedHelpCenterIndexRoute,
   AuthenticatedPlansIndexRoute: AuthenticatedPlansIndexRoute,

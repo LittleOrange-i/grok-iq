@@ -3,6 +3,7 @@ import {
   BookOpenCheck,
   CalendarClock,
   Cpu,
+  Network,
   LayoutDashboard,
   MessageSquareText,
   Settings2,
@@ -44,6 +45,7 @@ export const sidebarData: SidebarData = {
       title: '系统',
       items: [
         { title: '判定说明', url: '/guide', icon: BookOpenCheck },
+        { title: '上游节点', url: '/egress-nodes', icon: Network },
         { title: '系统设置', url: '/settings', icon: Settings2 },
       ],
     },
