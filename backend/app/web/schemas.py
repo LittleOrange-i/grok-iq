@@ -283,7 +283,6 @@ class RuntimeSettingsInput(BaseModel):
     degradation_tps: float | None = Field(default=None, alias="degradationTps", gt=0)
     strong_degradation_tps: float | None = Field(default=None, alias="strongDegradationTps", gt=0)
     consecutive_anomalies: int | None = Field(default=None, alias="consecutiveAnomalies", ge=2, le=20)
-    cross_egress_min: int | None = Field(default=None, alias="crossEgressMin", ge=1, le=20)
     buffer_first_token_share: float | None = Field(
         default=None, alias="bufferFirstTokenShare", ge=0.5, le=0.99
     )

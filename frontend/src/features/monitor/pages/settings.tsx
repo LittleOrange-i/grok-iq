@@ -87,7 +87,6 @@ type SettingsForm = {
   degradationTps: number
   strongDegradationTps: number
   consecutiveAnomalies: number
-  crossEgressMin: number
   bufferFirstTokenShare: number
   minGenerationMs: number
   minimumOutputTokens: number
@@ -488,7 +487,8 @@ export function SettingsPage() {
                 }
               />
               <NumberField
-                label='重试最大等待（秒）'
+                label='本地重试最大等待（秒）'
+                hint='限制无上游提示时的指数退避；有效 Retry-After 或账号冷却时间优先'
                 value={form.probeTransientRetryMaxSeconds}
                 min={0.1}
                 max={300}
@@ -582,28 +582,22 @@ export function SettingsPage() {
 
           <SettingsCard
             icon={ShieldCheck}
-            title='跨出口风险与自动隔离'
-            description='同一账号的降智信号在多个出口重复出现后提升风险，可选择同步暂时停用上游账号。'
+            title='固定出口风险与自动隔离'
+            description='只使用账号当前固定出口的日常探针计算风险；人工诊断出口不计分，也不会触发自动隔离。'
           >
             <div className='grid gap-4 sm:grid-cols-2'>
               <NumberField
-                label='连续降智信号次数'
+                label='重复降智信号次数'
+                hint='连续达到该次数，或累计达到且占可测样本至少 50%，进入疑似降智'
                 value={form.consecutiveAnomalies}
                 min={2}
                 max={20}
                 onChange={(value) => set('consecutiveAnomalies', value)}
               />
-              <NumberField
-                label='最少不同出口数'
-                value={form.crossEgressMin}
-                min={1}
-                max={20}
-                onChange={(value) => set('crossEgressMin', value)}
-              />
               <div className='sm:col-span-2'>
                 <SwitchRow
                   label='自动暂时停用高风险账号'
-                  description='达到跨出口判定条件后，通过 grok2api 管理 API 传播停用状态'
+                  description='固定出口重复异常且强降智信号达到 2 次后，通过 grok2api 管理 API 传播停用状态'
                   checked={form.autoQuarantine}
                   onCheckedChange={(value) => set('autoQuarantine', value)}
                 />
@@ -880,7 +874,7 @@ export function SettingsPage() {
                             注册后创建探针
                           </div>
                           <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                            匹配上游账号后，先补齐账号的稳定出口绑定，再自动加入持久队列。
+                            匹配账号后先等待 15 秒模型权限传播，再补齐稳定出口并自动加入持久队列。
                           </p>
                         </div>
                       </div>
@@ -902,7 +896,7 @@ export function SettingsPage() {
                         )}
                       />
                       {form.initialProbeOnRegister
-                        ? '未绑定账号自动选择健康且负载最低的出口并固定，然后入队'
+                        ? '新账号就绪后自动固定健康出口；遇到冷却会按上游时间延后'
                         : '事件入库后结束，不创建探针任务'}
                     </div>
                   </div>
@@ -1038,7 +1032,6 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     degradationTps: settings.degradationTps,
     strongDegradationTps: settings.strongDegradationTps,
     consecutiveAnomalies: settings.consecutiveAnomalies,
-    crossEgressMin: settings.crossEgressMin,
     bufferFirstTokenShare: settings.bufferFirstTokenShare,
     minGenerationMs: settings.minGenerationMs,
     minimumOutputTokens: settings.minimumOutputTokens,
@@ -1078,7 +1071,6 @@ function buildSettingsPayload(
     degradationTps: form.degradationTps,
     strongDegradationTps: form.strongDegradationTps,
     consecutiveAnomalies: form.consecutiveAnomalies,
-    crossEgressMin: form.crossEgressMin,
     bufferFirstTokenShare: form.bufferFirstTokenShare,
     minGenerationMs: form.minGenerationMs,
     minimumOutputTokens: form.minimumOutputTokens,

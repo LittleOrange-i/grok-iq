@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import socket
 from collections.abc import Awaitable, Callable
@@ -143,7 +144,6 @@ class ProbeManager:
             buffer_first_token_share=self.settings.buffer_first_token_share,
             min_generation_ms=self.settings.min_generation_ms,
             consecutive_anomalies=self.settings.consecutive_anomalies,
-            cross_egress_min=self.settings.cross_egress_min,
         )
         self._desired_worker_concurrency = self.settings.probe_worker_concurrency
         if not self._started:
@@ -863,8 +863,10 @@ class ProbeManager:
             )
 
             completed = self.repository.completed_step_keys(run_id)
-            for round_number in range(1, int(run["rounds"]) + 1):
-                for target in run["proxy_targets"]:
+            total_rounds = int(run["rounds"])
+            targets = list(run["proxy_targets"])
+            for round_number in range(1, total_rounds + 1):
+                for target_index, target in enumerate(targets):
                     target_key = self._target_key(target)
                     if (round_number, target_key) in completed:
                         continue
@@ -947,8 +949,6 @@ class ProbeManager:
                     except AccountRestoreError:
                         raise
                     except Exception as exc:
-                        if isinstance(exc, IntegrationError) and exc.transient:
-                            await self._wait_for_account_cooldown(run_id, account_id, exc)
                         self.repository.add_sample(
                             run_id,
                             self._error_sample(
@@ -970,6 +970,15 @@ class ProbeManager:
                             str(getattr(exc, "error_code", "") or ""),
                             str(exc),
                         )
+                        has_next_step = (
+                            target_index + 1 < len(targets) or round_number < total_rounds
+                        )
+                        if (
+                            has_next_step
+                            and isinstance(exc, IntegrationError)
+                            and exc.transient
+                        ):
+                            await self._wait_for_account_cooldown(run_id, account_id, exc)
                     else:
                         classified = classify_sample(
                             SampleMetrics(
@@ -1227,12 +1236,14 @@ class ProbeManager:
         error: IntegrationError,
         attempt: int,
     ) -> float:
-        """Choose a bounded delay without confusing quota with availability.
+        """Choose a retry delay without confusing quota with availability.
 
         grok2api normally sends ``Retry-After`` for cooling responses.  The
         account-scoped 503 used by a pinned temporary route may not include
         that header, so consult the live account record as a second source and
-        finally use a small exponential fallback.
+        finally use a bounded exponential fallback.  The configured maximum
+        only caps that local fallback: an explicit upstream cooldown must be
+        honored even when it is longer.
         """
 
         base = max(
@@ -1243,23 +1254,22 @@ class ProbeManager:
             base,
             float(getattr(self.settings, "probe_transient_retry_max_seconds", 30.0)),
         )
-        delay = max(error.retry_after_seconds, base * (2**attempt))
-        try:
-            account = await self.client.get_account(account_id)
-            cooldown_until = account.get("cooldownUntil")
-            if cooldown_until:
-                value = str(cooldown_until).replace("Z", "+00:00")
-                remaining = (
-                    datetime.fromisoformat(value).astimezone(UTC) - datetime.now(UTC)
-                ).total_seconds()
-                if remaining > 0:
-                    delay = max(delay, remaining)
-        except Exception:
-            # The retry must still work when the admin endpoint is briefly
-            # unavailable; the fallback above is deliberately sufficient for
-            # grok2api's short network cooldown.
-            pass
-        return min(maximum, max(0.1, delay))
+        fallback = min(maximum, base * (2**attempt))
+        retry_after = self._positive_delay(error.retry_after_seconds)
+        account_cooldown = await self._account_cooldown_remaining(account_id)
+        delay = max(fallback, retry_after, account_cooldown)
+        logger.info(
+            "probe retry delay account=%s code=%s retry_after=%.1fs "
+            "account_cooldown=%.1fs local_fallback=%.1fs local_max=%.1fs chosen=%.1fs",
+            account_id,
+            error.error_code or "-",
+            retry_after,
+            account_cooldown,
+            fallback,
+            maximum,
+            delay,
+        )
+        return max(0.1, delay)
 
     async def _wait_for_account_cooldown(
         self,
@@ -1270,33 +1280,58 @@ class ProbeManager:
         """Let a final transient failure settle before the next target.
 
         A failed proxy can cool the account globally in grok2api.  Advancing
-        immediately to the next proxy would then produce a cascade of 429/503
-        samples that say nothing about that next proxy.  Only wait when the
-        upstream account endpoint reports a concrete future cooldown, and cap
-        it with the same retry ceiling used above.
+        immediately to the next proxy or round would then produce a cascade of
+        429/503 samples that say nothing about that next step.  Use either the
+        response's ``Retry-After`` value or the live account cooldown, whichever
+        is longer.
         """
 
         if not error.transient:
             return
+        retry_after = self._positive_delay(error.retry_after_seconds)
+        account_cooldown = await self._account_cooldown_remaining(account_id)
+        delay = max(retry_after, account_cooldown)
+        if delay <= 0:
+            return
+        logger.info(
+            "probe final transient cooldown run=%s account=%s code=%s "
+            "retry_after=%.1fs account_cooldown=%.1fs chosen=%.1fs",
+            run_id,
+            account_id,
+            error.error_code or "-",
+            retry_after,
+            account_cooldown,
+            delay,
+        )
+        await self._sleep_probe_delay(run_id, delay)
+
+    async def _account_cooldown_remaining(self, account_id: int) -> float:
+        """Return the upstream account's remaining cooldown when available."""
+
         try:
             account = await self.client.get_account(account_id)
             cooldown_until = account.get("cooldownUntil")
             if not cooldown_until:
-                return
-            remaining = (
-                datetime.fromisoformat(str(cooldown_until).replace("Z", "+00:00")).astimezone(UTC)
-                - datetime.now(UTC)
-            ).total_seconds()
-            maximum = max(
-                0.1,
-                float(getattr(self.settings, "probe_transient_retry_max_seconds", 30.0)),
-            )
-            if remaining > 0:
-                await self._sleep_probe_delay(run_id, min(maximum, remaining))
+                return 0.0
+            value = datetime.fromisoformat(str(cooldown_until).replace("Z", "+00:00"))
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            remaining = (value.astimezone(UTC) - datetime.now(UTC)).total_seconds()
+            return self._positive_delay(remaining)
         except asyncio.CancelledError:
             raise
         except Exception:
-            return
+            # Retry-After and the local fallback remain usable when the admin
+            # endpoint is briefly unavailable or returns an invalid timestamp.
+            return 0.0
+
+    @staticmethod
+    def _positive_delay(value: Any) -> float:
+        try:
+            delay = float(value or 0.0)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        return delay if math.isfinite(delay) and delay > 0 else 0.0
 
     async def _sleep_probe_delay(self, run_id: str, seconds: float) -> None:
         """Sleep in short slices so cancellation and shutdown stay responsive."""
@@ -1543,7 +1578,7 @@ class ProbeManager:
         quarantined = self.accounts.set_manual_status(
             account_id=account_id,
             status="quarantined",
-            note="连续多出口探针达到自动隔离阈值",
+            note="固定出口连续强异常达到自动隔离阈值",
             quarantine_until=until,
             previous_upstream_enabled=was_enabled,
             disabled_by_monitor=was_enabled,

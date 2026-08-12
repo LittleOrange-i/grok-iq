@@ -38,7 +38,6 @@ thresholds = Thresholds(
     buffer_first_token_share=settings.buffer_first_token_share,
     min_generation_ms=settings.min_generation_ms,
     consecutive_anomalies=settings.consecutive_anomalies,
-    cross_egress_min=settings.cross_egress_min,
 )
 
 database = Database(settings.database_path)
@@ -95,6 +94,10 @@ async def lifespan(_: FastAPI):
     chat_service.bootstrap()
     grok_client.reset_credentials()
     await probe_manager.reconfigure()
+    account_repository.migrate_fixed_egress_risk_formula(
+        probe_manager.thresholds,
+        settings.analysis_window_hours,
+    )
     await probe_manager.start()
     await register_integration_service.start()
     await scheduler_service.start()

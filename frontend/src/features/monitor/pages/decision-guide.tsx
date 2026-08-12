@@ -44,7 +44,6 @@ type Thresholds = Pick<
   | 'degradationTps'
   | 'strongDegradationTps'
   | 'consecutiveAnomalies'
-  | 'crossEgressMin'
   | 'bufferFirstTokenShare'
   | 'minGenerationMs'
   | 'minimumOutputTokens'
@@ -66,7 +65,6 @@ const defaultThresholds: Thresholds = {
   degradationTps: 150,
   strongDegradationTps: 500,
   consecutiveAnomalies: 3,
-  crossEgressMin: 2,
   bufferFirstTokenShare: 0.85,
   minGenerationMs: 250,
   minimumOutputTokens: 32,
@@ -207,9 +205,9 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
       value: `${thresholds.consecutiveAnomalies} 次`,
     },
     {
-      icon: Network,
-      label: '跨出口',
-      value: `${thresholds.crossEgressMin} 个`,
+      icon: ShieldAlert,
+      label: '高风险强信号',
+      value: '至少 2 次',
     },
     {
       icon: Timer,
@@ -244,15 +242,14 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
 }
 
 function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
-  const repeated = `累计降智信号数或最大连续信号数达到 ${thresholds.consecutiveAnomalies}`
-  const crossEgress = `降智信号覆盖至少 ${thresholds.crossEgressMin} 个实际出口`
+  const repeated = `固定出口连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 50% 以上`
 
   return (
     <section className='space-y-3'>
       <SectionHeading
         icon={ShieldCheck}
         title='账号监控状态'
-        description='按最近分析窗口内的已持久化样本聚合；风险分越高表示降智证据越多。'
+        description='只聚合账号当前固定出口样本；人工诊断出口保留在任务记录中，不参与风险分和自动隔离。'
       />
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         <RuleCard
@@ -270,7 +267,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           summary='已经记录到降智信号，但次数尚未达到疑似降智条件。'
           conditions={[
             '降智信号数大于 0',
-            `累计信号数和最大连续信号数均小于 ${thresholds.consecutiveAnomalies}`,
+            `未连续达到 ${thresholds.consecutiveAnomalies} 次，且累计信号未同时满足次数和 50% 占比`,
           ]}
           tone='warning'
         />
@@ -278,16 +275,16 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           icon={ShieldAlert}
           title='疑似降智'
           badge={<StatusBadge value='suspect' />}
-          summary='降智信号已经重复出现，需要使用多个实际出口进一步确认。'
-          conditions={[repeated, `尚未满足“${crossEgress}”`]}
+          summary='固定出口降智信号已经重复出现，但强证据还不足。'
+          conditions={[repeated, '强降智信号少于 2 次']}
           tone='danger'
         />
         <RuleCard
           icon={Zap}
           title='高风险'
           badge={<StatusBadge value='high_risk' />}
-          summary='重复降智信号已经在多个实际出口中复现。'
-          conditions={[repeated, crossEgress]}
+          summary='固定出口重复异常，并且已经出现至少 2 次强降智信号。'
+          conditions={[repeated, '强降智信号至少 2 次']}
           tone='danger'
         />
         <RuleCard
@@ -325,7 +322,6 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
     ['强信号', '强降智信号数 × 6', '最高 24'],
     ['持续高速', 'fast_risk 数 × 12', '最高 30'],
     ['标记缺失', 'marker_miss 数 × 16', '最高 32'],
-    ['跨出口', `降智信号覆盖 ≥ ${thresholds.crossEgressMin} 个出口`, '+16'],
     ['连续信号', '最大连续降智信号数 × 3', '最高 15'],
   ]
 
@@ -338,7 +334,7 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
         </CardTitle>
         <CardDescription>
           各项相加后封顶 100 分；“观察”最低显示 15 分，“疑似降智”最低显示 50
-          分。
+          分，“高风险”最低显示 75 分。诊断出口样本不参与计算。
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -731,7 +727,7 @@ function UpstreamStatusRules() {
           conditions={[
             '常见于前一个网络失败触发账号短冷却、账号被停用、鉴权状态变化或路由范围不匹配',
             '错误码 client_key_account_scope_unavailable',
-            '按设置执行有界退避重试，不记录降智信号',
+            '无上游等待提示时按设置退避重试，不记录降智信号',
           ]}
           tone='warning'
         />
@@ -742,7 +738,8 @@ function UpstreamStatusRules() {
           summary='上游账号仍有额度，但 grok2api 因最近失败暂时不再选择它。'
           conditions={[
             '错误码 upstream_cooling 或 upstream_model_cooling',
-            '优先使用 Retry-After，任务详情会显示重试次数',
+            '有效 Retry-After 或账号冷却时间优先，不受本地退避上限截断',
+            '最终仍在冷却时，下一轮会等待冷却结束再开始',
             '冷却错误不参与降智判定',
           ]}
           tone='warning'

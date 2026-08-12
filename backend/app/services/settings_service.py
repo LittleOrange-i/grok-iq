@@ -192,7 +192,6 @@ class RuntimeSettingsService:
             "degradationTps": s.degradation_tps,
             "strongDegradationTps": s.strong_degradation_tps,
             "consecutiveAnomalies": s.consecutive_anomalies,
-            "crossEgressMin": s.cross_egress_min,
             "bufferFirstTokenShare": s.buffer_first_token_share,
             "minGenerationMs": s.min_generation_ms,
             "minimumOutputTokens": s.minimum_output_tokens,

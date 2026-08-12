@@ -10,10 +10,18 @@ from app.analyzer import Thresholds, maximum_anomaly_streak, risk_status
 from app.core.clock import ensure_utc, utc_now
 
 from .database import Database
-from .models import AccountAssessment, Alert, ProbeSample, model_dict
+from .models import (
+    AccountAssessment,
+    Alert,
+    AppSetting,
+    MetadataRow,
+    ProbeSample,
+    model_dict,
+)
 
 ANOMALY_NAMES = {"elevated", "buffered_soft", "buffered_hard", "fast_risk", "marker_miss"}
 HARD_ANOMALY_NAMES = {"buffered_hard", "fast_risk", "marker_miss"}
+FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
 
 
 class AccountRepository:
@@ -43,6 +51,34 @@ class AccountRepository:
             ).all()
             return [model_dict(value) for value in values]
 
+    def migrate_fixed_egress_risk_formula(
+        self,
+        thresholds: Thresholds,
+        window_hours: int,
+    ) -> int:
+        """Recalculate persisted verdicts once after replacing cross-egress scoring."""
+
+        with self.database.session() as session:
+            if session.get(MetadataRow, FIXED_EGRESS_RISK_MIGRATION_KEY) is not None:
+                return 0
+            account_ids = list(session.scalars(select(AccountAssessment.account_id)).all())
+
+        for account_id in account_ids:
+            self.recalculate(account_id, thresholds, window_hours)
+
+        with self.database.transaction() as session:
+            if session.get(MetadataRow, FIXED_EGRESS_RISK_MIGRATION_KEY) is None:
+                session.add(
+                    MetadataRow(
+                        key=FIXED_EGRESS_RISK_MIGRATION_KEY,
+                        value=utc_now().isoformat(),
+                    )
+                )
+            legacy_cross_egress = session.get(AppSetting, "cross_egress_min")
+            if legacy_cross_egress is not None:
+                session.delete(legacy_cross_egress)
+        return len(account_ids)
+
     def risky_account_ids(self) -> set[int]:
         with self.database.session() as session:
             return set(
@@ -60,7 +96,11 @@ class AccountRepository:
         with self.database.transaction() as session:
             rows = session.scalars(
                 select(ProbeSample)
-                .where(ProbeSample.account_id == account_id, ProbeSample.created_at >= cutoff)
+                .where(
+                    ProbeSample.account_id == account_id,
+                    ProbeSample.created_at >= cutoff,
+                    ProbeSample.target_kind == "current",
+                )
                 .order_by(ProbeSample.created_at.asc(), ProbeSample.id.asc())
             ).all()
             anomalies = [row for row in rows if row.classification in ANOMALY_NAMES]
@@ -75,7 +115,6 @@ class AccountRepository:
                 hard_count=len(hard),
                 fast_count=len(fast),
                 marker_miss_count=len(marker),
-                distinct_egress_count=egress_count,
                 anomaly_streak=streak,
                 sample_count=len(measurable),
                 thresholds=thresholds,
@@ -89,6 +128,19 @@ class AccountRepository:
                 quarantine_until is None or quarantine_until > utc_now()
             ):
                 status = "quarantined"
+            elif str(assessment.manual_note or "").startswith("registration:"):
+                # Registration risk is independent evidence supplied by the
+                # linked registration service and must survive probe scoring.
+                status = "high_risk"
+                score = max(score, 85.0)
+                reasons = list(
+                    dict.fromkeys(
+                        [
+                            *(assessment.risk_reasons or []),
+                            *reasons,
+                        ]
+                    )
+                )
             latest = rows[-1] if rows else None
             latest_measurable = measurable[-1] if measurable else None
             assessment.monitor_status = status
@@ -166,7 +218,7 @@ class AccountRepository:
                 session.add(assessment)
             reason = f"grok-register 报告 bot_risk/bfs={bfs}"
             assessment.monitor_status = "high_risk"
-            assessment.risk_score = max(assessment.risk_score, 85)
+            assessment.risk_score = max(float(assessment.risk_score or 0), 85.0)
             assessment.risk_reasons = list(dict.fromkeys([*(assessment.risk_reasons or []), reason]))
             assessment.manual_note = f"registration:{registration_id}"
             assessment.updated_at = utc_now()

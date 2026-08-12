@@ -531,7 +531,7 @@ export function RunsPage() {
     <Page>
       <PageHeader
         title='任务中心'
-        description='Cron 和手动探针共用持久队列；支持进度查看、批量重测、取消、重试与删除。'
+        description='Cron、注册联动和手动探针共用持久队列；支持进度查看、批量重测、取消、重试与删除。'
         actions={
           <>
             <ActionToolbar label='任务列表操作'>
@@ -1019,6 +1019,12 @@ function RunRow({
     ? Math.round((run.completed_steps / run.total_steps) * 100)
     : 0
   const restoreBlocked = accountRestoreNeedsAttention(run)
+  const accountLabel =
+    run.account_name || run.account_email || `账号 ${run.account_id}`
+  const accountEmail = run.account_email.trim()
+  const showAccountEmail =
+    accountEmail.length > 0 &&
+    accountEmail.toLocaleLowerCase() !== accountLabel.trim().toLocaleLowerCase()
   return (
     <TableRow rowId={run.id}>
       <TableCell>
@@ -1030,21 +1036,20 @@ function RunRow({
         />
       </TableCell>
       <TableCell>
-        <div className='font-medium'>
-          {run.account_name || `账号 ${run.account_id}`}
-        </div>
+        <div className='font-medium'>{accountLabel}</div>
         <div className='max-w-64 truncate text-xs text-muted-foreground'>
-          {run.account_email ? `${run.account_email} · ` : ''}ID{' '}
-          {run.account_id}
+          {showAccountEmail ? `${accountEmail} · ` : ''}ID {run.account_id}
         </div>
       </TableCell>
       <TableCell>
         <Badge variant={run.trigger === 'cron' ? 'info' : 'secondary'}>
           {run.trigger === 'cron'
             ? 'Cron'
-            : run.trigger === 'retry'
-              ? '重试'
-              : '手动'}
+            : run.trigger === 'register'
+              ? '注册联动'
+              : run.trigger === 'retry'
+                ? '重试'
+                : '手动'}
         </Badge>
       </TableCell>
       <TableCell>

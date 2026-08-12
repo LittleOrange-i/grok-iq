@@ -84,8 +84,9 @@ class Settings(BaseSettings):
     probe_step_delay_seconds: float = Field(default=0.6, ge=0, le=60)
     probe_current_egress_interval_seconds: float = Field(default=10.0, ge=0, le=300)
     # A failed proxy can put the pinned account into grok2api's short health
-    # cooldown.  Probe retries are bounded and independently configurable so a
-    # short Cron interval cannot create a retry storm.
+    # cooldown.  Local exponential retries are bounded and independently
+    # configurable so a short Cron interval cannot create a retry storm.  An
+    # explicit upstream Retry-After or account cooldown remains authoritative.
     probe_transient_retry_attempts: int = Field(default=2, ge=0, le=5)
     probe_transient_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=60)
     probe_transient_retry_max_seconds: float = Field(default=30.0, ge=0.1, le=300)
@@ -96,7 +97,6 @@ class Settings(BaseSettings):
     degradation_tps: float = Field(default=150, gt=0)
     strong_degradation_tps: float = Field(default=500, gt=0)
     consecutive_anomalies: int = Field(default=3, ge=2, le=20)
-    cross_egress_min: int = Field(default=2, ge=1, le=20)
     buffer_first_token_share: float = Field(default=0.85, ge=0.5, le=0.99)
     min_generation_ms: int = Field(default=250, ge=1, le=60_000)
     minimum_output_tokens: int = Field(default=32, ge=1, le=4096)
@@ -139,7 +139,6 @@ class Settings(BaseSettings):
         "degradation_tps",
         "strong_degradation_tps",
         "consecutive_anomalies",
-        "cross_egress_min",
         "buffer_first_token_share",
         "min_generation_ms",
         "minimum_output_tokens",

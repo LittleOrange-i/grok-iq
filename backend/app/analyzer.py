@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+CUMULATIVE_ANOMALY_RATE = 0.5
+
 
 @dataclass(slots=True, frozen=True)
 class Thresholds:
@@ -12,7 +14,6 @@ class Thresholds:
     buffer_first_token_share: float = 0.85
     min_generation_ms: int = 250
     consecutive_anomalies: int = 3
-    cross_egress_min: int = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -85,18 +86,25 @@ def risk_status(
     hard_count: int,
     fast_count: int,
     marker_miss_count: int,
-    distinct_egress_count: int,
     anomaly_streak: int,
     sample_count: int,
     thresholds: Thresholds,
 ) -> tuple[str, float, list[str]]:
     reasons: list[str] = []
-    cross_egress = distinct_egress_count >= thresholds.cross_egress_min
-    repeated = max(anomaly_count, anomaly_streak) >= thresholds.consecutive_anomalies
-    if repeated:
-        reasons.append(f"连续或累计降智信号达到 {thresholds.consecutive_anomalies} 次")
-    if cross_egress:
-        reasons.append(f"降智信号覆盖 {distinct_egress_count} 个出口")
+    anomaly_rate = anomaly_count / sample_count if sample_count else 0.0
+    consecutive = anomaly_streak >= thresholds.consecutive_anomalies
+    cumulative = (
+        anomaly_count >= thresholds.consecutive_anomalies
+        and anomaly_rate >= CUMULATIVE_ANOMALY_RATE
+    )
+    repeated = consecutive or cumulative
+    strong_repeated = repeated and hard_count >= 2
+    if consecutive:
+        reasons.append(f"固定出口连续降智信号达到 {thresholds.consecutive_anomalies} 次")
+    elif cumulative:
+        reasons.append(
+            f"固定出口降智信号占比 {anomaly_count}/{sample_count}，达到 50%"
+        )
     if fast_count:
         reasons.append(f"持续生成型高速样本 {fast_count} 次")
     if marker_miss_count:
@@ -104,23 +112,17 @@ def risk_status(
     if hard_count:
         reasons.append(f"强降智信号 {hard_count} 次")
 
-    anomaly_rate = anomaly_count / sample_count if sample_count else 0.0
     score = min(
         100.0,
         anomaly_rate * 30
         + min(hard_count * 6, 24)
         + min(fast_count * 12, 30)
         + min(marker_miss_count * 16, 32)
-        + (16 if cross_egress else 0)
         + min(anomaly_streak * 3, 15),
     )
 
-    if repeated and cross_egress:
-        return "high_risk", round(score, 1), reasons
-    # Repeated anomalies already indicate an account-level problem even when
-    # grok2api happened to schedule every request through the same egress.
-    # Cross-egress confirmation remains required for the high-risk state that
-    # can trigger automatic quarantine.
+    if strong_repeated:
+        return "high_risk", round(max(score, 75.0), 1), reasons
     if repeated:
         return "suspect", round(max(score, 50.0), 1), reasons
     if anomaly_count:

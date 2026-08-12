@@ -195,7 +195,7 @@ class WeChatAccountNotificationService:
             "risk_score": 86.5,
             "latest_tps": 628.4,
             "avg_tps": 412.7,
-            "risk_reasons": ["连续异常达到阈值", "异常覆盖多个出口"],
+            "risk_reasons": ["固定出口连续异常达到阈值", "强降智信号达到 2 次"],
             "updated_at": app_now(),
         }
         result = await self.client.send_to_recipient(

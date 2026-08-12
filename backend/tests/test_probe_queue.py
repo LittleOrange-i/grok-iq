@@ -10,9 +10,12 @@ from sqlalchemy import delete, inspect
 from app.analyzer import Thresholds
 from app.core.config import Settings
 from app.integrations.grok2api.client import ChatProbeResult, IntegrationError
-from app.persistence.account_repository import AccountRepository
+from app.persistence.account_repository import (
+    FIXED_EGRESS_RISK_MIGRATION_KEY,
+    AccountRepository,
+)
 from app.persistence.database import Database
-from app.persistence.models import MetadataRow, ProbeDurationEstimate
+from app.persistence.models import AppSetting, MetadataRow, ProbeDurationEstimate
 from app.persistence.probe_repository import (
     PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
     SAFE_CURRENT_EGRESS_MIGRATION_KEY,
@@ -85,6 +88,121 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
     assert "account_snapshots" not in tables
     assert "egress_mirrors" not in tables
     assert "egress_snapshots" not in tables
+
+
+def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    repository.seed_defaults()
+
+    def add_anomaly(target: dict[str, Any], round_number: int) -> None:
+        run_id = repository.create_run(
+            account_id=10,
+            account_name="account-10",
+            account_email="",
+            profile_id="quality-marker",
+            rounds=3,
+            proxy_targets=[target],
+            trigger="manual",
+            priority=100,
+            queue_limit=20,
+        )
+        repository.add_sample(
+            run_id,
+            {
+                "round_number": round_number,
+                "target_key": (
+                    "current"
+                    if target["kind"] == "current"
+                    else f"egress:{target['id']}"
+                ),
+                "target_kind": target["kind"],
+                "egress_node_id": target.get("id") or 7,
+                "egress_name": "test",
+                "status": "done",
+                "status_code": 200,
+                "output_tokens": 100,
+                "reasoning_tokens": 0,
+                "visible_tokens": 100,
+                "chunk_count": 2,
+                "first_token_ms": 1000,
+                "duration_ms": 1100,
+                "generation_ms": 100,
+                "first_token_share": 0.9,
+                "tps": 1000,
+                "expected_matched": True,
+                "classification": "buffered_hard",
+                "severity": 2,
+                "error": "",
+            },
+        )
+        repository.finish_run(run_id)
+
+    for round_number in range(1, 4):
+        add_anomaly(
+            {"kind": "egress", "id": round_number, "name": f"诊断出口 {round_number}"},
+            round_number,
+        )
+
+    accounts = AccountRepository(database)
+    diagnostic_only = accounts.recalculate(10, Thresholds(), 168)
+    assert diagnostic_only["monitor_status"] == "healthy"
+    assert diagnostic_only["risk_score"] == 0
+    assert diagnostic_only["sample_count"] == 0
+    assert diagnostic_only["anomaly_count"] == 0
+
+    for round_number in range(1, 4):
+        add_anomaly(
+            {"kind": "current", "id": None, "name": "账号当前出口"},
+            round_number,
+        )
+
+    fixed_egress = accounts.recalculate(10, Thresholds(), 168)
+    assert fixed_egress["monitor_status"] == "high_risk"
+    assert fixed_egress["risk_score"] >= 75
+    assert fixed_egress["sample_count"] == 3
+    assert fixed_egress["anomaly_count"] == 3
+    assert fixed_egress["distinct_egress_count"] == 1
+
+
+def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
+    tmp_path: Path,
+):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    accounts = AccountRepository(database)
+    accounts.set_manual_status(account_id=10, status="high_risk", note="legacy")
+    with database.transaction() as session:
+        session.add(AppSetting(key="cross_egress_min", value=2))
+
+    assert accounts.migrate_fixed_egress_risk_formula(Thresholds(), 168) == 1
+    migrated = accounts.get_assessment(10)
+    assert migrated is not None
+    assert migrated["monitor_status"] == "healthy"
+    assert migrated["risk_score"] == 0
+
+    assert accounts.migrate_fixed_egress_risk_formula(Thresholds(), 168) == 0
+    with database.session() as session:
+        assert session.get(MetadataRow, FIXED_EGRESS_RISK_MIGRATION_KEY) is not None
+        assert session.get(AppSetting, "cross_egress_min") is None
+
+
+def test_probe_recalculation_preserves_registration_risk(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    accounts = AccountRepository(database)
+    accounts.mark_registration_risk(
+        account_id=10,
+        bfs="high",
+        registration_id="registration-10",
+    )
+
+    result = accounts.recalculate(10, Thresholds(), 168)
+
+    assert result["monitor_status"] == "high_risk"
+    assert result["risk_score"] >= 85
+    assert any("grok-register" in reason for reason in result["risk_reasons"])
 
 
 def test_same_account_runs_are_claimed_serially(repository: ProbeRepository):
@@ -640,6 +758,70 @@ async def test_transient_scheduler_error_is_retried_as_one_successful_sample(tmp
         assert sample["usage"]["probeAttempts"] == 2
     finally:
         await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_delay_honors_retry_after_beyond_local_max(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    client = FakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "monitor.db",
+            scheduler_enabled=False,
+            probe_transient_retry_base_seconds=5,
+            probe_transient_retry_max_seconds=30,
+        ),
+        repository=ProbeRepository(database),
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+
+    delay = await manager._transient_retry_delay(
+        account_id=10,
+        error=IntegrationError(
+            "model cooling",
+            status_code=429,
+            error_code="upstream_model_cooling",
+            retry_after_seconds=265,
+        ),
+        attempt=0,
+    )
+
+    assert delay == 265
+
+
+@pytest.mark.asyncio
+async def test_final_cooling_error_delays_the_next_round_by_retry_after(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    client = FakeGrokClient()
+    manager = ProbeManager(
+        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        repository=ProbeRepository(database),
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    waits: list[tuple[str, float]] = []
+
+    async def record_wait(run_id: str, seconds: float) -> None:
+        waits.append((run_id, seconds))
+
+    manager._sleep_probe_delay = record_wait  # type: ignore[method-assign]
+    await manager._wait_for_account_cooldown(
+        "run-cooling",
+        10,
+        IntegrationError(
+            "model still cooling",
+            status_code=429,
+            error_code="upstream_model_cooling",
+            retry_after_seconds=144,
+        ),
+    )
+
+    assert waits == [("run-cooling", 144)]
 
 
 @pytest.mark.asyncio

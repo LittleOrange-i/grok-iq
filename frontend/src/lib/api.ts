@@ -477,7 +477,6 @@ export type RuntimeSettings = {
   degradationTps: number
   strongDegradationTps: number
   consecutiveAnomalies: number
-  crossEgressMin: number
   bufferFirstTokenShare: number
   minGenerationMs: number
   minimumOutputTokens: number
@@ -534,7 +533,6 @@ export type RuntimeSettingsUpdate = Partial<
     | 'degradationTps'
     | 'strongDegradationTps'
     | 'consecutiveAnomalies'
-    | 'crossEgressMin'
     | 'bufferFirstTokenShare'
     | 'minGenerationMs'
     | 'minimumOutputTokens'

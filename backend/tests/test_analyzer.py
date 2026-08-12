@@ -51,45 +51,58 @@ def test_lower_tps_interval_records_a_degradation_signal():
     assert result.hard is False
 
 
-def test_cross_egress_repeated_signals_become_high_risk():
+def test_repeated_strong_signals_become_high_risk():
     status, score, reasons = risk_status(
         anomaly_count=5,
         hard_count=4,
         fast_count=2,
         marker_miss_count=0,
-        distinct_egress_count=3,
         anomaly_streak=3,
         sample_count=8,
         thresholds=Thresholds(),
     )
     assert status == "high_risk"
-    assert score >= 50
-    assert any("出口" in reason for reason in reasons)
+    assert score >= 75
+    assert any("固定出口" in reason for reason in reasons)
 
 
-def test_cross_egress_does_not_require_strong_signal():
+def test_repeated_soft_signals_remain_suspect():
     status, _, _ = risk_status(
         anomaly_count=3,
         hard_count=0,
         fast_count=0,
         marker_miss_count=0,
-        distinct_egress_count=2,
         anomaly_streak=3,
         sample_count=3,
         thresholds=Thresholds(),
     )
-    assert status == "high_risk"
+    assert status == "suspect"
 
 
-def test_repeated_single_egress_anomalies_become_suspect():
-    status, _, _ = risk_status(
-        anomaly_count=8,
-        hard_count=8,
-        fast_count=4,
+def test_sparse_anomalies_do_not_become_suspect_from_count_alone():
+    status, score, _ = risk_status(
+        anomaly_count=3,
+        hard_count=0,
+        fast_count=0,
         marker_miss_count=0,
-        distinct_egress_count=1,
-        anomaly_streak=8,
+        anomaly_streak=1,
         sample_count=10,
-        thresholds=Thresholds(cross_egress_min=2),
+        thresholds=Thresholds(),
+    )
+    assert status == "watch"
+    assert score >= 15
+
+
+def test_cumulative_majority_of_soft_signals_becomes_suspect():
+    status, score, reasons = risk_status(
+        anomaly_count=3,
+        hard_count=0,
+        fast_count=0,
+        marker_miss_count=0,
+        anomaly_streak=1,
+        sample_count=5,
+        thresholds=Thresholds(),
     )
     assert status == "suspect"
+    assert score >= 50
+    assert any("达到 50%" in reason for reason in reasons)
