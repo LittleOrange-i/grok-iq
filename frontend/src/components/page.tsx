@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode, type UIEvent } from 'react'
 import { Loader2, PackageOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { InfoTooltip } from '@/components/info-tooltip'
@@ -10,9 +10,35 @@ export function Page({
   children: ReactNode
   className?: string
 }) {
+  const hideScrollbarTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (hideScrollbarTimer.current != null) {
+        window.clearTimeout(hideScrollbarTimer.current)
+      }
+    },
+    []
+  )
+
+  const revealScrollbar = (event: UIEvent<HTMLDivElement>) => {
+    const container = event.currentTarget
+    container.dataset.scrollbarVisible = 'true'
+    if (hideScrollbarTimer.current != null) {
+      window.clearTimeout(hideScrollbarTimer.current)
+    }
+    hideScrollbarTimer.current = window.setTimeout(() => {
+      container.dataset.scrollbarVisible = 'false'
+      hideScrollbarTimer.current = null
+    }, 900)
+  }
+
   return (
     <div
-      className={`mx-auto h-full min-h-0 w-full max-w-[1600px] space-y-6 overflow-y-auto p-4 md:p-6 ${className}`}
+      data-auto-hide-scrollbar
+      data-scrollbar-visible='false'
+      onScroll={revealScrollbar}
+      className={`mx-auto h-full min-h-0 auto-hide-scrollbar w-full max-w-[1600px] space-y-6 overflow-y-auto p-4 md:p-6 ${className}`}
     >
       {children}
     </div>
