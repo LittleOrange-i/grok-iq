@@ -370,6 +370,7 @@ export function PlansPage() {
       <PageHeader
         title='Cron 调度'
         description='集中管理探针计划、系统 Cron 设置和每次调度调用记录。'
+        descriptionAsHint
         actions={
           activeView === 'plans' ? (
             <>

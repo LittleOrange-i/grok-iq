@@ -54,6 +54,7 @@ import {
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
+import { InfoTooltip } from '@/components/info-tooltip'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { ServerPagination } from '@/components/server-pagination'
 import { Switch } from '@/components/ui/switch'
@@ -203,6 +204,7 @@ export function EgressNodesPage() {
       <PageHeader
         title='上游节点'
         description='管理 grok2api 的 Grok Build 出口节点与网络探测状态。'
+        descriptionAsHint
         actions={
           <ActionToolbar label='上游节点操作'>
             <ToolbarAction
@@ -532,7 +534,18 @@ export function EgressNodesPage() {
               />
             </div>
             <div className='space-y-2'>
-              <Label htmlFor='egress-node-proxy'>代理地址</Label>
+              <div className='flex min-h-5 items-center gap-1.5'>
+                <Label htmlFor='egress-node-proxy'>代理地址</Label>
+                <InfoTooltip
+                  label='代理地址'
+                  content={
+                    <>
+                      使用 <span className='font-mono'>{'{account}'}</span>{' '}
+                      可让 grok2api 按账号生成稳定的 Resin 粘性身份。
+                    </>
+                  }
+                />
+              </div>
               <Input
                 id='egress-node-proxy'
                 type='password'
@@ -546,9 +559,6 @@ export function EgressNodesPage() {
                 }
                 placeholder='socks5h://pool.{account}:token@resin:2260'
               />
-              <p className='text-xs text-muted-foreground'>
-                使用 {'{account}'} 可让 grok2api 按账号生成稳定的 Resin 粘性身份。
-              </p>
             </div>
             <div className='space-y-2'>
               <Label htmlFor='egress-node-capacity'>账号容量</Label>
@@ -689,9 +699,9 @@ function CreateSwitchRow({
 }) {
   return (
     <div className='flex items-center justify-between gap-4 p-3'>
-      <div>
-        <div className='text-sm font-medium'>{label}</div>
-        <div className='mt-1 text-xs text-muted-foreground'>{description}</div>
+      <div className='flex items-center gap-1.5 text-sm font-medium'>
+        {label}
+        <InfoTooltip label={label} content={description} />
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>

@@ -123,6 +123,7 @@ export function DecisionGuidePage() {
       <PageHeader
         title='判定说明'
         description='探针样本如何分类、风险分如何累计，以及账号、任务和恢复状态如何流转。'
+        descriptionAsHint
         actions={
           <ActionToolbar label='判定说明操作'>
             <Badge

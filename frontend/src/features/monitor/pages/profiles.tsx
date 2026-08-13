@@ -162,6 +162,7 @@ export function ProbeProfilesPage() {
       <PageHeader
         title='探针方案'
         description='分别管理系统内置基线与用户自定义方案；Cron 计划只负责调度。'
+        descriptionAsHint
         actions={
           <>
             <ActionToolbar label='探针方案操作'>

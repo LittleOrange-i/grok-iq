@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsUpDown,
   CloudCog,
   Copy,
   Eraser,
@@ -21,6 +22,7 @@ import {
   Loader2,
   ListChecks,
   MessageSquarePlus,
+  MessageSquareText,
   PanelRightOpen,
   Pencil,
   Plus,
@@ -158,6 +160,7 @@ export function PlaygroundPage() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const [selectedConversationIds, setSelectedConversationIds] = useState<
     string[]
   >([])
@@ -567,7 +570,7 @@ export function PlaygroundPage() {
   }
 
   return (
-    <div className='grid h-[calc(100dvh-4rem)] min-h-0 grid-cols-1 bg-background lg:grid-cols-[18rem_minmax(0,1fr)]'>
+    <div className='grid h-full min-h-0 grid-cols-1 bg-background lg:grid-cols-[18rem_minmax(0,1fr)]'>
       <aside className='hidden min-h-0 flex-col border-r bg-muted/20 lg:flex'>
         <div className='flex items-center justify-between gap-2 p-4'>
           <div>
@@ -670,6 +673,17 @@ export function PlaygroundPage() {
       </aside>
       <section className='flex min-h-0 min-w-0 flex-col'>
         <div className='flex items-center gap-3 border-b px-4 py-3'>
+          <Button
+            type='button'
+            size='icon'
+            variant='ghost'
+            className='shrink-0 lg:hidden'
+            aria-label='切换本地会话'
+            aria-expanded={mobileHistoryOpen}
+            onClick={() => setMobileHistoryOpen((open) => !open)}
+          >
+            <ChevronsUpDown />
+          </Button>
           <div className='min-w-0'>
             <div className='flex items-center gap-2'>
               <h2 className='truncate font-semibold'>
@@ -709,6 +723,50 @@ export function PlaygroundPage() {
             </ToolbarAction>
           </ActionToolbar>
         </div>
+        {mobileHistoryOpen && (
+          <div className='border-b bg-muted/15 p-2 lg:hidden'>
+            <div className='mb-2 flex items-center justify-between gap-2 px-1'>
+              <div className='flex min-w-0 items-center gap-2'>
+                <span className='text-xs font-medium'>本地会话</span>
+                <Badge variant='secondary' className='tabular-nums'>
+                  {conversations.length}
+                </Badge>
+              </div>
+              <div className='text-[11px] text-muted-foreground'>
+                仅当前浏览器
+              </div>
+            </div>
+            <div className='max-h-52 space-y-1 overflow-y-auto overscroll-contain'>
+              {conversations.map((item) => (
+                <button
+                  key={item.id}
+                  type='button'
+                  className={cn(
+                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent',
+                    item.id === active?.id && 'bg-accent'
+                  )}
+                  onClick={() => {
+                    selectConversation(item.id)
+                    setMobileHistoryOpen(false)
+                  }}
+                >
+                  <MessageSquareText className='size-4 shrink-0 text-muted-foreground' />
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate text-sm font-medium'>
+                      {item.title}
+                    </span>
+                    <span className='mt-0.5 block truncate font-mono text-[11px] text-muted-foreground'>
+                      {item.model || '未选择模型'}
+                    </span>
+                  </span>
+                  {item.id === active?.id && (
+                    <Star className='size-3.5 shrink-0 fill-current text-primary' />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div
           ref={scrollRef}
           onScroll={handleMessagesScroll}

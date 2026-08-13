@@ -10,7 +10,6 @@ import {
   Database,
   Eye,
   EyeOff,
-  Info,
   Inbox,
   KeyRound,
   Layers3,
@@ -58,6 +57,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
+import { InfoTooltip } from '@/components/info-tooltip'
 import { ProfileMultiSelect } from '@/features/monitor/components/profile-multi-select'
 
 type SettingsForm = {
@@ -322,6 +322,7 @@ export function SettingsPage() {
       <PageHeader
         title='系统设置'
         description='除启动监听、数据库路径和 CORS 外，连接、队列及风险参数均可在此保存并热应用。'
+        descriptionAsHint
         actions={
           <ActionToolbar label='系统设置操作'>
             <ToolbarAction
@@ -543,43 +544,17 @@ export function SettingsPage() {
         </TabsContent>
 
         <TabsContent value='risk' className='space-y-4'>
-          <div className='grid overflow-hidden rounded-xl border bg-card sm:grid-cols-4'>
-            <RiskFlowStep
-              step='01'
-              title='识别单次样本'
-              description='TPS、缓冲与标记'
-            />
-            <RiskFlowStep
-              step='02'
-              title='判断账号状态'
-              description='次数、占比与强信号'
-              divided
-            />
-            <RiskFlowStep
-              step='03'
-              title='累计风险分'
-              description='权重、封顶与保底分'
-              divided
-            />
-            <RiskFlowStep
-              step='04'
-              title='执行自动处置'
-              description='按需停用高风险账号'
-              divided
-            />
-          </div>
-
           <div className='grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]'>
             <SettingsCard
               icon={Activity}
-              title='1. 单次样本怎么判'
-              description='先把每轮请求归类为正常、异常或强异常；这里只决定样本类型，还不会直接改变账号状态。'
+              title='样本判定规则'
+              description='配置探针样本的统计范围、TPS 阈值和缓冲特征。样本判定结果将用于账号风险分析。'
               descriptionAsHint
             >
               <div className='space-y-5'>
                 <RiskFieldGroup
-                  title='采样范围'
-                  hint='控制使用多长时间内、达到多大输出量的样本。'
+                  title='样本范围'
+                  hint='仅分析指定时间范围内且输出 Token 达到要求的探针样本。'
                 >
                   <NumberField
                     label='分析窗口（小时）'
@@ -598,8 +573,8 @@ export function SettingsPage() {
                 </RiskFieldGroup>
 
                 <RiskFieldGroup
-                  title='TPS 分界'
-                  hint='达到第一档记异常，达到第二档记强异常。'
+                  title='TPS 阈值'
+                  hint='达到异常阈值的样本记为异常；达到强异常阈值的样本记为强异常。'
                   divided
                 >
                   <NumberField
@@ -646,8 +621,8 @@ export function SettingsPage() {
 
             <SettingsCard
               icon={ShieldCheck}
-              title='2. 账号状态怎么升'
-              description='只聚合账号当前固定出口的日常探针；人工诊断样本保留记录，但不参与状态和风险分。'
+              title='账号风险判定'
+              description='配置账号进入观察、疑似和高风险状态的条件。仅统计当前固定出口的日常探针样本。'
               descriptionAsHint
             >
               <div className='space-y-5'>
@@ -706,8 +681,8 @@ export function SettingsPage() {
 
           <SettingsCard
             icon={Calculator}
-            title='3. 风险分怎么加'
-            description='状态由上面的规则决定，分数用于排序和展示。权重设为 0 即关闭该计分项。'
+            title='风险评分规则'
+            description='配置各类风险信号的权重、单项上限和状态最低分。评分用于账号排序和风险展示。'
             descriptionAsHint
           >
             <div className='overflow-hidden rounded-xl border'>
@@ -761,9 +736,9 @@ export function SettingsPage() {
               <div className='mb-3'>
                 <div className='flex items-center gap-1.5 text-sm font-medium'>
                   分数边界
-                  <HintIcon
+                  <InfoTooltip
                     label='分数边界'
-                    text='状态保底分按从低到高排列，并且不能超过总分上限。'
+                    content='状态保底分按从低到高排列，并且不能超过总分上限。'
                   />
                 </div>
               </div>
@@ -803,9 +778,9 @@ export function SettingsPage() {
             <div className='mt-5 flex flex-col gap-3 rounded-lg border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
               <div className='flex items-center gap-1.5 text-sm font-medium'>
                 当前分数区间
-                <HintIcon
+                <InfoTooltip
                   label='应用方式'
-                  text='保存后立即热应用，并使用新公式重算已有账号。'
+                  content='保存后立即热应用，并使用新公式重算已有账号。'
                 />
               </div>
               <div className='flex flex-wrap gap-2'>
@@ -827,26 +802,44 @@ export function SettingsPage() {
 
           <SettingsCard
             icon={Power}
-            title='4. 高风险后怎么处理'
-            description='自动隔离只响应当前固定出口形成的高风险状态；关闭后仍会正常记录和展示风险。'
+            title='自动隔离'
+            description='配置高风险账号的自动停用和恢复时间。关闭后仍会记录并展示风险状态。'
             descriptionAsHint
           >
-            <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start'>
-              <SwitchRow
-                label='自动暂时停用高风险账号'
-                description={`重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 暂时停用账号`}
-                checked={form.autoQuarantine}
-                onCheckedChange={(value) => set('autoQuarantine', value)}
-              />
-              <NumberField
-                label='停用时长（分钟）'
-                hint='到期后自动启用并降至最低优先级'
-                value={form.quarantineMinutes}
-                min={1}
-                max={10080}
-                disabled={!form.autoQuarantine}
-                onChange={(value) => set('quarantineMinutes', value)}
-              />
+            <div className='grid overflow-hidden rounded-xl border lg:grid-cols-[minmax(0,1fr)_22rem]'>
+              <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
+                <div className='flex items-center gap-1.5 text-sm font-medium'>
+                  自动暂时停用高风险账号
+                  <InfoTooltip
+                    label='自动暂时停用高风险账号'
+                    content={`重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 暂时停用账号`}
+                  />
+                </div>
+                <Switch
+                  checked={form.autoQuarantine}
+                  onCheckedChange={(value) => set('autoQuarantine', value)}
+                />
+              </div>
+              <div className='grid min-h-20 grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 border-t px-4 py-3 lg:border-t-0 lg:border-l'>
+                <div className='flex items-center gap-1.5 text-sm font-medium'>
+                  停用时长
+                  <InfoTooltip
+                    label='停用时长'
+                    content='单位为分钟；到期后自动启用并降至最低优先级。'
+                  />
+                </div>
+                <Input
+                  type='number'
+                  value={form.quarantineMinutes}
+                  min={1}
+                  max={10080}
+                  disabled={!form.autoQuarantine}
+                  aria-label='停用时长（分钟）'
+                  onChange={(event) =>
+                    set('quarantineMinutes', Number(event.target.value))
+                  }
+                />
+              </div>
             </div>
           </SettingsCard>
         </TabsContent>
@@ -1455,7 +1448,9 @@ function SettingsCard({
         <CardTitle className='flex items-center gap-2 text-base'>
           <Icon className='size-4 text-primary' />
           {title}
-          {descriptionAsHint && <HintIcon label={title} text={description} />}
+          {descriptionAsHint && (
+            <InfoTooltip label={title} content={description} />
+          )}
         </CardTitle>
         {!descriptionAsHint && <CardDescription>{description}</CardDescription>}
       </CardHeader>
@@ -1798,27 +1793,10 @@ function Field({
     <div className={`space-y-2 ${className}`}>
       <div className='flex min-h-5 items-center gap-1.5'>
         <Label>{label}</Label>
-        {hint && <HintIcon label={label} text={hint} />}
+        {hint && <InfoTooltip label={label} content={hint} />}
       </div>
       {children}
     </div>
-  )
-}
-
-function HintIcon({ label, text }: { label: string; text: string }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type='button'
-          className='inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
-          aria-label={`${label}说明`}
-        >
-          <Info className='size-3.5' />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className='max-w-72 leading-5'>{text}</TooltipContent>
-    </Tooltip>
   )
 }
 
@@ -1870,35 +1848,6 @@ function NumberField({
   )
 }
 
-function RiskFlowStep({
-  step,
-  title,
-  description,
-  divided = false,
-}: {
-  step: string
-  title: string
-  description: string
-  divided?: boolean
-}) {
-  return (
-    <div
-      className={cn(
-        'flex min-w-0 items-center gap-3 px-4 py-3.5',
-        divided && 'border-t sm:border-t-0 sm:border-l'
-      )}
-    >
-      <span className='font-mono text-xs font-semibold text-primary'>
-        {step}
-      </span>
-      <div className='flex min-w-0 items-center gap-1.5'>
-        <div className='truncate text-sm font-medium'>{title}</div>
-        <HintIcon label={title} text={description} />
-      </div>
-    </div>
-  )
-}
-
 function RiskFieldGroup({
   title,
   hint,
@@ -1916,7 +1865,7 @@ function RiskFieldGroup({
         <h3 className='text-xs font-semibold tracking-wide text-muted-foreground uppercase'>
           {title}
         </h3>
-        <HintIcon label={title} text={hint} />
+        <InfoTooltip label={title} content={hint} />
       </div>
       <div className='grid gap-4 sm:grid-cols-2'>{children}</div>
     </section>
@@ -1972,7 +1921,7 @@ function RiskFactorRow({
     <div className='grid gap-3 border-b px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_9rem_9rem] md:items-center md:gap-4'>
       <div className='flex min-w-0 items-center gap-1.5'>
         <span className='text-sm font-medium'>{title}</span>
-        <HintIcon label={title} text={description} />
+        <InfoTooltip label={title} content={description} />
       </div>
       <div>
         <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
@@ -2040,7 +1989,7 @@ function RiskScoreField({
       >
         <span className='flex items-center gap-1.5'>
           {label}
-          <HintIcon label={label} text={hint} />
+          <InfoTooltip label={label} content={hint} />
         </span>
       </div>
       <div className='p-2'>
@@ -2180,7 +2129,7 @@ function SwitchRow({
       <div>
         <div className='flex items-center gap-1.5 text-sm font-medium'>
           {label}
-          <HintIcon label={label} text={description} />
+          <InfoTooltip label={label} content={description} />
         </div>
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />

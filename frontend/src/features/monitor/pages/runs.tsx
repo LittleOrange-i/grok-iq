@@ -532,6 +532,7 @@ export function RunsPage() {
       <PageHeader
         title='任务中心'
         description='Cron、注册联动和手动探针共用持久队列；支持进度查看、批量重测、取消、重试与删除。'
+        descriptionAsHint
         actions={
           <>
             <ActionToolbar label='任务列表操作'>

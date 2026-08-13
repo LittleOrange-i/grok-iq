@@ -26,7 +26,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -45,6 +44,7 @@ import {
 import { SourceCodeView } from '@/components/formatted-content'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { InfoTooltip } from '@/components/info-tooltip'
 import {
   buildEgressNodeNameMap,
   getEgressNodeName,
@@ -103,6 +103,7 @@ export function WorkersPage() {
       <PageHeader
         title='Worker 运行状态'
         description='查看探针执行进程、并发 Worker、队列阻塞与最近两天的轮转日志。'
+        descriptionAsHint
         actions={
           <ActionToolbar label='Worker 状态操作'>
             <ToolbarAction
@@ -194,16 +195,17 @@ function WorkerDashboard({
         />
       </div>
 
-      <div className='grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]'>
         <Card>
           <CardHeader>
             <div className='flex flex-wrap items-center justify-between gap-3'>
-              <div>
-                <CardTitle>执行实例</CardTitle>
-                <CardDescription className='mt-1'>
-                  不同账号可并行；同一账号始终由一个 Worker 顺序处理。
-                </CardDescription>
-              </div>
+              <CardTitle className='flex items-center gap-1.5'>
+                执行实例
+                <InfoTooltip
+                  label='执行实例'
+                  content='不同账号可并行；同一账号始终由一个 Worker 顺序处理。'
+                />
+              </CardTitle>
               <Badge
                 variant={data.started && !data.stopping ? 'success' : 'outline'}
               >
@@ -236,13 +238,16 @@ function WorkerDashboard({
           </CardContent>
         </Card>
 
-        <div className='space-y-6'>
+        <div className='space-y-4'>
           <Card>
             <CardHeader>
-              <CardTitle>队列分布</CardTitle>
-              <CardDescription>
-                仅可领取任务会分配给当前空闲 Worker。
-              </CardDescription>
+              <CardTitle className='flex items-center gap-1.5'>
+                队列分布
+                <InfoTooltip
+                  label='队列分布'
+                  content='仅可领取任务会分配给当前空闲 Worker。'
+                />
+              </CardTitle>
             </CardHeader>
             <CardContent className='space-y-3'>
               <QueueRow label='全部排队' value={data.queue.queued} />
@@ -263,28 +268,44 @@ function WorkerDashboard({
 
           <Card>
             <CardHeader>
-              <CardTitle>运行策略</CardTitle>
-              <CardDescription>账号共享状态的并发边界。</CardDescription>
+              <CardTitle className='flex items-center gap-1.5'>
+                运行策略
+                <InfoTooltip
+                  label='运行策略'
+                  content='展示账号共享状态的并发边界和日志轮转策略。'
+                />
+              </CardTitle>
             </CardHeader>
             <CardContent className='space-y-3 text-sm'>
               <div className='flex items-center justify-between gap-3'>
                 <span className='text-muted-foreground'>同账号任务</span>
                 <Badge variant='outline'>串行</Badge>
               </div>
-              <p className='text-xs leading-5 text-muted-foreground'>
-                {data.policy.reason}
-              </p>
-              <div className='border-t pt-3 text-xs text-muted-foreground'>
-                <div className='flex items-center justify-between gap-3'>
-                  <span className='truncate font-mono'>
-                    {data.log.fileName}
+              <div className='flex items-center justify-between gap-3 rounded-lg border px-3 py-2'>
+                <span className='flex min-w-0 items-center gap-1.5 text-muted-foreground'>
+                  并发原因
+                  <InfoTooltip label='并发原因' content={data.policy.reason} />
+                </span>
+                <Badge variant='secondary'>账号锁</Badge>
+              </div>
+              <div className='rounded-lg border px-3 py-2'>
+                <div className='flex items-center justify-between gap-3 text-xs'>
+                  <span className='flex min-w-0 items-center gap-1 text-muted-foreground'>
+                    日志文件
+                    <InfoTooltip
+                      label='日志轮转'
+                      content={`UTC 每日轮转，保留 ${data.log.retentionDays} 天。`}
+                    />
                   </span>
-                  <span className='shrink-0'>
+                  <span className='shrink-0 font-medium tabular-nums'>
                     {formatBytes(data.log.sizeBytes)}
                   </span>
                 </div>
-                <div className='mt-1'>
-                  UTC 每日轮转 · 保留 {data.log.retentionDays} 天
+                <div
+                  className='mt-1 truncate font-mono text-[11px] text-muted-foreground'
+                  title={data.log.fileName}
+                >
+                  {data.log.fileName}
                 </div>
               </div>
             </CardContent>
@@ -373,9 +394,16 @@ function WorkerCard({
             {!worker.desired && <Badge variant='outline'>已移出</Badge>}
             {!worker.taskAlive && <Badge variant='destructive'>离线</Badge>}
           </div>
-          <div className='mt-1 text-xs text-muted-foreground'>
-            已完成 {worker.completedRuns} · 异常 {worker.failedRuns} · 心跳{' '}
-            {formatDate(worker.lastHeartbeatAt)}
+          <div className='mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground'>
+            <span className='tabular-nums'>已完成 {worker.completedRuns}</span>
+            <span className='tabular-nums'>异常 {worker.failedRuns}</span>
+            <span className='flex items-center gap-1'>
+              心跳
+              <InfoTooltip
+                label={`${worker.id} 最近心跳`}
+                content={formatDate(worker.lastHeartbeatAt)}
+              />
+            </span>
           </div>
         </div>
       </div>
@@ -426,10 +454,17 @@ function WorkerCard({
           </div>
         </div>
       ) : (
-        <div className='mt-4 rounded-lg border border-dashed p-3 text-xs leading-5 text-muted-foreground'>
-          {worker.status === 'blocked'
-            ? '当前队列仅剩同账号或等待恢复的任务，暂时没有可领取任务。'
-            : '当前没有领取任务。'}
+        <div className='mt-4 flex min-h-16 items-center justify-center gap-2 rounded-lg border border-dashed p-3 text-xs text-muted-foreground'>
+          <Clock3 className='size-4 shrink-0' />
+          <span>
+            {worker.status === 'blocked' ? '当前无可领取任务' : '当前空闲'}
+          </span>
+          {worker.status === 'blocked' && (
+            <InfoTooltip
+              label='当前无可领取任务'
+              content='队列中仅剩同账号串行阻塞或等待账号设置恢复的任务。'
+            />
+          )}
         </div>
       )}
 

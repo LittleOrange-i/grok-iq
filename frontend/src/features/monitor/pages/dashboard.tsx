@@ -23,12 +23,12 @@ import { formatDate, formatNumber } from '@/lib/utils'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
 import { Page, PageHeader, LoadingState } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { InfoTooltip } from '@/components/info-tooltip'
 
 export function DashboardPage() {
   const query = useQuery({
@@ -91,6 +91,7 @@ export function DashboardPage() {
       <PageHeader
         title='监控概览'
         description='直接读取 grok2api 当前账号状态，本地聚合当前固定出口的多轮探针结果。'
+        descriptionAsHint
         actions={
           <ActionToolbar label='监控概览操作'>
             <ToolbarAction
@@ -129,13 +130,14 @@ export function DashboardPage() {
       <div className='grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]'>
         <Card>
           <CardHeader>
-            <CardTitle className='flex items-center gap-2'>
+            <CardTitle className='flex items-center gap-1.5'>
               <Gauge className='size-4 text-primary' />
               TPS 趋势
+              <InfoTooltip
+                label='TPS 趋势'
+                content='最近七天实际探针流的平均与最高输出速度。'
+              />
             </CardTitle>
-            <CardDescription>
-              最近七天实际探针流的平均与最高输出速度
-            </CardDescription>
           </CardHeader>
           <CardContent className='h-80'>
             <ResponsiveContainer width='100%' height='100%'>
@@ -203,8 +205,13 @@ export function DashboardPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>风险排行</CardTitle>
-            <CardDescription>仅展示本地已有探针判定的账号</CardDescription>
+            <CardTitle className='flex items-center gap-1.5'>
+              风险排行
+              <InfoTooltip
+                label='风险排行'
+                content='仅展示本地已有探针判定的账号。'
+              />
+            </CardTitle>
           </CardHeader>
           <CardContent className='space-y-2'>
             {(data.riskyAccounts ?? []).map((account: UpstreamAccount) => (
@@ -234,8 +241,12 @@ export function DashboardPage() {
               </div>
             ))}
             {!data.riskyAccounts?.length && (
-              <div className='py-16 text-center text-sm text-muted-foreground'>
-                暂无已评估账号
+              <div className='flex min-h-44 flex-col items-center justify-center rounded-lg border border-dashed px-5 text-center'>
+                <ShieldAlert className='mb-2 size-6 text-muted-foreground' />
+                <div className='text-sm font-medium'>暂无已评估账号</div>
+                <div className='mt-1 text-xs text-muted-foreground'>
+                  完成账号探针后会在这里显示风险排序
+                </div>
               </div>
             )}
           </CardContent>
@@ -244,10 +255,13 @@ export function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>最近任务</CardTitle>
-          <CardDescription>
-            手动与 Cron 触发的任务使用同一持久队列
-          </CardDescription>
+          <CardTitle className='flex items-center gap-1.5'>
+            最近任务
+            <InfoTooltip
+              label='最近任务'
+              content='手动、注册联动与 Cron 触发的任务使用同一持久队列。'
+            />
+          </CardTitle>
         </CardHeader>
         <CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
           {(data.recentRuns ?? []).map((run: ProbeRun) => (
@@ -274,6 +288,15 @@ export function DashboardPage() {
               </div>
             </div>
           ))}
+          {!data.recentRuns?.length && (
+            <div className='flex min-h-28 flex-col items-center justify-center rounded-lg border border-dashed px-5 text-center md:col-span-2 xl:col-span-4'>
+              <TimerReset className='mb-2 size-6 text-muted-foreground' />
+              <div className='text-sm font-medium'>暂无最近任务</div>
+              <div className='mt-1 text-xs text-muted-foreground'>
+                手动测试或 Cron 调度后会显示执行进度
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </Page>

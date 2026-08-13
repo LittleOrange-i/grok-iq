@@ -375,6 +375,7 @@ export function AccountsPage() {
       <PageHeader
         title='账号探针'
         description='账号列表实时来自 grok2api；本地仅叠加风险判定，不保存账号凭据或账号镜像。'
+        descriptionAsHint
         actions={
           <>
             <ActionToolbar label='账号列表操作'>
