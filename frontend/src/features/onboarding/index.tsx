@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import type { ComponentType, ReactNode } from 'react'
+import { useState, type ComponentType, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
@@ -645,12 +644,12 @@ function ReviewStep({
           账号汇总。验证失败时不会进入主系统，可返回修改后重试。
         </AlertDescription>
       </Alert>
-      {error && (
+      {error ? (
         <Alert variant='destructive'>
           <AlertTitle>连接验证失败</AlertTitle>
           <AlertDescription>{getErrorMessage(error)}</AlertDescription>
         </Alert>
-      )}
+      ) : null}
     </div>
   )
 }
