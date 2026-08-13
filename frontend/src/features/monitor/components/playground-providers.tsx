@@ -15,7 +15,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type ChatProvider, type ChatProviderInput } from '@/lib/api'
-import { copyText } from '@/lib/clipboard'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
