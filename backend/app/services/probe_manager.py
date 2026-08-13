@@ -936,7 +936,7 @@ class ProbeManager:
         quarantined = self.accounts.set_manual_status(
             account_id=account_id,
             status="quarantined",
-            note="固定出口连续强异常达到自动隔离阈值",
+            note="风险周期连续强异常达到自动隔离阈值",
             quarantine_until=until,
             previous_upstream_enabled=was_enabled,
             disabled_by_monitor=was_enabled,

@@ -113,10 +113,10 @@ def risk_status(
     repeated = consecutive or cumulative
     strong_repeated = repeated and hard_count >= thresholds.high_risk_hard_count
     if consecutive:
-        reasons.append(f"固定出口连续降智信号达到 {thresholds.consecutive_anomalies} 次")
+        reasons.append(f"风险周期连续降智信号达到 {thresholds.consecutive_anomalies} 次")
     elif cumulative:
         reasons.append(
-            f"固定出口降智信号占比 {anomaly_count}/{sample_count}，达到 "
+            f"风险周期降智信号占比 {anomaly_count}/{sample_count}，达到 "
             f"{thresholds.cumulative_anomaly_rate:.0%}"
         )
     if fast_count:

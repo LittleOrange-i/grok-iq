@@ -22,6 +22,7 @@ from .models import (
 ANOMALY_NAMES = {"elevated", "buffered_soft", "buffered_hard", "fast_risk", "marker_miss"}
 HARD_ANOMALY_NAMES = {"buffered_hard", "fast_risk", "marker_miss"}
 FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
+ALL_EGRESS_RISK_MIGRATION_KEY = "all_egress_risk_formula_v1"
 
 
 class AccountRepository:
@@ -31,12 +32,7 @@ class AccountRepository:
     def get_assessment(self, account_id: int) -> dict[str, Any] | None:
         with self.database.session() as session:
             value = session.get(AccountAssessment, account_id)
-            if value is None:
-                return None
-            return self._assessment_view(
-                value,
-                self._evidence_counts(session, [account_id]).get(account_id),
-            )
+            return model_dict(value) if value else None
 
     def get_assessments(self, account_ids: list[int]) -> dict[int, dict[str, Any]]:
         if not account_ids:
@@ -45,11 +41,7 @@ class AccountRepository:
             values = session.scalars(
                 select(AccountAssessment).where(AccountAssessment.account_id.in_(account_ids))
             ).all()
-            counts = self._evidence_counts(session, account_ids)
-            return {
-                value.account_id: self._assessment_view(value, counts.get(value.account_id))
-                for value in values
-            }
+            return {value.account_id: model_dict(value) for value in values}
 
     def list_assessments(self, limit: int = 1000) -> list[dict[str, Any]]:
         with self.database.session() as session:
@@ -58,51 +50,7 @@ class AccountRepository:
                 .order_by(AccountAssessment.risk_score.desc(), AccountAssessment.updated_at.desc())
                 .limit(limit)
             ).all()
-            counts = self._evidence_counts(
-                session,
-                [value.account_id for value in values],
-            )
-            return [
-                self._assessment_view(value, counts.get(value.account_id))
-                for value in values
-            ]
-
-    @staticmethod
-    def _assessment_view(
-        assessment: AccountAssessment,
-        counts: tuple[int, int] | None,
-    ) -> dict[str, Any]:
-        value = model_dict(assessment)
-        evidence_sample_count, evidence_anomaly_count = counts or (0, 0)
-        value["evidence_sample_count"] = evidence_sample_count
-        value["evidence_anomaly_count"] = evidence_anomaly_count
-        return value
-
-    @staticmethod
-    def _evidence_counts(
-        session: Any,
-        account_ids: list[int],
-    ) -> dict[int, tuple[int, int]]:
-        if not account_ids:
-            return {}
-        rows = session.execute(
-            select(
-                ProbeSample.account_id,
-                func.count(ProbeSample.id),
-                func.sum(
-                    case(
-                        (ProbeSample.classification.in_(ANOMALY_NAMES), 1),
-                        else_=0,
-                    )
-                ),
-            )
-            .where(ProbeSample.account_id.in_(account_ids))
-            .group_by(ProbeSample.account_id)
-        ).all()
-        return {
-            int(account_id): (int(sample_count or 0), int(anomaly_count or 0))
-            for account_id, sample_count, anomaly_count in rows
-        }
+            return [model_dict(value) for value in values]
 
     def migrate_fixed_egress_risk_formula(
         self,
@@ -130,6 +78,34 @@ class AccountRepository:
             legacy_cross_egress = session.get(AppSetting, "cross_egress_min")
             if legacy_cross_egress is not None:
                 session.delete(legacy_cross_egress)
+        return len(account_ids)
+
+    def migrate_all_egress_risk_formula(
+        self,
+        thresholds: Thresholds,
+        window_hours: int,
+    ) -> int:
+        """Recalculate persisted verdicts once after including diagnostic samples."""
+
+        with self.database.session() as session:
+            if session.get(MetadataRow, ALL_EGRESS_RISK_MIGRATION_KEY) is not None:
+                return 0
+            account_ids = set(session.scalars(select(AccountAssessment.account_id)).all())
+            account_ids.update(
+                session.scalars(select(ProbeSample.account_id).distinct()).all()
+            )
+
+        for account_id in account_ids:
+            self.recalculate(account_id, thresholds, window_hours)
+
+        with self.database.transaction() as session:
+            if session.get(MetadataRow, ALL_EGRESS_RISK_MIGRATION_KEY) is None:
+                session.add(
+                    MetadataRow(
+                        key=ALL_EGRESS_RISK_MIGRATION_KEY,
+                        value=utc_now().isoformat(),
+                    )
+                )
         return len(account_ids)
 
     def recalculate_all(self, thresholds: Thresholds, window_hours: int) -> int:
@@ -164,7 +140,6 @@ class AccountRepository:
                 .where(
                     ProbeSample.account_id == account_id,
                     ProbeSample.created_at >= cutoff,
-                    ProbeSample.target_kind == "current",
                 )
                 .order_by(ProbeSample.created_at.asc(), ProbeSample.id.asc())
             ).all()

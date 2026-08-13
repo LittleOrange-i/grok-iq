@@ -162,8 +162,6 @@ type Assessment = {
   risk_score: number
   sample_count: number
   anomaly_count: number
-  evidence_sample_count?: number
-  evidence_anomaly_count?: number
   hard_anomaly_count?: number
   distinct_egress_count?: number
   avg_tps?: number

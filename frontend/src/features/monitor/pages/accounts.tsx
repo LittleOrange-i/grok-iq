@@ -630,7 +630,7 @@ export function AccountsPage() {
                       <TableHead>账号</TableHead>
                       <TableHead>上游状态</TableHead>
                       <TableHead>监控判定</TableHead>
-                      <TableHead>样本 / 信号</TableHead>
+                      <TableHead>周期样本 / 信号</TableHead>
                       <TableHead>TPS</TableHead>
                       <TableHead className='w-24'>额度</TableHead>
                       <TableHead>出口绑定</TableHead>
@@ -641,14 +641,6 @@ export function AccountsPage() {
                     {accounts.map((account) => {
                       const id = Number(account.id)
                       const assessment = account.assessment
-                      const evidenceSampleCount =
-                        assessment.evidence_sample_count ??
-                        assessment.sample_count ??
-                        0
-                      const evidenceAnomalyCount =
-                        assessment.evidence_anomaly_count ??
-                        assessment.anomaly_count ??
-                        0
                       const accountLabel =
                         account.name || account.email || `账号 ${id}`
                       const secondaryAccountLabel =
@@ -743,13 +735,13 @@ export function AccountsPage() {
                           </TableCell>
                           <TableCell>
                             <span className='tabular-nums'>
-                              {evidenceSampleCount}
+                              {assessment.sample_count ?? 0}
                             </span>
                             <span className='mx-1 text-muted-foreground'>
                               /
                             </span>
                             <span className='text-amber-600 tabular-nums'>
-                              {evidenceAnomalyCount}
+                              {assessment.anomaly_count ?? 0}
                             </span>
                           </TableCell>
                           <TableCell>
@@ -1173,11 +1165,6 @@ function AccountDetail({
   const history = data.history
   const reasons: string[] = assessment.risk_reasons ?? []
   const byTarget = history.byTarget ?? []
-  const evidenceSampleCount =
-    assessment.evidence_sample_count ?? history.samples.length
-  const evidenceAnomalyCount =
-    assessment.evidence_anomaly_count ??
-    byTarget.reduce((total, item) => total + (item.anomalies ?? 0), 0)
   return (
     <div className='space-y-5'>
       <div className='grid gap-3 sm:grid-cols-3 lg:grid-cols-6'>
@@ -1210,8 +1197,8 @@ function AccountDetail({
         />
         <Metric label='风险分' value={formatNumber(assessment.risk_score)} />
         <Metric
-          label='样本 / 信号'
-          value={`${evidenceSampleCount} / ${evidenceAnomalyCount}`}
+          label='周期样本 / 信号'
+          value={`${assessment.sample_count ?? 0} / ${assessment.anomaly_count ?? 0}`}
         />
         <Metric
           label='最后样本'

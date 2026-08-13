@@ -63,7 +63,7 @@ def test_repeated_strong_signals_become_high_risk():
     )
     assert status == "high_risk"
     assert score >= 75
-    assert any("固定出口" in reason for reason in reasons)
+    assert any("风险周期" in reason for reason in reasons)
 
 
 def test_repeated_soft_signals_remain_suspect():

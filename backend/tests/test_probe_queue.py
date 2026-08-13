@@ -13,6 +13,7 @@ from app.core.clock import utc_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import ChatProbeResult, IntegrationError
 from app.persistence.account_repository import (
+    ALL_EGRESS_RISK_MIGRATION_KEY,
     FIXED_EGRESS_RISK_MIGRATION_KEY,
     AccountRepository,
 )
@@ -109,7 +110,7 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
     assert "egress_snapshots" not in tables
 
 
-def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
+def test_account_risk_uses_all_period_egress_samples(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
@@ -166,10 +167,11 @@ def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
 
     accounts = AccountRepository(database)
     diagnostic_only = accounts.recalculate(10, Thresholds(), 168)
-    assert diagnostic_only["monitor_status"] == "healthy"
-    assert diagnostic_only["risk_score"] == 0
-    assert diagnostic_only["sample_count"] == 0
-    assert diagnostic_only["anomaly_count"] == 0
+    assert diagnostic_only["monitor_status"] == "high_risk"
+    assert diagnostic_only["risk_score"] >= 75
+    assert diagnostic_only["sample_count"] == 3
+    assert diagnostic_only["anomaly_count"] == 3
+    assert diagnostic_only["distinct_egress_count"] == 3
 
     for round_number in range(1, 4):
         add_anomaly(
@@ -180,9 +182,9 @@ def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
     fixed_egress = accounts.recalculate(10, Thresholds(), 168)
     assert fixed_egress["monitor_status"] == "high_risk"
     assert fixed_egress["risk_score"] >= 75
-    assert fixed_egress["sample_count"] == 3
-    assert fixed_egress["anomaly_count"] == 3
-    assert fixed_egress["distinct_egress_count"] == 1
+    assert fixed_egress["sample_count"] == 6
+    assert fixed_egress["anomaly_count"] == 6
+    assert fixed_egress["distinct_egress_count"] == 4
 
 
 def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
@@ -205,6 +207,63 @@ def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
     with database.session() as session:
         assert session.get(MetadataRow, FIXED_EGRESS_RISK_MIGRATION_KEY) is not None
         assert session.get(AppSetting, "cross_egress_min") is None
+
+
+def test_all_egress_formula_migration_recalculates_existing_samples_once(
+    tmp_path: Path,
+):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    probes = ProbeRepository(database)
+    probes.seed_defaults()
+    run_id = probes.create_run(
+        account_id=10,
+        account_name="account-10",
+        account_email="",
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[{"kind": "egress", "id": 7, "name": "诊断出口"}],
+        trigger="manual",
+        priority=100,
+        queue_limit=20,
+    )
+    probes.add_sample(
+        run_id,
+        {
+            "round_number": 1,
+            "target_key": "egress:7",
+            "target_kind": "egress",
+            "egress_node_id": 7,
+            "egress_name": "诊断出口",
+            "status": "done",
+            "status_code": 200,
+            "output_tokens": 100,
+            "reasoning_tokens": 0,
+            "visible_tokens": 100,
+            "chunk_count": 2,
+            "first_token_ms": 1000,
+            "duration_ms": 1100,
+            "generation_ms": 100,
+            "first_token_share": 0.9,
+            "tps": 1000,
+            "expected_matched": True,
+            "classification": "buffered_hard",
+            "severity": 2,
+            "error": "",
+        },
+    )
+    probes.finish_run(run_id)
+    accounts = AccountRepository(database)
+
+    assert accounts.migrate_all_egress_risk_formula(Thresholds(), 168) == 1
+    migrated = accounts.get_assessment(10)
+    assert migrated is not None
+    assert migrated["sample_count"] == 1
+    assert migrated["anomaly_count"] == 1
+
+    assert accounts.migrate_all_egress_risk_formula(Thresholds(), 168) == 0
+    with database.session() as session:
+        assert session.get(MetadataRow, ALL_EGRESS_RISK_MIGRATION_KEY) is not None
 
 
 def test_recalculate_all_uses_new_formula_for_existing_samples(tmp_path: Path):

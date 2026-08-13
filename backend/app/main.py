@@ -117,6 +117,10 @@ async def lifespan(_: FastAPI):
         probe_manager.thresholds,
         settings.analysis_window_hours,
     )
+    account_repository.migrate_all_egress_risk_formula(
+        probe_manager.thresholds,
+        settings.analysis_window_hours,
+    )
     await probe_manager.start()
     await register_integration_service.start()
     await sso_report_service.start()

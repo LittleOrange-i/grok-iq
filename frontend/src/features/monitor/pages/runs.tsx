@@ -28,6 +28,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  ServerCog,
   Square,
   Trash2,
   TriangleAlert,
@@ -65,6 +66,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -185,6 +187,8 @@ export function RunsPage() {
     accountIds: number[]
     taskCount: number
   } | null>(null)
+  const [egressBindingOpen, setEgressBindingOpen] = useState(false)
+  const [egressBindingTarget, setEgressBindingTarget] = useState<string>()
   const [bulkCancelOpen, setBulkCancelOpen] = useState(false)
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false)
@@ -495,6 +499,55 @@ export function RunsPage() {
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
+  const egressBindingMutation = useMutation({
+    mutationFn: ({
+      accountIds,
+      egressNodeId,
+    }: {
+      accountIds: number[]
+      egressNodeId: number | null
+    }) => api.updateAccountsEgress(accountIds, egressNodeId),
+    onSuccess: (result, variables) => {
+      const skippedAccountIds = result.skippedAccountIds ?? []
+      const failedAccountIds = result.failedAccountIds ?? []
+      const unavailableAccountIdSet = new Set([
+        ...skippedAccountIds,
+        ...failedAccountIds,
+      ])
+      const updatedAccountIds = variables.accountIds.filter(
+        (accountId) => !unavailableAccountIdSet.has(accountId)
+      )
+      setEgressBindingOpen(false)
+      setEgressBindingTarget(undefined)
+      const actionLabel = variables.egressNodeId == null ? '解绑' : '绑定'
+      if (failedAccountIds.length || skippedAccountIds.length) {
+        const details = [`已${actionLabel} ${result.updated} 个账号出口`]
+        if (failedAccountIds.length) {
+          details.push(`${failedAccountIds.length} 个操作失败并保留选择`)
+        }
+        if (skippedAccountIds.length) {
+          details.push(`${skippedAccountIds.length} 个设置受任务保护并保留选择`)
+        }
+        toast.warning(details.join('；'))
+      } else {
+        toast.success(`已${actionLabel} ${result.updated} 个账号出口，可直接建立任务`)
+      }
+      if (result.updated > 0 && updatedAccountIds.length > 0) {
+        setProbeSelection({
+          accountIds: updatedAccountIds,
+          taskCount: selectedRunIds.length,
+        })
+        void egress.refetch()
+        void profiles.refetch()
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['account'] })
+      void client.invalidateQueries({ queryKey: ['egress'] })
+    },
+  })
 
   const clearSelection = () => {
     setSelection(new Map())
@@ -530,7 +583,13 @@ export function RunsPage() {
 
   const bulkPending =
     bulkCancel.isPending || bulkDelete.isPending || bulkRestore.isPending
-  const selectionActionPending = bulkPending || selectionMutation.isPending
+  const selectionActionPending =
+    bulkPending ||
+    selectionMutation.isPending ||
+    egressBindingMutation.isPending
+  const bindableEgress = (egress.data?.items ?? []).filter(
+    (node) => node.enabled && node.proxyConfigured
+  )
 
   return (
     <Page>
@@ -598,6 +657,24 @@ export function RunsPage() {
                 }}
               >
                 <Play />
+              </ToolbarAction>
+              <ToolbarAction
+                label={
+                  selectedAccountIds.length
+                    ? `设置 ${selectedAccountIds.length} 个账号的出口`
+                    : '所选任务中没有可设置出口的账号'
+                }
+                pending={egressBindingMutation.isPending}
+                disabled={
+                  selectedAccountIds.length === 0 || selectionActionPending
+                }
+                onClick={() => {
+                  setEgressBindingTarget(undefined)
+                  setEgressBindingOpen(true)
+                  void egress.refetch()
+                }}
+              >
+                <ServerCog />
               </ToolbarAction>
               <ToolbarAction
                 label={
@@ -814,6 +891,94 @@ export function RunsPage() {
           void client.invalidateQueries({ queryKey: ['dashboard'] })
         }}
       />
+      <Dialog
+        open={egressBindingOpen}
+        onOpenChange={(open) => {
+          if (egressBindingMutation.isPending) return
+          setEgressBindingOpen(open)
+          if (!open) setEgressBindingTarget(undefined)
+        }}
+      >
+        <DialogContent className='sm:max-w-xl'>
+          <DialogHeader>
+            <DialogTitle>批量设置账号出口</DialogTitle>
+            <DialogDescription>
+              为已选任务中的 {selectedAccountIds.length}{' '}
+              个去重账号设置固定出口；完成后直接打开建任务窗口。
+            </DialogDescription>
+          </DialogHeader>
+          <div className='space-y-4'>
+            <Select
+              value={egressBindingTarget}
+              onValueChange={setEgressBindingTarget}
+              disabled={egressBindingMutation.isPending || egress.isFetching}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue
+                  placeholder={
+                    egress.isFetching ? '正在读取出口…' : '选择出口操作'
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {bindableEgress.map((node) => (
+                  <SelectItem key={node.id} value={`node:${node.id}`}>
+                    {node.name} · {node.assignedAccountCount ?? 0}
+                    {node.accountCapacity
+                      ? ` / ${node.accountCapacity}`
+                      : ' / 不限容量'}
+                    {node.probeStatus && node.probeStatus !== 'healthy'
+                      ? ` · ${node.probeStatus}`
+                      : ''}
+                  </SelectItem>
+                ))}
+                <SelectItem value='unbound'>解除出口绑定</SelectItem>
+              </SelectContent>
+            </Select>
+            {!egress.isFetching && !bindableEgress.length && (
+              <p className='text-sm text-amber-600 dark:text-amber-400'>
+                当前没有已启用且配置了代理的 grok_build
+                出口；仍可选择解除绑定。
+              </p>
+            )}
+            <div className='rounded-md border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground'>
+              正在执行探针或等待账号设置恢复的账号会跳过；成功修改的账号会自动带入建任务窗口，直接选择方案和轮数即可加入队列。
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={egressBindingMutation.isPending}
+              onClick={() => setEgressBindingOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type='button'
+              disabled={
+                !egressBindingTarget || egressBindingMutation.isPending
+              }
+              onClick={() => {
+                const nodeId = egressBindingTarget?.startsWith('node:')
+                  ? Number(egressBindingTarget.slice(5))
+                  : null
+                egressBindingMutation.mutate({
+                  accountIds: selectedAccountIds,
+                  egressNodeId: nodeId,
+                })
+              }}
+            >
+              {egressBindingMutation.isPending ? (
+                <Loader2 className='animate-spin' />
+              ) : (
+                <ServerCog />
+              )}
+              确认设置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={bulkCancelOpen}
         onOpenChange={(open) => {

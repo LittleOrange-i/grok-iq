@@ -52,7 +52,7 @@ export function SettingsRiskTab({
             >
               <NumberField
                 label='分析窗口（小时）'
-                hint='账号风险只统计“当前固定出口”在最近这段时间内的探针样本。默认 168 小时即最近 7 天；更短会更快淡化旧异常，更长会保留更久的历史影响。保存后会立即按新窗口重算全部账号。'
+                hint='账号风险统计最近这段时间内当前固定出口、临时切换出口及上游调度诊断产生的探针样本。默认 168 小时即最近 7 天；更短会更快淡化旧异常，更长会保留更久的历史影响。保存后会立即按新窗口重算全部账号。'
                 value={form.analysisWindowHours}
                 min={1}
                 max={8760}
@@ -74,7 +74,7 @@ export function SettingsRiskTab({
                 {formatDurationHours(form.analysisWindowHours)}
               </div>
               <p className='mt-1.5'>
-                每次探针完成、删除探针结果或保存风险设置时，系统都会重新截取这个时间范围内的样本，计算异常占比、连续次数、风险分和账号状态。诊断出口样本不进入该窗口。
+                每次探针完成、删除探针结果或保存风险设置时，系统都会重新截取这个时间范围内的样本，计算异常占比、连续次数、风险分和账号状态。固定出口和临时切换出口样本均进入该窗口。
               </p>
             </div>
 
@@ -128,7 +128,7 @@ export function SettingsRiskTab({
         <SettingsCard
           icon={ShieldCheck}
           title='账号风险判定'
-          description='配置账号进入观察、疑似和高风险状态的条件。仅统计当前固定出口的日常探针样本。'
+          description='配置账号进入观察、疑似和高风险状态的条件。统计风险周期内全部出口策略产生的有效探针样本。'
           descriptionAsHint
         >
           <div className='space-y-5'>

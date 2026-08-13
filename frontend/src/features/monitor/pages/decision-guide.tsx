@@ -279,14 +279,14 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
 
 function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
   const anomalyRate = formatPercent(thresholds.cumulativeAnomalyRate)
-  const repeated = `固定出口连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 ${anomalyRate} 以上`
+  const repeated = `风险周期连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 ${anomalyRate} 以上`
 
   return (
     <section className='space-y-3'>
       <SectionHeading
         icon={ShieldCheck}
         title='账号监控状态'
-        description='只聚合账号当前固定出口样本；人工诊断出口保留在任务记录中，不参与风险分和自动隔离。'
+        description='聚合风险周期内账号当前固定出口、临时切换出口及上游调度诊断产生的有效样本。'
       />
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         <RuleCard
@@ -312,7 +312,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           icon={ShieldAlert}
           title='疑似降智'
           badge={<StatusBadge value='suspect' />}
-          summary='固定出口降智信号已经重复出现，但强证据还不足。'
+          summary='风险周期内降智信号已经重复出现，但强证据还不足。'
           conditions={[
             repeated,
             `强降智信号少于 ${thresholds.highRiskHardCount} 次`,
@@ -323,7 +323,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           icon={Zap}
           title='高风险'
           badge={<StatusBadge value='high_risk' />}
-          summary={`固定出口重复异常，并且已经出现至少 ${thresholds.highRiskHardCount} 次强降智信号。`}
+          summary={`风险周期内重复异常，并且已经出现至少 ${thresholds.highRiskHardCount} 次强降智信号。`}
           conditions={[
             repeated,
             `强降智信号至少 ${thresholds.highRiskHardCount} 次`,
@@ -400,7 +400,7 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
           分；“观察”最低显示 {formatNumber(thresholds.riskWatchFloor)}{' '}
           分，“疑似降智”最低显示 {formatNumber(thresholds.riskSuspectFloor)}{' '}
           分，“高风险”最低显示 {formatNumber(thresholds.riskHighFloor)}{' '}
-          分。公式因子来自系统设置，诊断出口样本不参与计算。
+          分。公式因子来自系统设置，周期内固定出口和临时切换出口样本均参与计算。
         </CardDescription>
       </CardHeader>
       <CardContent>
