@@ -11,8 +11,11 @@ import {
   SettingsCard,
   SwitchRow,
 } from './settings-components'
-import { WECHAT_TEMPLATE_BODY } from './settings-model'
-import type { SettingsForm, SettingsSetter } from './settings-model'
+import {
+  WECHAT_TEMPLATE_BODY,
+  type SettingsForm,
+  type SettingsSetter,
+} from './settings-model'
 
 export function SettingsNotificationsTab({
   form,

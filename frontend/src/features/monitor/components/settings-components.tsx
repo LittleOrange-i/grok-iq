@@ -2,16 +2,16 @@ import { Fragment, useState, type ReactNode } from 'react'
 import {
   ArrowRight,
   Copy,
-  Database,
   Eye,
   EyeOff,
   Inbox,
   KeyRound,
-  MessageSquareText,
-  Network,
   SquareCode,
   Webhook,
   Workflow,
+  type Database,
+  type MessageSquareText,
+  type Network,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type RuntimeSettings, type SecretSettingName } from '@/lib/api'

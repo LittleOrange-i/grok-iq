@@ -12,10 +12,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { toast } from 'sonner'
 import { copyText } from '@/lib/clipboard'
-import {
-  buildHtmlDocument,
-  extractHtmlPreviews,
-} from '@/lib/formatted-content'
+import { buildHtmlDocument, extractHtmlPreviews } from '@/lib/formatted-content'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'

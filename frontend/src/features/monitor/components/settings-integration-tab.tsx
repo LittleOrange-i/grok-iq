@@ -38,8 +38,11 @@ import {
   SecretField,
   WebhookContractDialog,
 } from './settings-components'
-import { GROK_REGISTER_REPOSITORY_URL } from './settings-model'
-import type { SettingsForm, SettingsSetter } from './settings-model'
+import {
+  GROK_REGISTER_REPOSITORY_URL,
+  type SettingsForm,
+  type SettingsSetter,
+} from './settings-model'
 
 export function SettingsIntegrationTab({
   form,

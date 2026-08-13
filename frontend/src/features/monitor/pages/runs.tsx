@@ -44,6 +44,7 @@ import {
   type RunSelectionAction,
   type RunSelectionItem,
 } from '@/lib/api'
+import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -98,7 +99,6 @@ import {
   MarkdownView,
   SourceCodeView,
 } from '@/components/formatted-content'
-import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
@@ -530,7 +530,9 @@ export function RunsPage() {
         }
         toast.warning(details.join('；'))
       } else {
-        toast.success(`已${actionLabel} ${result.updated} 个账号出口，可直接建立任务`)
+        toast.success(
+          `已${actionLabel} ${result.updated} 个账号出口，可直接建立任务`
+        )
       }
       if (result.updated > 0 && updatedAccountIds.length > 0) {
         setProbeSelection({
@@ -937,8 +939,7 @@ export function RunsPage() {
             </Select>
             {!egress.isFetching && !bindableEgress.length && (
               <p className='text-sm text-amber-600 dark:text-amber-400'>
-                当前没有已启用且配置了代理的 grok_build
-                出口；仍可选择解除绑定。
+                当前没有已启用且配置了代理的 grok_build 出口；仍可选择解除绑定。
               </p>
             )}
             <div className='rounded-md border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground'>
@@ -956,9 +957,7 @@ export function RunsPage() {
             </Button>
             <Button
               type='button'
-              disabled={
-                !egressBindingTarget || egressBindingMutation.isPending
-              }
+              disabled={!egressBindingTarget || egressBindingMutation.isPending}
               onClick={() => {
                 const nodeId = egressBindingTarget?.startsWith('node:')
                   ? Number(egressBindingTarget.slice(5))
