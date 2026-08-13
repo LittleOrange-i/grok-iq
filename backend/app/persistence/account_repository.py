@@ -31,7 +31,12 @@ class AccountRepository:
     def get_assessment(self, account_id: int) -> dict[str, Any] | None:
         with self.database.session() as session:
             value = session.get(AccountAssessment, account_id)
-            return model_dict(value) if value else None
+            if value is None:
+                return None
+            return self._assessment_view(
+                value,
+                self._evidence_counts(session, [account_id]).get(account_id),
+            )
 
     def get_assessments(self, account_ids: list[int]) -> dict[int, dict[str, Any]]:
         if not account_ids:
@@ -40,7 +45,11 @@ class AccountRepository:
             values = session.scalars(
                 select(AccountAssessment).where(AccountAssessment.account_id.in_(account_ids))
             ).all()
-            return {value.account_id: model_dict(value) for value in values}
+            counts = self._evidence_counts(session, account_ids)
+            return {
+                value.account_id: self._assessment_view(value, counts.get(value.account_id))
+                for value in values
+            }
 
     def list_assessments(self, limit: int = 1000) -> list[dict[str, Any]]:
         with self.database.session() as session:
@@ -49,7 +58,51 @@ class AccountRepository:
                 .order_by(AccountAssessment.risk_score.desc(), AccountAssessment.updated_at.desc())
                 .limit(limit)
             ).all()
-            return [model_dict(value) for value in values]
+            counts = self._evidence_counts(
+                session,
+                [value.account_id for value in values],
+            )
+            return [
+                self._assessment_view(value, counts.get(value.account_id))
+                for value in values
+            ]
+
+    @staticmethod
+    def _assessment_view(
+        assessment: AccountAssessment,
+        counts: tuple[int, int] | None,
+    ) -> dict[str, Any]:
+        value = model_dict(assessment)
+        evidence_sample_count, evidence_anomaly_count = counts or (0, 0)
+        value["evidence_sample_count"] = evidence_sample_count
+        value["evidence_anomaly_count"] = evidence_anomaly_count
+        return value
+
+    @staticmethod
+    def _evidence_counts(
+        session: Any,
+        account_ids: list[int],
+    ) -> dict[int, tuple[int, int]]:
+        if not account_ids:
+            return {}
+        rows = session.execute(
+            select(
+                ProbeSample.account_id,
+                func.count(ProbeSample.id),
+                func.sum(
+                    case(
+                        (ProbeSample.classification.in_(ANOMALY_NAMES), 1),
+                        else_=0,
+                    )
+                ),
+            )
+            .where(ProbeSample.account_id.in_(account_ids))
+            .group_by(ProbeSample.account_id)
+        ).all()
+        return {
+            int(account_id): (int(sample_count or 0), int(anomaly_count or 0))
+            for account_id, sample_count, anomaly_count in rows
+        }
 
     def migrate_fixed_egress_risk_formula(
         self,

@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { LogOut, Settings2 } from 'lucide-react'
-import useDialogState from '@/hooks/use-dialog-state'
 import { useAuthStore } from '@/stores/auth-store'
+import useDialogState from '@/hooks/use-dialog-state'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -55,10 +55,7 @@ export function ProfileDropdown() {
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant='destructive'
-            onClick={() => setOpen(true)}
-          >
+          <DropdownMenuItem variant='destructive' onClick={() => setOpen(true)}>
             <LogOut />
             退出登录
           </DropdownMenuItem>

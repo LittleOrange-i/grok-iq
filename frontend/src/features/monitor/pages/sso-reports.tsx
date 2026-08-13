@@ -29,11 +29,6 @@ import {
   type SsoReportStatus,
 } from '@/lib/api'
 import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
-import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
-import { SelectionToolbar } from '@/components/selection-toolbar'
-import { ServerPagination } from '@/components/server-pagination'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -57,6 +52,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
+import { SelectionToolbar } from '@/components/selection-toolbar'
+import { ServerPagination } from '@/components/server-pagination'
 
 const REPORT_PAGE_SIZES = [20, 50, 100]
 const ACTIVE_REPORT_STATUSES = new Set<SsoReportStatus>(['queued', 'running'])
@@ -245,7 +245,9 @@ export function SsoReportsPage() {
       />
       <ConfirmDialog
         open={deleteOpen}
-        onOpenChange={(open) => !deleteMutation.isPending && setDeleteOpen(open)}
+        onOpenChange={(open) =>
+          !deleteMutation.isPending && setDeleteOpen(open)
+        }
         title={'删除 ' + selectedIds.length + ' 份 SSO 报告？'}
         desc='报告汇总和明细会一并删除。排队中或检测中的报告会自动跳过。'
         confirmText={
@@ -308,7 +310,8 @@ function ReportCard({
                 <Cpu className='size-3' /> 并发 {report.concurrency}
               </span>
               <span className='inline-flex items-center gap-1'>
-                <Timer className='size-3' /> 超时 {report.request_timeout_seconds} 秒
+                <Timer className='size-3' /> 超时{' '}
+                {report.request_timeout_seconds} 秒
               </span>
             </div>
           </div>
@@ -432,7 +435,9 @@ function Metric({
 }) {
   return (
     <div className='px-3 py-3 text-center'>
-      <div className={'text-lg font-semibold tabular-nums ' + tone}>{value}</div>
+      <div className={'text-lg font-semibold tabular-nums ' + tone}>
+        {value}
+      </div>
       <div className='mt-0.5 text-[11px] text-muted-foreground'>{label}</div>
     </div>
   )
@@ -476,7 +481,8 @@ function CreateReportDialog({
         <DialogHeader>
           <DialogTitle>新建 SSO 检测</DialogTitle>
           <DialogDescription>
-            在本页配置并跟踪独立 SSO 任务；提交后立即进入后台队列，不会进入探针任务中心。
+            在本页配置并跟踪独立 SSO
+            任务；提交后立即进入后台队列，不会进入探针任务中心。
           </DialogDescription>
         </DialogHeader>
         <form
@@ -520,7 +526,8 @@ function CreateReportDialog({
                 onChange={(event) => setProxy(event.target.value)}
               />
               <p className='text-xs text-muted-foreground'>
-                也兼容 host:port:username:password 和带 http:// 的地址；留空则直连。代理凭据不会写入报告。
+                也兼容 host:port:username:password 和带 http://
+                的地址；留空则直连。代理凭据不会写入报告。
               </p>
             </div>
           </div>
@@ -538,7 +545,8 @@ function CreateReportDialog({
                 onChange={(event) => setConcurrencyInput(event.target.value)}
               />
               <p className='text-xs leading-5 text-muted-foreground'>
-                同一批次同时检测的 SSO 数量，范围 1–32，推荐 8。数值越高完成越快，但代理和上游压力也越高。
+                同一批次同时检测的 SSO 数量，范围 1–32，推荐
+                8。数值越高完成越快，但代理和上游压力也越高。
               </p>
             </div>
             <div className='space-y-2'>
@@ -554,7 +562,8 @@ function CreateReportDialog({
                 onChange={(event) => setTimeoutInput(event.target.value)}
               />
               <p className='text-xs leading-5 text-muted-foreground'>
-                每个 SSO 请求最长等待时间，范围 5–120 秒，推荐 20。代理较慢时可适当提高。
+                每个 SSO 请求最长等待时间，范围 5–120 秒，推荐
+                20。代理较慢时可适当提高。
               </p>
             </div>
           </div>
@@ -573,7 +582,8 @@ function CreateReportDialog({
               onChange={(event) => setContent(event.target.value)}
             />
             <p className='text-xs text-muted-foreground'>
-              每行一个账号；支持原始 SSO、sso=TOKEN、email----sso 和 email----password----sso。SSO 仅保存在任务内存中。
+              每行一个账号；支持原始 SSO、sso=TOKEN、email----sso 和
+              email----password----sso。SSO 仅保存在任务内存中。
             </p>
           </div>
         </form>
@@ -711,7 +721,9 @@ function ReportDetailDialog({
                         <div className='font-medium'>
                           {report.status === 'queued'
                             ? report.queue_position && report.queue_position > 1
-                              ? '任务正在排队，当前第 ' + report.queue_position + ' 位'
+                              ? '任务正在排队，当前第 ' +
+                                report.queue_position +
+                                ' 位'
                               : '任务正在等待执行'
                             : '任务正在后台检测'}
                         </div>
@@ -733,12 +745,18 @@ function ReportDetailDialog({
                   <div className='flex items-center gap-2 font-medium'>
                     <XCircle className='size-4' /> 检测任务执行失败
                   </div>
-                  <div className='mt-2 leading-6'>{report.error || '未知错误'}</div>
+                  <div className='mt-2 leading-6'>
+                    {report.error || '未知错误'}
+                  </div>
                 </div>
               )}
 
               <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-6'>
-                <SummaryCard icon={UsersRound} label='全部 SSO' value={report.total} />
+                <SummaryCard
+                  icon={UsersRound}
+                  label='全部 SSO'
+                  value={report.total}
+                />
                 <SummaryCard
                   icon={CheckCircle2}
                   label='正常'
@@ -877,7 +895,9 @@ function SummaryCard({
     <Card>
       <CardContent className='flex items-center gap-3 p-4'>
         <div
-          className={'flex size-9 items-center justify-center rounded-lg ' + tone}
+          className={
+            'flex size-9 items-center justify-center rounded-lg ' + tone
+          }
         >
           <Icon className='size-4' />
         </div>
@@ -909,7 +929,9 @@ function ResultRow({ item, index }: { item: SsoCheckResult; index: number }) {
         </div>
       </TableCell>
       <TableCell>
-        <Badge variant={clean ? 'success' : flagged ? 'warning' : 'destructive'}>
+        <Badge
+          variant={clean ? 'success' : flagged ? 'warning' : 'destructive'}
+        >
           {clean ? '正常' : flagged ? '风控标记' : verdictLabel(item.verdict)}
         </Badge>
       </TableCell>
@@ -922,7 +944,7 @@ function ResultRow({ item, index }: { item: SsoCheckResult; index: number }) {
           .join(' / ') || '—'}
       </TableCell>
       <TableCell className='tabular-nums'>{item.response_ms} ms</TableCell>
-      <TableCell className='max-w-md whitespace-normal text-xs leading-5 text-muted-foreground'>
+      <TableCell className='max-w-md text-xs leading-5 whitespace-normal text-muted-foreground'>
         {item.bot_flag.details ||
           item.error ||
           (item.email_match === false ? '输入邮箱与服务端邮箱不一致' : '—')}

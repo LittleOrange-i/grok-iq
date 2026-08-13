@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Loader2, LockKeyhole } from 'lucide-react'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
 import { getErrorMessage } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -32,10 +32,7 @@ type UserAuthFormProps = {
   redirectTo?: string
 }
 
-export function UserAuthForm({
-  setupRequired,
-  redirectTo,
-}: UserAuthFormProps) {
+export function UserAuthForm({ setupRequired, redirectTo }: UserAuthFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -183,11 +180,7 @@ export function UserAuthForm({
           </div>
         )}
         <Button type='submit' className='mt-1 w-full' disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 className='animate-spin' />
-          ) : (
-            <LockKeyhole />
-          )}
+          {isLoading ? <Loader2 className='animate-spin' /> : <LockKeyhole />}
           {setupRequired ? '创建账号并进入' : '登录控制台'}
         </Button>
       </form>

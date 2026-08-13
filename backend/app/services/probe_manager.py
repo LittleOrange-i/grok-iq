@@ -8,14 +8,13 @@ import socket
 import threading
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import psutil
 
-from app.analyzer import SampleMetrics, Thresholds, classify_sample
+from app.analyzer import Thresholds
 from app.core.clock import app_isoformat, utc_now
 from app.core.config import Settings
 from app.core.logging import (
@@ -32,47 +31,16 @@ from app.persistence.probe_repository import (
     RunExecutionContext,
     RunStateError,
 )
+from app.services.probe_call_runner import ProbeCallRunner
+from app.services.probe_cleanup import ProbeCleanupCoordinator, UpstreamCleanupResult
+from app.services.probe_plan_enqueuer import ProbePlanEnqueuer
+from app.services.probe_run_executor import ProbeRunExecutor
+from app.services.probe_runtime import AccountRestoreError, WorkerRuntime
+from app.services.probe_target_validator import ProbeTargetValidator
+from app.services.probe_worker_loop import ProbeWorkerLoop
 from app.services.wechat_notification import WeChatAccountNotificationService
 
 logger = logging.getLogger(__name__)
-FAST_QUALITY_PROBE_EXPECTED = "探针校验通过"
-FAST_QUALITY_PROBE_PROMPT = f"请只输出“{FAST_QUALITY_PROBE_EXPECTED}”，不要添加其他内容。"
-
-
-class AccountRestoreError(RuntimeError):
-    """A diagnostic account could not be returned to its recorded state."""
-
-
-@dataclass(slots=True)
-class UpstreamCleanupResult:
-    account_errors: list[str]
-    resource_errors: list[str]
-
-    @property
-    def errors(self) -> list[str]:
-        return [*self.account_errors, *self.resource_errors]
-
-
-@dataclass(slots=True)
-class WorkerRuntime:
-    index: int
-    worker_id: str
-    status: str
-    started_at: datetime
-    state_changed_at: datetime
-    last_heartbeat_at: datetime
-    current_run_id: str = ""
-    current_account_id: int | None = None
-    current_account_name: str = ""
-    current_profile_id: str = ""
-    current_profile_name: str = ""
-    current_execution_mode: str = ""
-    current_round: int | None = None
-    current_target_key: str = ""
-    current_run_started_at: datetime | None = None
-    completed_runs: int = 0
-    failed_runs: int = 0
-    last_error: str = ""
 
 
 class ProbeManager:
@@ -114,6 +82,20 @@ class ProbeManager:
         self._enqueue_lock = asyncio.Lock()
         self._current_probe_lock = asyncio.Lock()
         self._next_current_probe_at = 0.0
+        self._target_validator = ProbeTargetValidator(client)
+        self._cleanup_coordinator = ProbeCleanupCoordinator(repository, client)
+        self._call_runner = ProbeCallRunner(self, logger)
+        self._run_executor = ProbeRunExecutor(self, logger)
+        self._worker_loop = ProbeWorkerLoop(self, logger)
+        self._plan_enqueuer = ProbePlanEnqueuer(
+            settings=settings,
+            repository=repository,
+            accounts=accounts,
+            client=client,
+            target_validator=self._target_validator,
+            enqueue_lock=self._enqueue_lock,
+            wake=self._wake,
+        )
 
     async def start(self) -> None:
         if self._started:
@@ -345,106 +327,7 @@ class ProbeManager:
         return result
 
     async def enqueue_plan(self, plan: dict[str, Any]) -> dict[str, Any]:
-        plan_id = str(plan["id"])
-        profile_ids = list(
-            dict.fromkeys(
-                str(value).strip()
-                for value in (plan.get("profile_ids") or [plan["profile_id"]])
-                if str(value).strip()
-            )
-        )
-        if plan.get("overlap_policy") == "skip" and self.repository.active_plan_run_count(plan_id):
-            return {
-                "accountScope": str(plan.get("account_scope") or "fixed"),
-                "created": 0,
-                "skipped": len(plan["account_ids"]),
-                "reason": "previous_batch_active",
-            }
-
-        execution_mode = str(plan.get("execution_mode") or "chat")
-        raw_targets = list(plan["proxy_targets"])
-        if execution_mode != "chat" or any(
-            str(target.get("kind") or "") != "current" for target in raw_targets
-        ):
-            raise ValueError("Cron 周期巡检仅支持完整对话和账号当前出口")
-
-        account_scope = str(plan.get("account_scope") or "fixed")
-        if account_scope == "fixed":
-            requested_ids = {int(value) for value in plan["account_ids"]}
-            upstream_accounts = await self.client.list_all_accounts(requested_ids)
-        elif account_scope in {"all_enabled", "risky_enabled"}:
-            upstream_accounts = await self.client.list_all_accounts()
-            upstream_accounts = [
-                account for account in upstream_accounts if bool(account.get("enabled"))
-            ]
-            if account_scope == "risky_enabled":
-                risky_account_ids = self.accounts.risky_account_ids()
-                upstream_accounts = [
-                    account
-                    for account in upstream_accounts
-                    if int(account.get("id") or 0) in risky_account_ids
-                ]
-            requested_ids = {
-                int(account.get("id") or 0) for account in upstream_accounts
-            }
-            requested_ids.discard(0)
-        else:
-            raise ValueError("Cron 计划账号范围无效")
-        by_id = {int(value.get("id") or 0): value for value in upstream_accounts}
-        targets = await self.validate_targets(raw_targets, execution_mode=execution_mode)
-        missing: list[int] = []
-        invalid: list[dict[str, Any]] = []
-        diagnostic: list[int] = []
-        available_accounts: list[dict[str, Any]] = []
-        for account_id in sorted(requested_ids):
-            account = by_id.get(account_id)
-            if account is None:
-                missing.append(account_id)
-                continue
-            try:
-                self._validate_account_for_targets(account, targets)
-            except ValueError as exc:
-                invalid.append({"id": account_id, "reason": str(exc)})
-                continue
-            if not bool(account.get("enabled")):
-                diagnostic.append(account_id)
-            available_accounts.append(account)
-        async with self._enqueue_lock:
-            result = self.repository.create_plan_runs_batch(
-                plan_id=plan_id,
-                accounts=available_accounts,
-                profile_ids=profile_ids,
-                execution_mode=execution_mode,
-                rounds=int(plan["rounds"]),
-                proxy_targets=targets,
-                priority=int(plan["priority"]),
-                queue_limit=self.settings.probe_queue_limit,
-                register_cooldown_minutes=(
-                    self.settings.scheduled_probe_register_cooldown_minutes
-                ),
-            )
-        created = len(result["runIds"])
-        if created:
-            self._wake.set()
-        skipped_account_ids = set(missing)
-        skipped_account_ids.update(item["id"] for item in invalid)
-        skipped_account_ids.update(result["activeAccountIds"])
-        skipped_account_ids.update(result["restoreBlockedAccountIds"])
-        skipped_account_ids.update(result["registerCooldownAccountIds"])
-        return {
-            "accountScope": account_scope,
-            "resolvedAccountCount": len(requested_ids),
-            "created": created,
-            "skipped": len(skipped_account_ids),
-            "missingAccountIds": missing,
-            "invalidAccounts": invalid,
-            "diagnosticAccountIds": diagnostic,
-            "activeAccountIds": result["activeAccountIds"],
-            "restoreBlockedAccountIds": result["restoreBlockedAccountIds"],
-            "registerCooldownAccountIds": result["registerCooldownAccountIds"],
-            "profileIds": result["profileIds"],
-            "runIds": result["runIds"],
-        }
+        return await self._plan_enqueuer.enqueue(plan)
 
     async def retry(self, run_id: str) -> str:
         values = self.repository.retry_values(run_id)
@@ -505,79 +388,15 @@ class ProbeManager:
     async def validate_targets(
         self, targets: list[dict[str, Any]], *, execution_mode: str = "chat"
     ) -> list[dict[str, Any]]:
-        if not targets:
-            raise ValueError("至少选择一个账号当前出口或诊断出口目标")
-        if execution_mode not in {"chat", "quality_test"}:
-            raise ValueError("探针执行模式无效")
-        if execution_mode == "quality_test" and any(target.get("kind") != "egress" for target in targets):
-            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
-        if any(target.get("kind") == "current" for target in targets) and any(
-            target.get("kind") != "current" for target in targets
-        ):
-            raise ValueError("账号当前出口不能与诊断出口混用，请分别创建定检和诊断任务")
-        requested_node_ids = {
-            int(target.get("id") or 0) for target in targets if target.get("kind") == "egress"
-        }
-        requested_node_ids.discard(0)
-        nodes_by_id: dict[int, dict[str, Any]] = {}
-        if requested_node_ids:
-            page = 1
-            while True:
-                payload = await self.client.list_egress_nodes(page=page, pageSize=500)
-                batch = list(payload.get("items", []))
-                for node in batch:
-                    node_id = int(node.get("id") or 0)
-                    if node_id in requested_node_ids:
-                        nodes_by_id[node_id] = node
-                if requested_node_ids <= nodes_by_id.keys():
-                    break
-                if not batch or page * int(payload.get("pageSize") or 500) >= int(payload.get("total") or 0):
-                    break
-                page += 1
-
-        normalized: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for target in targets:
-            kind = str(target.get("kind") or "")
-            if kind == "current":
-                value = {"kind": "current", "id": None, "name": "账号当前出口"}
-                key = "current"
-            elif kind == "direct":
-                value = {"kind": "direct", "id": None, "name": "上游调度（诊断）"}
-                key = "direct"
-            elif kind == "egress":
-                node_id = int(target.get("id") or 0)
-                node = nodes_by_id.get(node_id)
-                if node is None:
-                    raise ValueError(f"出口节点 {node_id} 不存在")
-                if not node.get("enabled") or not node.get("proxyConfigured"):
-                    raise ValueError(f"出口节点 {node_id} 未启用或未配置代理")
-                value = {"kind": "egress", "id": node_id, "name": str(node.get("name") or node_id)}
-                key = f"egress:{node_id}"
-            else:
-                raise ValueError("代理目标 kind 必须为 current、direct 或 egress")
-            if key not in seen:
-                normalized.append(value)
-                seen.add(key)
-        return normalized
+        return await self._target_validator.validate(targets, execution_mode=execution_mode)
 
     @staticmethod
     def _validate_probe_account(account: dict[str, Any]) -> None:
-        account_id = int(account.get("id") or 0)
-        auth_status = str(account.get("authStatus") or "")
-        if auth_status and auth_status != "active":
-            raise ValueError(f"账号 {account_id} 当前鉴权状态为 {auth_status}，暂不具备探针执行条件")
+        ProbeTargetValidator.validate_account(account)
 
     @classmethod
     def _validate_account_for_targets(cls, account: dict[str, Any], targets: list[dict[str, Any]]) -> None:
-        cls._validate_probe_account(account)
-        if not any(target.get("kind") == "current" for target in targets):
-            return
-        account_id = int(account.get("id") or 0)
-        if not bool(account.get("enabled")):
-            raise ValueError(f"账号 {account_id} 已停用，正常定检不会临时激活；请启用账号或改用人工诊断")
-        if int(account.get("egressNodeId") or 0) <= 0:
-            raise ValueError(f"账号 {account_id} 未绑定固定出口；请先在 grok2api 绑定账号出口")
+        ProbeTargetValidator.validate_account_for_targets(account, targets)
 
     def _ensure_account_restore_ready(self, account_id: int) -> None:
         if self.repository.has_blocking_account_restore(account_id=account_id):
@@ -815,452 +634,14 @@ class ProbeManager:
         runtime.current_run_started_at = None
 
     async def _worker(self, index: int) -> None:
-        worker_id = f"worker-{index}"
-        runtime = self._worker_runtime[index]
-        self._set_worker_status(runtime, "idle")
-        logger.info("worker started worker=%s pid=%s", worker_id, os.getpid())
-        try:
-            while True:
-                if self._stopping:
-                    return
-                if index > self._desired_worker_concurrency:
-                    return
-                try:
-                    async with self._claim_lock:
-                        context = self.repository.claim_next(worker_id)
-                except Exception as exc:
-                    runtime.last_error = str(exc)
-                    self._set_worker_status(runtime, "error")
-                    logger.exception("worker claim failed worker=%s", worker_id)
-                    await asyncio.sleep(1)
-                    continue
-                if context is None:
-                    self._set_worker_status(runtime, "idle")
-                    self._wake.clear()
-                    try:
-                        await asyncio.wait_for(self._wake.wait(), timeout=1.0)
-                    except TimeoutError:
-                        pass
-                    continue
-
-                run = context.run
-                profile = context.profile
-                runtime.current_run_id = str(run["id"])
-                runtime.current_account_id = int(run["account_id"])
-                runtime.current_account_name = str(run.get("account_name") or run.get("account_email") or "")
-                runtime.current_profile_id = str(run["profile_id"])
-                runtime.current_profile_name = str(profile.get("name") or "")
-                runtime.current_execution_mode = str(run.get("execution_mode") or "chat")
-                runtime.current_run_started_at = utc_now()
-                runtime.last_error = ""
-                self._set_worker_status(runtime, "running")
-                logger.info(
-                    "run claimed worker=%s run=%s account=%s profile=%s mode=%s",
-                    worker_id,
-                    runtime.current_run_id,
-                    runtime.current_account_id,
-                    runtime.current_profile_id,
-                    runtime.current_execution_mode,
-                )
-
-                finished: dict[str, Any] | None = None
-                try:
-                    finished = await self._execute(context, runtime)
-                except Exception as exc:
-                    runtime.last_error = str(exc)
-                    logger.exception(
-                        "unhandled worker execution error worker=%s run=%s",
-                        worker_id,
-                        runtime.current_run_id,
-                    )
-                    current = self.repository.get_run(runtime.current_run_id)
-                    if current and str(current.get("status")) in {
-                        "running",
-                        "cancel_requested",
-                        "recovering",
-                    }:
-                        try:
-                            finished = self.repository.finish_run(
-                                runtime.current_run_id,
-                                status="failed",
-                                error=f"Worker 未处理异常: {exc}",
-                            )
-                        except Exception:
-                            logger.exception(
-                                "failed to finalize crashed run worker=%s run=%s",
-                                worker_id,
-                                runtime.current_run_id,
-                            )
-                finally:
-                    if finished is not None:
-                        runtime.completed_runs += 1
-                        failed = str(finished.get("status")) in {
-                            "failed",
-                            "completed_with_errors",
-                        }
-                        if failed:
-                            runtime.failed_runs += 1
-                        duration = (
-                            max(
-                                0.0,
-                                (utc_now() - runtime.current_run_started_at).total_seconds(),
-                            )
-                            if runtime.current_run_started_at
-                            else 0.0
-                        )
-                        with self._recent_completions_lock:
-                            self._recent_completions.append(
-                                (utc_now(), failed, duration)
-                            )
-                    self._clear_worker_run(runtime)
-                    self._set_worker_status(
-                        runtime,
-                        "stopping" if index > self._desired_worker_concurrency else "idle",
-                    )
-        finally:
-            self._clear_worker_run(runtime)
-            self._set_worker_status(runtime, "stopped")
-            logger.info("worker stopped worker=%s pid=%s", worker_id, os.getpid())
+        await self._worker_loop.run(index)
 
     async def _execute(
         self,
         context: RunExecutionContext,
         runtime: WorkerRuntime,
     ) -> dict[str, Any]:
-        run = context.run
-        profile = context.profile
-        run_id = str(run["id"])
-        account_id = int(run["account_id"])
-        execution_mode = str(run.get("execution_mode") or "chat")
-        original_node_id: int | None = None
-        original_mode = ""
-        snapshot: AccountSettingsSnapshot | None = None
-        route_id = ""
-        public_model = ""
-        client_key_id = ""
-        api_key = ""
-        cancelled = False
-        fatal_error = ""
-        cleanup_errors: list[str] = []
-
-        try:
-            account = await self.client.get_account(account_id)
-            self._validate_account_for_targets(account, list(run["proxy_targets"]))
-            original_node_id = int(account.get("egressNodeId") or 0) or None
-            original_mode = str(account.get("egressAssignmentMode") or "")
-            priority_value = account.get("priority")
-            snapshot = self.repository.ensure_account_settings_snapshot(
-                run_id=run_id,
-                enabled=bool(account.get("enabled")),
-                priority=int(priority_value) if priority_value is not None else 1,
-                max_concurrent=int(account.get("maxConcurrent") or 1),
-                egress_node_id=original_node_id,
-                egress_assignment_mode=original_mode,
-                diagnostic_priority=self.settings.probe_diagnostic_priority,
-                diagnostic_max_concurrent=1,
-            )
-            route_id, public_model = await self.client.create_probe_route(
-                account_id=account_id,
-                upstream_model=str(profile["model"]),
-                allow_temporarily_unavailable=not snapshot.enabled,
-            )
-            self.repository.set_upstream_context(
-                run_id=run_id,
-                original_node_id=original_node_id,
-                original_mode=original_mode,
-                route_id=route_id,
-                public_model=public_model,
-                client_key_id="",
-            )
-            client_key_id, api_key = await self.client.create_probe_client_key(route_id)
-            self.repository.set_upstream_context(
-                run_id=run_id,
-                original_node_id=original_node_id,
-                original_mode=original_mode,
-                route_id=route_id,
-                public_model=public_model,
-                client_key_id=client_key_id,
-            )
-
-            completed = self.repository.completed_step_keys(run_id)
-            total_rounds = int(run["rounds"])
-            targets = list(run["proxy_targets"])
-            for round_number in range(1, total_rounds + 1):
-                for target_index, target in enumerate(targets):
-                    target_key = self._target_key(target)
-                    if (round_number, target_key) in completed:
-                        continue
-                    if self._stopping or self.repository.is_cancel_requested(run_id):
-                        cancelled = True
-                        break
-                    self.repository.set_current_step(run_id, round_number, target_key)
-                    runtime.current_round = round_number
-                    runtime.current_target_key = target_key
-                    self._set_worker_status(runtime, "running")
-                    logger.info(
-                        "step started worker=%s run=%s account=%s round=%s target=%s",
-                        runtime.worker_id,
-                        run_id,
-                        account_id,
-                        round_number,
-                        target_key,
-                    )
-                    try:
-                        if execution_mode == "chat":
-                            if target.get("kind") == "current":
-                                await self._wait_for_current_probe_slot(run_id)
-                                live_account = await self.client.get_account(account_id)
-                                live_node_id = int(live_account.get("egressNodeId") or 0) or None
-                                if live_node_id != original_node_id:
-                                    raise IntegrationError(
-                                        f"账号出口在定检期间从节点 {original_node_id} 变为 "
-                                        f"{live_node_id or '未绑定'}，已停止该样本"
-                                    )
-                            else:
-                                self.repository.mark_account_mutation_pending(run_id)
-                                await self.client.set_account_egress(account_id, target)
-                                await asyncio.sleep(0.15)
-
-                            def probe_factory() -> Awaitable[Any]:
-                                return self.client.chat_probe(
-                                    api_key=api_key,
-                                    public_model=public_model,
-                                    account_id=account_id,
-                                    system_prompt=str(profile["system_prompt"]),
-                                    prompt=str(profile["prompt"]),
-                                    expected=str(profile["expected_text"]),
-                                    max_output_tokens=int(profile["max_output_tokens"]),
-                                    temperature=profile["temperature"],
-                                    extra_body=dict(profile["extra_body"] or {}),
-                                )
-
-                        else:
-                            egress_node_id = int(target.get("id") or 0)
-
-                            def probe_factory(
-                                node_id: int = egress_node_id,
-                            ) -> Awaitable[Any]:
-                                return self.client.quality_probe(
-                                    client_key_id=client_key_id,
-                                    public_model=public_model,
-                                    account_id=account_id,
-                                    egress_node_id=node_id,
-                                    # Keep quick mode independent of user profiles
-                                    # while exposing a readable validation marker.
-                                    prompt=FAST_QUALITY_PROBE_PROMPT,
-                                    expected=FAST_QUALITY_PROBE_EXPECTED,
-                                    max_output_tokens=0,
-                                )
-
-                        result = await self._run_probe_call(
-                            run_id=run_id,
-                            account_id=account_id,
-                            snapshot=snapshot,
-                            factory=probe_factory,
-                        )
-                        self._verify_probe_egress(
-                            target=target,
-                            original_node_id=original_node_id,
-                            result=result,
-                        )
-                    except asyncio.CancelledError:
-                        cancelled = True
-                        break
-                    except AccountRestoreError:
-                        raise
-                    except Exception as exc:
-                        self.repository.add_sample(
-                            run_id,
-                            self._error_sample(
-                                round_number,
-                                target,
-                                exc,
-                                current_node_id=original_node_id,
-                            ),
-                        )
-                        logger.warning(
-                            "step failed worker=%s run=%s account=%s round=%s target=%s "
-                            "status=%s code=%s error=%s",
-                            runtime.worker_id,
-                            run_id,
-                            account_id,
-                            round_number,
-                            target_key,
-                            int(getattr(exc, "status_code", 0) or 0),
-                            str(getattr(exc, "error_code", "") or ""),
-                            str(exc),
-                        )
-                        has_next_step = (
-                            target_index + 1 < len(targets) or round_number < total_rounds
-                        )
-                        if (
-                            has_next_step
-                            and isinstance(exc, IntegrationError)
-                            and exc.transient
-                        ):
-                            await self._wait_for_account_cooldown(run_id, account_id, exc)
-                    else:
-                        classified = classify_sample(
-                            SampleMetrics(
-                                status_code=result.status_code,
-                                output_tokens=result.output_tokens,
-                                reasoning_tokens=result.reasoning_tokens,
-                                first_token_ms=result.first_token_ms,
-                                duration_ms=result.duration_ms,
-                                egress_key=target_key,
-                                expected_matched=result.expected_matched,
-                            ),
-                            self.thresholds,
-                        )
-                        self.repository.add_sample(
-                            run_id,
-                            {
-                                "round_number": round_number,
-                                "target_key": target_key,
-                                "target_kind": str(target["kind"]),
-                                "egress_node_id": (
-                                    original_node_id if target.get("kind") == "current" else target.get("id")
-                                ),
-                                "egress_name": str(target.get("name") or ""),
-                                "request_id": result.request_id,
-                                "audit_id": result.audit_id,
-                                "verified_account_id": result.verified_account_id,
-                                "verified_egress_node_id": result.verified_egress_node_id,
-                                "status": "done",
-                                "status_code": result.status_code,
-                                "output_tokens": result.output_tokens,
-                                "reasoning_tokens": result.reasoning_tokens,
-                                "visible_tokens": result.visible_tokens,
-                                "chunk_count": result.chunk_count,
-                                "first_token_ms": result.first_token_ms,
-                                "duration_ms": result.duration_ms,
-                                "generation_ms": result.generation_ms,
-                                "first_token_share": result.first_token_share,
-                                "tps": result.tps,
-                                "expected_matched": result.expected_matched,
-                                "response_sha256": result.response_sha256,
-                                "response_text": result.response_text,
-                                "usage": result.usage,
-                                "classification": classified.name,
-                                "severity": classified.severity,
-                                "error": "",
-                                "created_at": utc_now(),
-                            },
-                        )
-                        logger.info(
-                            "step completed worker=%s run=%s account=%s round=%s target=%s "
-                            "http=%s output_tokens=%s tps=%.2f duration_ms=%s classification=%s",
-                            runtime.worker_id,
-                            run_id,
-                            account_id,
-                            round_number,
-                            target_key,
-                            result.status_code,
-                            result.output_tokens,
-                            result.tps,
-                            result.duration_ms,
-                            classified.name,
-                        )
-                    if cancelled:
-                        break
-                    if self.settings.probe_step_delay_seconds:
-                        await asyncio.sleep(self.settings.probe_step_delay_seconds)
-                if cancelled:
-                    break
-        except asyncio.CancelledError:
-            cancelled = True
-        except Exception as exc:
-            fatal_error = str(exc)
-            logger.exception("probe run %s failed", run_id)
-        finally:
-            cleanup_result = await self._cleanup_upstream(
-                run_id=run_id,
-                account_id=account_id,
-                snapshot=snapshot,
-                legacy_original_node_id=original_node_id,
-                legacy_original_mode=original_mode,
-                route_id=route_id,
-                client_key_id=client_key_id,
-                restore_egress=self._run_changes_egress(run),
-                source="automatic",
-            )
-            cleanup_errors.extend(cleanup_result.errors)
-            if not cleanup_result.resource_errors:
-                self.repository.clear_upstream_context(run_id)
-
-        error = "; ".join(value for value in [fatal_error, *cleanup_errors] if value)
-        if cancelled:
-            status = "cancelled"
-        elif fatal_error:
-            status = "failed"
-        elif cleanup_errors:
-            status = "completed_with_errors"
-        else:
-            status = None
-        finished = self.repository.finish_run(run_id, status=status, error=error)
-        try:
-            previous_assessment = self.accounts.get_assessment(account_id)
-            assessment = self.accounts.recalculate(
-                account_id,
-                self.thresholds,
-                self.settings.analysis_window_hours,
-            )
-        except Exception:
-            # Run evidence is already complete. Post-processing failure must be
-            # visible in the rotating log, but it must not terminate a Worker.
-            logger.exception(
-                "run post-processing failed worker=%s run=%s account=%s",
-                runtime.worker_id,
-                run_id,
-                account_id,
-            )
-        else:
-            try:
-                assessment = await self._apply_auto_quarantine(account_id, assessment)
-            except Exception:
-                # A failed automatic action must not suppress the risk message;
-                # send the recalculated high-risk assessment below.
-                logger.exception(
-                    "auto quarantine failed worker=%s run=%s account=%s",
-                    runtime.worker_id,
-                    run_id,
-                    account_id,
-                )
-            if self.notifications is not None:
-                try:
-                    trigger = str(run.get("trigger") or "probe")
-                    force_notification = trigger in {"manual", "retry"} and str(
-                        finished.get("status") or ""
-                    ) in {"completed", "completed_with_errors"}
-                    await self.notifications.notify_account_transition(
-                        account={
-                            "id": account_id,
-                            "name": str(run.get("account_name") or ""),
-                            "email": str(run.get("account_email") or ""),
-                        },
-                        previous=previous_assessment,
-                        current=assessment,
-                        source=trigger,
-                        force=force_notification,
-                    )
-                except Exception:
-                    logger.exception(
-                        "wechat notification failed worker=%s run=%s account=%s",
-                        runtime.worker_id,
-                        run_id,
-                        account_id,
-                    )
-        logger.info(
-            "run finished worker=%s run=%s account=%s status=%s completed_steps=%s/%s errors=%s",
-            runtime.worker_id,
-            run_id,
-            account_id,
-            finished.get("status"),
-            finished.get("completed_steps"),
-            finished.get("total_steps"),
-            finished.get("error_count"),
-        )
-        return finished
+        return await self._run_executor.execute(context, runtime)
 
     async def _run_probe_call(
         self,
@@ -1270,84 +651,12 @@ class ProbeManager:
         snapshot: AccountSettingsSnapshot,
         factory: Callable[[], Awaitable[Any]],
     ) -> Any:
-        """Run one sample, temporarily activating an originally disabled account."""
-
-        primary_error: BaseException | None = None
-        activation_required = not snapshot.enabled
-        try:
-            if activation_required:
-                # Persist intent before the upstream PATCH. A crash between the
-                # two operations is therefore handled conservatively by startup
-                # recovery or the task detail's manual synchronization action.
-                self.repository.set_diagnostic_activation(run_id, True)
-                await self.client.set_account_routing_settings(
-                    account_id,
-                    enabled=True,
-                    priority=snapshot.diagnostic_priority,
-                    max_concurrent=snapshot.diagnostic_max_concurrent,
-                )
-                await asyncio.sleep(0.15)
-
-            retry_limit = max(0, int(getattr(self.settings, "probe_transient_retry_attempts", 2)))
-            for attempt in range(retry_limit + 1):
-                call = asyncio.create_task(factory(), name=f"probe-call-{run_id}-{attempt + 1}")
-                self._active_calls[run_id] = call
-                try:
-                    result = await call
-                    self._active_calls.pop(run_id, None)
-                    if attempt and hasattr(result, "usage"):
-                        # Keep the successful sample as one logical step while
-                        # exposing how many upstream attempts were needed.
-                        usage = dict(result.usage or {})
-                        usage["probeAttempts"] = attempt + 1
-                        try:
-                            result = replace(result, usage=usage)
-                        except (TypeError, ValueError):
-                            pass
-                    return result
-                except asyncio.CancelledError:
-                    raise
-                except IntegrationError as exc:
-                    self._active_calls.pop(run_id, None)
-                    exc.attempt_count = attempt + 1
-                    primary_error = exc
-                    if not exc.transient or attempt >= retry_limit:
-                        raise
-                    delay = await self._transient_retry_delay(
-                        account_id=account_id,
-                        error=exc,
-                        attempt=attempt,
-                    )
-                    logger.info(
-                        "probe %s transient upstream state (%s/%s), retrying in %.1fs: %s",
-                        run_id,
-                        attempt + 1,
-                        retry_limit + 1,
-                        delay,
-                        exc,
-                    )
-                    await self._sleep_probe_delay(run_id, delay)
-                finally:
-                    self._active_calls.pop(run_id, None)
-        except BaseException as exc:
-            primary_error = exc
-            raise
-        finally:
-            self._active_calls.pop(run_id, None)
-            if activation_required:
-                try:
-                    await self._restore_diagnostic_activation(
-                        run_id=run_id,
-                        account_id=account_id,
-                        snapshot=snapshot,
-                    )
-                except Exception as exc:
-                    message = f"单次探针后恢复账号路由设置失败: {exc}"
-                    self.repository.finish_account_restore(run_id, "automatic", message)
-                    if isinstance(primary_error, asyncio.CancelledError):
-                        logger.exception("%s", message)
-                    else:
-                        raise AccountRestoreError(message) from exc
+        return await self._call_runner.run(
+            run_id=run_id,
+            account_id=account_id,
+            snapshot=snapshot,
+            factory=factory,
+        )
 
     async def _transient_retry_delay(
         self,
@@ -1494,21 +803,11 @@ class ProbeManager:
         account_id: int,
         snapshot: AccountSettingsSnapshot,
     ) -> None:
-        async def restore() -> None:
-            await self.client.set_account_routing_settings(
-                account_id,
-                enabled=snapshot.enabled,
-                priority=snapshot.priority,
-                max_concurrent=snapshot.max_concurrent,
-            )
-            self.repository.set_diagnostic_activation(run_id, False)
-
-        task = asyncio.create_task(restore(), name=f"probe-account-restore-{run_id}")
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-            raise
+        await self._cleanup_coordinator.restore_diagnostic_activation(
+            run_id=run_id,
+            account_id=account_id,
+            snapshot=snapshot,
+        )
 
     async def _cleanup_upstream(
         self,
@@ -1524,78 +823,17 @@ class ProbeManager:
         source: str,
         account_restore_started: bool = False,
     ) -> UpstreamCleanupResult:
-        account_errors: list[str] = []
-        resource_errors: list[str] = []
-
-        async def cleanup() -> None:
-            current_run = self.repository.get_run(run_id) or {}
-            restore_status = str(current_run.get("account_restore_status") or "")
-            restore_egress_requested = restore_egress and (
-                source == "manual" or restore_status in {"pending", "restoring", "restore_failed"}
-            )
-            restore_requested = (
-                bool(current_run.get("diagnostic_activation_active"))
-                or restore_status in {"pending", "restoring", "restore_failed"}
-                or restore_egress_requested
-                or source == "manual"
-            )
-            restore_account_routing = bool(
-                current_run.get("diagnostic_activation_active")
-                or (source == "manual" and snapshot is not None and not snapshot.enabled)
-            )
-            if snapshot is not None:
-                if restore_requested and not account_restore_started:
-                    self.repository.begin_account_restore(run_id, source)
-                if restore_account_routing:
-                    try:
-                        await self.client.set_account_routing_settings(
-                            account_id,
-                            enabled=snapshot.enabled,
-                            priority=snapshot.priority,
-                            max_concurrent=snapshot.max_concurrent,
-                        )
-                        self.repository.set_diagnostic_activation(run_id, False)
-                    except Exception as exc:
-                        account_errors.append(f"恢复启用状态、优先级和并发数失败: {exc}")
-                if restore_egress_requested:
-                    try:
-                        await self.client.restore_account_egress(
-                            account_id,
-                            snapshot.egress_node_id,
-                            snapshot.egress_assignment_mode,
-                        )
-                    except Exception as exc:
-                        account_errors.append(f"恢复账号出口失败: {exc}")
-                if restore_requested:
-                    restore_error = "; ".join(account_errors)
-                    self.repository.finish_account_restore(run_id, source, restore_error)
-            elif restore_egress_requested:
-                if not account_restore_started:
-                    self.repository.begin_account_restore(run_id, source)
-                try:
-                    await self.client.restore_account_egress(
-                        account_id, legacy_original_node_id, legacy_original_mode
-                    )
-                except Exception as exc:
-                    account_errors.append(f"恢复账号出口失败: {exc}")
-                self.repository.finish_account_restore(run_id, source, "; ".join(account_errors))
-            try:
-                await self.client.delete_probe_client_key(client_key_id)
-            except Exception as exc:
-                resource_errors.append(f"删除临时 Client Key 失败: {exc}")
-            try:
-                await self.client.delete_probe_route(route_id)
-            except Exception as exc:
-                resource_errors.append(f"删除临时模型路由失败: {exc}")
-
-        task = asyncio.create_task(cleanup())
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            await task
-        return UpstreamCleanupResult(
-            account_errors=account_errors,
-            resource_errors=resource_errors,
+        return await self._cleanup_coordinator.cleanup(
+            run_id=run_id,
+            account_id=account_id,
+            snapshot=snapshot,
+            legacy_original_node_id=legacy_original_node_id,
+            legacy_original_mode=legacy_original_mode,
+            route_id=route_id,
+            client_key_id=client_key_id,
+            restore_egress=restore_egress,
+            source=source,
+            account_restore_started=account_restore_started,
         )
 
     async def _recover_interrupted_runs(self) -> None:

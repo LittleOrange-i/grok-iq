@@ -198,7 +198,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       notifyAuthenticationRequired(Boolean(payload?.setupRequired))
     }
     throw new Error(
-      payload?.detail || payload?.error?.message || text || `HTTP ${response.status}`
+      payload?.detail ||
+        payload?.error?.message ||
+        text ||
+        `HTTP ${response.status}`
     )
   }
   if (response.status === 204) return undefined as T
@@ -222,8 +225,7 @@ export const api = {
     request<Record<string, unknown>>(`/dashboard?hours=${hours}`),
   accounts: (params: Record<string, string | number | undefined>) =>
     request<Page<UpstreamAccount>>(`/accounts${query(params)}`),
-  account: (id: number) =>
-    request<Record<string, unknown>>(`/accounts/${id}`),
+  account: (id: number) => request<Record<string, unknown>>(`/accounts/${id}`),
   accountAction: (id: number, body: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/accounts/${id}/action`, {
       method: 'POST',

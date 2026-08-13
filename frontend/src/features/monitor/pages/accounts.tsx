@@ -641,6 +641,14 @@ export function AccountsPage() {
                     {accounts.map((account) => {
                       const id = Number(account.id)
                       const assessment = account.assessment
+                      const evidenceSampleCount =
+                        assessment.evidence_sample_count ??
+                        assessment.sample_count ??
+                        0
+                      const evidenceAnomalyCount =
+                        assessment.evidence_anomaly_count ??
+                        assessment.anomaly_count ??
+                        0
                       const accountLabel =
                         account.name || account.email || `账号 ${id}`
                       const secondaryAccountLabel =
@@ -735,13 +743,13 @@ export function AccountsPage() {
                           </TableCell>
                           <TableCell>
                             <span className='tabular-nums'>
-                              {assessment.sample_count ?? 0}
+                              {evidenceSampleCount}
                             </span>
                             <span className='mx-1 text-muted-foreground'>
                               /
                             </span>
                             <span className='text-amber-600 tabular-nums'>
-                              {assessment.anomaly_count ?? 0}
+                              {evidenceAnomalyCount}
                             </span>
                           </TableCell>
                           <TableCell>
@@ -1165,6 +1173,11 @@ function AccountDetail({
   const history = data.history
   const reasons: string[] = assessment.risk_reasons ?? []
   const byTarget = history.byTarget ?? []
+  const evidenceSampleCount =
+    assessment.evidence_sample_count ?? history.samples.length
+  const evidenceAnomalyCount =
+    assessment.evidence_anomaly_count ??
+    byTarget.reduce((total, item) => total + (item.anomalies ?? 0), 0)
   return (
     <div className='space-y-5'>
       <div className='grid gap-3 sm:grid-cols-3 lg:grid-cols-6'>
@@ -1198,7 +1211,7 @@ function AccountDetail({
         <Metric label='风险分' value={formatNumber(assessment.risk_score)} />
         <Metric
           label='样本 / 信号'
-          value={`${assessment.sample_count ?? 0} / ${assessment.anomaly_count ?? 0}`}
+          value={`${evidenceSampleCount} / ${evidenceAnomalyCount}`}
         />
         <Metric
           label='最后样本'
@@ -1600,10 +1613,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
   )
 }
 
-function formatQuotaAmount(
-  value: number,
-  unit: UpstreamQuota['unit']
-): string {
+function formatQuotaAmount(value: number, unit: UpstreamQuota['unit']): string {
   const digits = unit === 'credits' ? 2 : 0
   const suffix =
     unit === 'credits' ? ' credits' : unit === 'tokens' ? ' Token' : ''

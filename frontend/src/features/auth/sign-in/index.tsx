@@ -1,15 +1,9 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
-import {
-  Activity,
-  Check,
-  Loader2,
-  Radar,
-  ShieldCheck,
-} from 'lucide-react'
-import { api } from '@/lib/api'
+import { Activity, Check, Loader2, Radar, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
+import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import {
   Card,

@@ -19,47 +19,179 @@ from app.web.schemas import (
 )
 
 
-def build_probes_router(
-    *,
-    settings: Settings,
-    accounts: AccountRepository,
-    repository: ProbeRepository,
-    manager: ProbeManager,
-    scheduler: SchedulerService,
-) -> APIRouter:
-    router = APIRouter()
+class ProbesRouter:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        accounts: AccountRepository,
+        repository: ProbeRepository,
+        manager: ProbeManager,
+        scheduler: SchedulerService,
+    ):
+        self.settings = settings
+        self.accounts = accounts
+        self.repository = repository
+        self.manager = manager
+        self.scheduler = scheduler
+        self.router = APIRouter()
+        self._register_profile_routes()
+        self._register_plan_routes()
+        self._register_run_routes()
+        self._register_scheduler_routes()
 
-    @router.get("/probe-profiles")
-    def list_profiles() -> list[dict[str, Any]]:
-        return repository.list_profiles()
+    def _register_profile_routes(self) -> None:
+        self.router.add_api_route(
+            "/probe-profiles", self.list_profiles, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-profiles", self.create_profile, methods=["POST"], status_code=201
+        )
+        self.router.add_api_route(
+            "/probe-profiles/{profile_id}", self.update_profile, methods=["PUT"]
+        )
+        self.router.add_api_route(
+            "/probe-profiles/{profile_id}",
+            self.delete_profile,
+            methods=["DELETE"],
+            status_code=204,
+        )
+        self.router.add_api_route(
+            "/probe-profiles", self.delete_profiles, methods=["DELETE"]
+        )
 
-    @router.post("/probe-profiles", status_code=201)
-    def create_profile(payload: ProfileInput) -> dict[str, Any]:
-        return {"id": repository.create_profile(payload.model_dump())}
+    def _register_plan_routes(self) -> None:
+        self.router.add_api_route("/probe-plans", self.list_plans, methods=["GET"])
+        self.router.add_api_route(
+            "/probe-plans", self.create_plan, methods=["POST"], status_code=201
+        )
+        self.router.add_api_route(
+            "/probe-plans/{plan_id}", self.update_plan, methods=["PUT"]
+        )
+        self.router.add_api_route(
+            "/probe-plans/{plan_id}/enabled",
+            self.set_plan_enabled,
+            methods=["PUT"],
+        )
+        self.router.add_api_route(
+            "/probe-plans/{plan_id}",
+            self.delete_plan,
+            methods=["DELETE"],
+            status_code=204,
+        )
+        self.router.add_api_route(
+            "/probe-plans", self.delete_plans, methods=["DELETE"]
+        )
+        self.router.add_api_route(
+            "/probe-plans/batch/run", self.run_plans, methods=["POST"]
+        )
+        self.router.add_api_route(
+            "/probe-plans/{plan_id}/run", self.run_plan, methods=["POST"]
+        )
 
-    @router.put("/probe-profiles/{profile_id}")
+    def _register_run_routes(self) -> None:
+        self.router.add_api_route(
+            "/probe-runs", self.create_probe_run, methods=["POST"], status_code=201
+        )
+        self.router.add_api_route(
+            "/probe-runs/batch",
+            self.create_probe_runs_batch,
+            methods=["POST"],
+            status_code=201,
+        )
+        self.router.add_api_route(
+            "/probe-runs", self.list_probe_runs, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-workers", self.probe_worker_status, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-workers/logs", self.probe_worker_logs, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-runs/batch/cancel", self.cancel_probe_runs, methods=["POST"]
+        )
+        self.router.add_api_route(
+            "/probe-runs/batch/restore-account-settings",
+            self.restore_probe_runs_account_settings,
+            methods=["POST"],
+        )
+        self.router.add_api_route(
+            "/probe-runs/selection", self.select_probe_runs, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-runs/{run_id}", self.probe_run_detail, methods=["GET"]
+        )
+        self.router.add_api_route(
+            "/probe-runs/{run_id}/cancel", self.cancel_probe_run, methods=["POST"]
+        )
+        self.router.add_api_route(
+            "/probe-runs/{run_id}/retry",
+            self.retry_probe_run,
+            methods=["POST"],
+            status_code=201,
+        )
+        self.router.add_api_route(
+            "/probe-runs/{run_id}/restore-account-settings",
+            self.restore_probe_run_account_settings,
+            methods=["POST"],
+        )
+        self.router.add_api_route(
+            "/probe-runs/{run_id}",
+            self.delete_probe_run,
+            methods=["DELETE"],
+            status_code=204,
+        )
+        self.router.add_api_route(
+            "/probe-samples/{sample_id}",
+            self.delete_probe_sample,
+            methods=["DELETE"],
+            status_code=204,
+        )
+        self.router.add_api_route(
+            "/probe-runs", self.delete_probe_runs, methods=["DELETE"]
+        )
+
+    def _register_scheduler_routes(self) -> None:
+        self.router.add_api_route("/scheduler", self.scheduler_status, methods=["GET"])
+        self.router.add_api_route(
+            "/scheduler/executions/{execution_id}",
+            self.delete_scheduler_execution,
+            methods=["DELETE"],
+            status_code=204,
+        )
+        self.router.add_api_route(
+            "/scheduler/executions",
+            self.delete_scheduler_executions,
+            methods=["DELETE"],
+        )
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        return self.repository.list_profiles()
+
+    def create_profile(self, payload: ProfileInput) -> dict[str, Any]:
+        return {"id": self.repository.create_profile(payload.model_dump())}
+
     def update_profile(
+        self,
         profile_id: str,
         payload: ProfileInput,
     ) -> dict[str, Any]:
-        return repository.update_profile(profile_id, payload.model_dump())
+        return self.repository.update_profile(profile_id, payload.model_dump())
 
-    @router.delete("/probe-profiles/{profile_id}", status_code=204)
-    def delete_profile(profile_id: str) -> Response:
-        repository.delete_profile(profile_id)
+    def delete_profile(self, profile_id: str) -> Response:
+        self.repository.delete_profile(profile_id)
         return Response(status_code=204)
 
-    @router.delete("/probe-profiles")
-    def delete_profiles(payload: BulkIdsInput) -> dict[str, Any]:
-        return repository.delete_profiles(payload.ids)
+    def delete_profiles(self, payload: BulkIdsInput) -> dict[str, Any]:
+        return self.repository.delete_profiles(payload.ids)
 
-    @router.get("/probe-plans")
-    def list_plans() -> list[dict[str, Any]]:
-        return scheduler.status()["plans"]
+    def list_plans(self) -> list[dict[str, Any]]:
+        return self.scheduler.status()["plans"]
 
-    async def plan_values(payload: ProbePlanInput) -> dict[str, Any]:
-        scheduler.validate_cron(payload.cron_expression, payload.timezone)
-        targets = await manager.validate_targets(
+    async def _plan_values(self, payload: ProbePlanInput) -> dict[str, Any]:
+        self.scheduler.validate_cron(payload.cron_expression, payload.timezone)
+        targets = await self.manager.validate_targets(
             [target.model_dump() for target in payload.proxy_targets],
             execution_mode=payload.execution_mode,
         )
@@ -67,95 +199,87 @@ def build_probes_router(
             "proxy_targets": targets
         }
 
-    @router.post("/probe-plans", status_code=201)
-    async def create_plan(payload: ProbePlanInput) -> dict[str, Any]:
-        plan_id = repository.create_plan(await plan_values(payload))
-        scheduler.reload()
+    async def create_plan(self, payload: ProbePlanInput) -> dict[str, Any]:
+        plan_id = self.repository.create_plan(await self._plan_values(payload))
+        self.scheduler.reload()
         return {"id": plan_id}
 
-    @router.put("/probe-plans/{plan_id}")
     async def update_plan(
+        self,
         plan_id: str,
         payload: ProbePlanInput,
     ) -> dict[str, Any]:
-        result = repository.update_plan(plan_id, await plan_values(payload))
-        scheduler.reload()
+        result = self.repository.update_plan(plan_id, await self._plan_values(payload))
+        self.scheduler.reload()
         return result
 
-    @router.put("/probe-plans/{plan_id}/enabled")
     def set_plan_enabled(
+        self,
         plan_id: str,
         payload: ProbePlanEnabledInput,
     ) -> dict[str, Any]:
-        result = repository.update_plan(plan_id, {"enabled": payload.enabled})
-        scheduler.reload()
+        result = self.repository.update_plan(plan_id, {"enabled": payload.enabled})
+        self.scheduler.reload()
         return result
 
-    @router.delete("/probe-plans/{plan_id}", status_code=204)
-    def delete_plan(plan_id: str) -> Response:
-        repository.delete_plan(plan_id)
-        scheduler.reload()
+    def delete_plan(self, plan_id: str) -> Response:
+        self.repository.delete_plan(plan_id)
+        self.scheduler.reload()
         return Response(status_code=204)
 
-    @router.delete("/probe-plans")
-    def delete_plans(payload: BulkIdsInput) -> dict[str, Any]:
-        result = repository.delete_plans(payload.ids)
-        scheduler.reload()
+    def delete_plans(self, payload: BulkIdsInput) -> dict[str, Any]:
+        result = self.repository.delete_plans(payload.ids)
+        self.scheduler.reload()
         return result
 
-    @router.post("/probe-plans/batch/run")
-    async def run_plans(payload: BulkIdsInput) -> dict[str, Any]:
-        return await scheduler.run_plans_now(payload.ids)
+    async def run_plans(self, payload: BulkIdsInput) -> dict[str, Any]:
+        return await self.scheduler.run_plans_now(payload.ids)
 
-    @router.post("/probe-plans/{plan_id}/run")
-    async def run_plan(plan_id: str) -> dict[str, Any]:
-        return await scheduler.run_plan_now(plan_id)
+    async def run_plan(self, plan_id: str) -> dict[str, Any]:
+        return await self.scheduler.run_plan_now(plan_id)
 
-    @router.post("/probe-runs", status_code=201)
-    async def create_probe_run(payload: ProbeRunCreate) -> dict[str, Any]:
+    async def create_probe_run(self, payload: ProbeRunCreate) -> dict[str, Any]:
         targets = [target.model_dump() for target in payload.proxy_targets]
-        if len(payload.profile_ids) > 1:
-            result = await manager.enqueue_manual_batch(
-                account_ids=[payload.account_id],
+        if len(payload.profile_ids) <= 1:
+            run_id = await self.manager.enqueue_manual(
+                account_id=payload.account_id,
                 profile_id=payload.profile_id,
-                profile_ids=payload.profile_ids,
                 execution_mode=payload.execution_mode,
                 rounds=payload.rounds,
                 proxy_targets=targets,
             )
-            run_ids = list(result.get("runIds") or [])
-            return {
-                "id": run_ids[0] if run_ids else "",
-                "ids": run_ids,
-                "created": result.get("created", 0),
-                "status": "queued" if run_ids else "skipped",
-            }
-        run_id = await manager.enqueue_manual(
-            account_id=payload.account_id,
+            return {"id": run_id, "status": "queued"}
+        result = await self.manager.enqueue_manual_batch(
+            account_ids=[payload.account_id],
             profile_id=payload.profile_id,
+            profile_ids=payload.profile_ids,
             execution_mode=payload.execution_mode,
             rounds=payload.rounds,
             proxy_targets=targets,
         )
-        return {"id": run_id, "status": "queued"}
+        run_ids = list(result.get("runIds") or [])
+        return {
+            "id": run_ids[0] if run_ids else "",
+            "ids": run_ids,
+            "created": result.get("created", 0),
+            "status": "queued" if run_ids else "skipped",
+        }
 
-    @router.post("/probe-runs/batch", status_code=201)
     async def create_probe_runs_batch(
+        self,
         payload: ProbeRunBatchCreate,
     ) -> dict[str, Any]:
-        return await manager.enqueue_manual_batch(
+        return await self.manager.enqueue_manual_batch(
             account_ids=payload.account_ids,
             profile_id=payload.profile_id,
             profile_ids=payload.profile_ids,
             execution_mode=payload.execution_mode,
             rounds=payload.rounds,
-            proxy_targets=[
-                target.model_dump() for target in payload.proxy_targets
-            ],
+            proxy_targets=[target.model_dump() for target in payload.proxy_targets],
         )
 
-    @router.get("/probe-runs")
     def list_probe_runs(
+        self,
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=30, ge=1, le=100, alias="pageSize"),
         status: str = "",
@@ -163,7 +287,7 @@ def build_probes_router(
         account_id: int | None = Query(default=None, alias="accountId"),
         plan_id: str | None = Query(default=None, alias="planId"),
     ) -> dict[str, Any]:
-        return repository.list_runs(
+        return self.repository.list_runs(
             page=page,
             page_size=page_size,
             status=status,
@@ -172,103 +296,104 @@ def build_probes_router(
             plan_id=plan_id,
         )
 
-    @router.get("/probe-workers")
-    def probe_worker_status() -> dict[str, Any]:
-        return manager.status()
+    def probe_worker_status(self) -> dict[str, Any]:
+        return self.manager.status()
 
-    @router.get("/probe-workers/logs")
     def probe_worker_logs(
+        self,
         limit: int = Query(default=300, ge=1, le=1500),
     ) -> dict[str, Any]:
-        return manager.logs(limit)
+        return self.manager.logs(limit)
 
-    @router.post("/probe-runs/batch/cancel")
-    async def cancel_probe_runs(payload: BulkIdsInput) -> dict[str, int]:
-        return await manager.cancel_many(payload.ids)
+    async def cancel_probe_runs(self, payload: BulkIdsInput) -> dict[str, int]:
+        return await self.manager.cancel_many(payload.ids)
 
-    @router.post("/probe-runs/batch/restore-account-settings")
     async def restore_probe_runs_account_settings(
+        self,
         payload: BulkIdsInput,
     ) -> dict[str, Any]:
-        return await manager.restore_many(payload.ids)
+        return await self.manager.restore_many(payload.ids)
 
-    @router.get("/probe-runs/selection")
     def select_probe_runs(
+        self,
         status: str = "",
         search: str = "",
         account_id: int | None = Query(default=None, alias="accountId"),
         plan_id: str | None = Query(default=None, alias="planId"),
     ) -> dict[str, Any]:
-        return repository.select_run_ids(
+        return self.repository.select_run_ids(
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
         )
 
-    @router.get("/probe-runs/{run_id}")
-    def probe_run_detail(run_id: str) -> dict[str, Any]:
-        value = repository.run_detail(run_id)
+    def probe_run_detail(self, run_id: str) -> dict[str, Any]:
+        value = self.repository.run_detail(run_id)
         if value is None:
             raise HTTPException(status_code=404, detail="探针任务不存在")
         return value
 
-    @router.post("/probe-runs/{run_id}/cancel")
-    async def cancel_probe_run(run_id: str) -> dict[str, Any]:
-        return {"id": run_id, "status": await manager.cancel(run_id)}
+    async def cancel_probe_run(self, run_id: str) -> dict[str, Any]:
+        return {"id": run_id, "status": await self.manager.cancel(run_id)}
 
-    @router.post("/probe-runs/{run_id}/retry", status_code=201)
-    async def retry_probe_run(run_id: str) -> dict[str, Any]:
-        return {"id": await manager.retry(run_id), "status": "queued"}
+    async def retry_probe_run(self, run_id: str) -> dict[str, Any]:
+        return {"id": await self.manager.retry(run_id), "status": "queued"}
 
-    @router.post("/probe-runs/{run_id}/restore-account-settings")
     async def restore_probe_run_account_settings(
+        self,
         run_id: str,
     ) -> dict[str, Any]:
-        return await manager.restore_run_account_settings(run_id)
+        return await self.manager.restore_run_account_settings(run_id)
 
-    def recalculate(account_id: int) -> None:
-        accounts.recalculate(
+    def _recalculate(self, account_id: int) -> None:
+        self.accounts.recalculate(
             account_id,
-            manager.thresholds,
-            settings.analysis_window_hours,
+            self.manager.thresholds,
+            self.settings.analysis_window_hours,
         )
 
-    @router.delete("/probe-runs/{run_id}", status_code=204)
-    def delete_probe_run(run_id: str) -> Response:
-        recalculate(repository.delete_run(run_id))
+    def delete_probe_run(self, run_id: str) -> Response:
+        self._recalculate(self.repository.delete_run(run_id))
         return Response(status_code=204)
 
-    @router.delete("/probe-samples/{sample_id}", status_code=204)
-    def delete_probe_sample(sample_id: str) -> Response:
-        recalculate(repository.delete_sample(sample_id))
+    def delete_probe_sample(self, sample_id: str) -> Response:
+        self._recalculate(self.repository.delete_sample(sample_id))
         return Response(status_code=204)
 
-    @router.delete("/probe-runs")
-    def delete_probe_runs(payload: BulkIdsInput) -> dict[str, Any]:
-        deleted, account_ids, skipped = repository.delete_runs(payload.ids)
+    def delete_probe_runs(self, payload: BulkIdsInput) -> dict[str, Any]:
+        deleted, account_ids, skipped = self.repository.delete_runs(payload.ids)
         for account_id in account_ids:
-            recalculate(account_id)
+            self._recalculate(account_id)
         return {
             "requested": len(payload.ids),
             "deleted": deleted,
             "skippedRunIds": skipped,
         }
 
-    @router.get("/scheduler")
-    def scheduler_status() -> dict[str, Any]:
-        return scheduler.status()
+    def scheduler_status(self) -> dict[str, Any]:
+        return self.scheduler.status()
 
-    @router.delete(
-        "/scheduler/executions/{execution_id}",
-        status_code=204,
-    )
-    def delete_scheduler_execution(execution_id: str) -> Response:
-        repository.delete_schedule_execution(execution_id)
+    def delete_scheduler_execution(self, execution_id: str) -> Response:
+        self.repository.delete_schedule_execution(execution_id)
         return Response(status_code=204)
 
-    @router.delete("/scheduler/executions")
-    def delete_scheduler_executions(payload: BulkIdsInput) -> dict[str, Any]:
-        return repository.delete_schedule_executions(payload.ids)
+    def delete_scheduler_executions(self, payload: BulkIdsInput) -> dict[str, Any]:
+        return self.repository.delete_schedule_executions(payload.ids)
 
-    return router
+
+def build_probes_router(
+    *,
+    settings: Settings,
+    accounts: AccountRepository,
+    repository: ProbeRepository,
+    manager: ProbeManager,
+    scheduler: SchedulerService,
+) -> APIRouter:
+    return ProbesRouter(
+        settings=settings,
+        accounts=accounts,
+        repository=repository,
+        manager=manager,
+        scheduler=scheduler,
+    ).router

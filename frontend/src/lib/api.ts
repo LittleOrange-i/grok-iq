@@ -22,7 +22,7 @@ export type AuthSession = {
 
 export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
 
-export type SsoReportSummary = {
+type SsoReportSummary = {
   total: number
   valid: number
   clean: number
@@ -156,12 +156,14 @@ export function isAuthenticationRequiredCode(
   )
 }
 
-export type Assessment = {
+type Assessment = {
   account_id: number
   monitor_status: string
   risk_score: number
   sample_count: number
   anomaly_count: number
+  evidence_sample_count?: number
+  evidence_anomaly_count?: number
   hard_anomaly_count?: number
   distinct_egress_count?: number
   avg_tps?: number
@@ -229,7 +231,7 @@ export type AccountOption = {
   egressAssignmentMode?: string
 }
 
-export type AccountTargetSummary = {
+type AccountTargetSummary = {
   target_key: string
   target_kind: string
   egress_node_id?: number | null
@@ -418,7 +420,7 @@ export type ProbeRun = {
   duration_estimate?: ProbeDurationEstimate | null
 }
 
-export type ProbeDurationEstimate = {
+type ProbeDurationEstimate = {
   average_sample_ms: number
   estimated_total_ms: number
   estimated_remaining_ms: number
@@ -426,7 +428,7 @@ export type ProbeDurationEstimate = {
   updated_at: string
 }
 
-export type ProbeWorkerCurrentRun = {
+type ProbeWorkerCurrentRun = {
   id: string
   accountId: number | null
   accountName: string
@@ -832,7 +834,7 @@ export type AccountSelection = {
   excluded: number
 }
 
-export type AccountBatchUpdateResult = {
+type AccountBatchUpdateResult = {
   requested: number
   eligible: number
   updated: number
@@ -842,7 +844,7 @@ export type AccountBatchUpdateResult = {
   failures: { id: number; error: string }[]
 }
 
-export type AccountBatchEgressResult = {
+type AccountBatchEgressResult = {
   requested: number
   eligible: number
   updated: number
@@ -853,7 +855,7 @@ export type AccountBatchEgressResult = {
   failures: { id: number; error: string }[]
 }
 
-export type AccountBatchDeleteResult = {
+type AccountBatchDeleteResult = {
   requested: number
   eligible: number
   deleted: number
@@ -877,13 +879,13 @@ export type RunSelection = {
   excluded: number
 }
 
-export type RunBatchDeleteResult = {
+type RunBatchDeleteResult = {
   requested: number
   deleted: number
   skippedRunIds: string[]
 }
 
-export type RunBatchRestoreResult = {
+type RunBatchRestoreResult = {
   requested: number
   restored: number
   failed: number
@@ -1356,8 +1358,7 @@ export const api = {
   dashboard: (hours = 168) =>
     request<DashboardResponse>(`/dashboard?hours=${hours}`),
   ssoReports: () => request<SsoReportItem[]>('/sso-reports'),
-  ssoReport: (id: string) =>
-    request<SsoReportDetail>(`/sso-reports/${id}`),
+  ssoReport: (id: string) => request<SsoReportDetail>(`/sso-reports/${id}`),
   createSsoReport: (body: {
     name: string
     ssoContent: string
@@ -1376,10 +1377,7 @@ export const api = {
       missing: number
       skipped: number
       skipped_ids: string[]
-    }>(
-      '/sso-reports',
-      { method: 'DELETE', body: JSON.stringify({ ids }) }
-    ),
+    }>('/sso-reports', { method: 'DELETE', body: JSON.stringify({ ids }) }),
   accounts: (
     params: Record<string, string | number | undefined>,
     signal?: AbortSignal

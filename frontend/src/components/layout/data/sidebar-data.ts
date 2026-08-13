@@ -16,9 +16,7 @@ import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
   user: { name: 'GrokIQ', email: 'API-only integration', avatar: '' },
-  teams: [
-    { name: 'GrokIQ', logo: ShieldCheck, plan: 'Account intelligence' },
-  ],
+  teams: [{ name: 'GrokIQ', logo: ShieldCheck, plan: 'Account intelligence' }],
   navGroups: [
     {
       title: '运行监控',

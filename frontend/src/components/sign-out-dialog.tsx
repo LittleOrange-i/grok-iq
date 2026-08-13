@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useLocation } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { api, ApiError } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
+import { api, ApiError } from '@/lib/api'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
 interface SignOutDialogProps {

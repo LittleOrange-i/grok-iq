@@ -34,9 +34,7 @@ export function InfoTooltip({
           <Info className='size-3.5' />
         </button>
       </TooltipTrigger>
-      <TooltipContent
-        className={cn('max-w-72 leading-5', contentClassName)}
-      >
+      <TooltipContent className={cn('max-w-72 leading-5', contentClassName)}>
         {content}
       </TooltipContent>
     </Tooltip>

@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-import re
 from typing import Any
-from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import (
     DEFAULT_REGISTER_PROBE_PROFILE_IDS,
@@ -15,6 +10,7 @@ from app.core.config import (
     Settings,
 )
 from app.persistence.settings_repository import SettingsRepository
+from app.services.runtime_settings_validator import RuntimeSettingsValidator
 
 REGISTER_FIXED_STRATEGY_MIGRATION_KEY = "register_probe_fixed_strategy_v2"
 
@@ -31,6 +27,8 @@ def fixed_register_probe_strategy() -> dict[str, Any]:
 
 class RuntimeSettingsService:
     """Validates, persists, masks, and hot-applies operator settings."""
+
+    _validator = RuntimeSettingsValidator()
 
     def __init__(self, settings: Settings, repository: SettingsRepository):
         self.settings = settings
@@ -74,104 +72,9 @@ class RuntimeSettingsService:
         self.settings.apply_runtime(candidate)
         return sorted(normalized)
 
-    @staticmethod
-    def _validate(values: dict[str, Any]) -> Settings:
-        candidate = Settings.model_validate(values | fixed_register_probe_strategy())
-        if candidate.degradation_tps >= candidate.strong_degradation_tps:
-            raise ValueError("降智信号 TPS 下限必须小于强降智信号 TPS 下限")
-        if not (
-            candidate.risk_watch_floor
-            <= candidate.risk_suspect_floor
-            <= candidate.risk_high_floor
-            <= candidate.risk_score_cap
-        ):
-            raise ValueError("风险状态保底分必须满足观察 ≤ 疑似 ≤ 高风险 ≤ 总分上限")
-        for label, weight, cap in (
-            ("强信号", candidate.risk_hard_weight, candidate.risk_hard_cap),
-            ("持续高速", candidate.risk_fast_weight, candidate.risk_fast_cap),
-            (
-                "标记缺失",
-                candidate.risk_marker_miss_weight,
-                candidate.risk_marker_miss_cap,
-            ),
-            ("连续信号", candidate.risk_streak_weight, candidate.risk_streak_cap),
-        ):
-            if weight > 0 and cap <= 0:
-                raise ValueError(f"{label}权重大于 0 时封顶分必须大于 0")
-        if candidate.probe_transient_retry_base_seconds > candidate.probe_transient_retry_max_seconds:
-            raise ValueError("探针重试基础等待不能大于最大等待")
-        parsed = urlsplit(candidate.grok2api_base_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("grok2api 地址必须是有效的 HTTP(S) URL")
-        try:
-            zone = ZoneInfo(candidate.scheduler_timezone)
-        except ZoneInfoNotFoundError as exc:
-            raise ValueError("调度时区名称无效") from exc
-        try:
-            CronTrigger.from_crontab(candidate.recovery_cron, timezone=zone)
-        except ValueError as exc:
-            raise ValueError(f"隔离恢复 Cron 表达式无效: {exc}") from exc
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}", candidate.probe_route_prefix):
-            raise ValueError("临时资源前缀需为 2-48 位字母、数字、下划线或连字符")
-        profile_ids = list(
-            dict.fromkeys(
-                str(value or "").strip()
-                for value in candidate.register_probe_profile_ids
-                if str(value or "").strip()
-            )
-        )
-        if candidate.initial_probe_on_register and not profile_ids:
-            raise ValueError("注册后探针至少选择一个探针方案")
-        if candidate.register_probe_execution_mode not in {"chat", "quality_test"}:
-            raise ValueError("注册探针执行模式无效")
-        targets: list[dict[str, Any]] = []
-        seen_targets: set[tuple[str, int | None]] = set()
-        for raw in candidate.register_probe_proxy_targets:
-            kind = str(raw.get("kind") or "").strip()
-            raw_id = raw.get("id")
-            if kind in {"current", "direct"}:
-                target_id = None
-            elif kind == "egress":
-                try:
-                    target_id = int(raw_id)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("注册探针出口节点 ID 无效") from exc
-                if target_id <= 0:
-                    raise ValueError("注册探针出口节点 ID 必须大于 0")
-            else:
-                raise ValueError("注册探针出口目标类型无效")
-            key = (kind, target_id)
-            if key not in seen_targets:
-                targets.append({"kind": kind, "id": target_id})
-                seen_targets.add(key)
-        if candidate.initial_probe_on_register and not targets:
-            raise ValueError("注册后探针至少选择一个出口目标")
-        if candidate.register_probe_execution_mode == "quality_test" and any(
-            target["kind"] != "egress" for target in targets
-        ):
-            raise ValueError("快速出口质量探针仅支持 grok_build 出口节点")
-        if any(target["kind"] == "current" for target in targets) and any(
-            target["kind"] != "current" for target in targets
-        ):
-            raise ValueError("账号当前出口不能与诊断出口混用")
-        candidate.register_probe_profile_ids = profile_ids
-        candidate.register_probe_proxy_targets = targets
-
-        candidate.wechat_app_id = candidate.wechat_app_id.strip()
-        candidate.wechat_app_secret = candidate.wechat_app_secret.strip()
-        candidate.wechat_openid = candidate.wechat_openid.strip()
-        candidate.wechat_template_id = candidate.wechat_template_id.strip()
-        if candidate.wechat_notification_enabled:
-            required = {
-                "AppID": candidate.wechat_app_id,
-                "AppSecret": candidate.wechat_app_secret,
-                "OpenID": candidate.wechat_openid,
-                "模板 ID": candidate.wechat_template_id,
-            }
-            missing = [label for label, value in required.items() if not value]
-            if missing:
-                raise ValueError(f"开启微信异常推送前请填写：{'、'.join(missing)}")
-        return candidate
+    @classmethod
+    def _validate(cls, values: dict[str, Any]) -> Settings:
+        return cls._validator.validate(values, fixed_register_probe_strategy())
 
     def public_view(self) -> dict[str, Any]:
         s = self.settings

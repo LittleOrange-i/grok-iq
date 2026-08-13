@@ -25,7 +25,7 @@ const labels: Record<string, string> = {
   insufficient: '样本不足',
 }
 
-export function statusLabel(value?: string | null) {
+function statusLabel(value?: string | null) {
   return labels[value || ''] || value || '未知'
 }
 

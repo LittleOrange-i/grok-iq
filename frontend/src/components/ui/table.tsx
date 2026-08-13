@@ -117,7 +117,7 @@ function TableRow({
       data-current-row={current ? 'true' : undefined}
       aria-current={current ? 'true' : undefined}
       className={cn(
-        'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted data-[current-row=true]:bg-muted/60 data-[current-row=true]:hover:bg-muted/80 data-[current-row=true]:[&>td]:bg-muted/60 data-[current-row=true]:hover:[&>td]:bg-muted/80 data-[current-row=true]:[&>td:first-child]:shadow-[inset_2px_0_0_var(--primary)]',
+        'border-b transition-colors hover:bg-muted/50 data-[current-row=true]:bg-muted/60 data-[current-row=true]:hover:bg-muted/80 data-[state=selected]:bg-muted data-[current-row=true]:[&>td]:bg-muted/60 data-[current-row=true]:hover:[&>td]:bg-muted/80 data-[current-row=true]:[&>td:first-child]:shadow-[inset_2px_0_0_var(--primary)]',
         className
       )}
       onPointerDownCapture={(event) => {

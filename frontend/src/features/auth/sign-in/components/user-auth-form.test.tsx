@@ -28,9 +28,8 @@ vi.mock('@/lib/api', () => ({
 vi.mock('@/stores/auth-store', () => {
   const auth = { setSession: mocks.setSession }
   return {
-    useAuthStore: (
-      selector?: (state: { auth: typeof auth }) => unknown
-    ) => (selector ? selector({ auth }) : { auth }),
+    useAuthStore: (selector?: (state: { auth: typeof auth }) => unknown) =>
+      selector ? selector({ auth }) : { auth },
   }
 })
 

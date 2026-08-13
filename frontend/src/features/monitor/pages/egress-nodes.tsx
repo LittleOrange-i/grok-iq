@@ -38,6 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -53,11 +54,10 @@ import {
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { InfoTooltip } from '@/components/info-tooltip'
+import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { ServerPagination } from '@/components/server-pagination'
-import { Switch } from '@/components/ui/switch'
 
 type NodeAction = {
   kind: 'enable' | 'disable' | 'delete'
@@ -102,8 +102,7 @@ export function EgressNodesPage() {
   const selectedSet = useMemo(() => new Set(selected), [selected])
   const selectedNodes = nodes.filter((node) => selectedSet.has(Number(node.id)))
   const allChecked =
-    nodes.length > 0 &&
-    nodes.every((node) => selectedSet.has(Number(node.id)))
+    nodes.length > 0 && nodes.every((node) => selectedSet.has(Number(node.id)))
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -180,7 +179,9 @@ export function EgressNodesPage() {
           `${node.name} 探测正常${result.latencyMs ? `，${result.latencyMs} ms` : ''}${result.exitIp ? `，出口 ${result.exitIp}` : ''}`
         )
       } else {
-        toast.warning(`${node.name} 探测异常：${result.error || '未返回错误明细'}`)
+        toast.warning(
+          `${node.name} 探测异常：${result.error || '未返回错误明细'}`
+        )
       }
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -407,7 +408,8 @@ export function EgressNodesPage() {
                           <div className='font-medium tabular-nums'>
                             {node.assignedAccountCount ?? 0}
                             <span className='font-normal text-muted-foreground'>
-                              {' '}/ {node.accountCapacity || '不限'}
+                              {' '}
+                              / {node.accountCapacity || '不限'}
                             </span>
                           </div>
                         </TableCell>
@@ -540,8 +542,8 @@ export function EgressNodesPage() {
                   label='代理地址'
                   content={
                     <>
-                      使用 <span className='font-mono'>{'{account}'}</span>{' '}
-                      可让 grok2api 按账号生成稳定的 Resin 粘性身份。
+                      使用 <span className='font-mono'>{'{account}'}</span> 可让
+                      grok2api 按账号生成稳定的 Resin 粘性身份。
                     </>
                   }
                 />
@@ -571,7 +573,10 @@ export function EgressNodesPage() {
                 onChange={(event) =>
                   setCreateForm((current) => ({
                     ...current,
-                    accountCapacity: Math.max(0, Number(event.target.value) || 0),
+                    accountCapacity: Math.max(
+                      0,
+                      Number(event.target.value) || 0
+                    ),
                   }))
                 }
                 placeholder='0 表示不限'

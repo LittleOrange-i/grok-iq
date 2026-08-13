@@ -99,53 +99,10 @@ class RegisterIntegrationService:
         event_id = str(event["event_id"])
         attempts = int(event.get("attempts") or 1)
         try:
-            account = await self.account_service.find_registered_account(
-                event.get("grok2api_account_id"), str(event["email"])
-            )
-            if account is None:
-                raise RegisteredAccountPending("grok2api 中尚未发现该注册账号")
+            account = await self._registered_account(event)
             account_id = int(account.get("id") or 0)
-            if self.settings.initial_probe_on_register:
-                self._ensure_initial_probe_ready(event, account)
-            if bool(event.get("bot_risk")):
-                previous_assessment = self.accounts.get_assessment(account_id)
-                assessment = self.accounts.mark_registration_risk(
-                    account_id=account_id,
-                    bfs=event.get("bfs"),
-                    registration_id=str(event.get("registration_id") or ""),
-                    risk_score_cap=self.settings.risk_score_cap,
-                    risk_high_floor=self.settings.risk_high_floor,
-                )
-                if self.notifications is not None:
-                    try:
-                        await self.notifications.notify_account_transition(
-                            account=account,
-                            previous=previous_assessment,
-                            current=assessment,
-                            source="grok-register",
-                        )
-                    except Exception:
-                        logger.exception(
-                            "wechat notification failed event_id=%s account_id=%s",
-                            event_id,
-                            account_id,
-                        )
-
-            run_ids: list[str] = []
-            if self.settings.initial_probe_on_register:
-                if int(account.get("egressNodeId") or 0) <= 0:
-                    account = await self.account_service.ensure_account_egress(account)
-                result = await self.probes.enqueue_register_event(
-                    source_event_id=event_id,
-                    account=account,
-                    profile_ids=self.settings.register_probe_profile_ids,
-                    execution_mode=REGISTER_PROBE_EXECUTION_MODE,
-                    rounds=REGISTER_PROBE_ROUNDS,
-                    proxy_targets=[
-                        dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
-                    ],
-                )
-                run_ids = list(result.get("runIds") or [])
+            await self._record_registration_risk(event_id, event, account)
+            run_ids = await self._enqueue_initial_probe(event_id, account)
             self.repository.complete(event_id, account_id, run_ids)
             logger.info(
                 "register webhook completed event_id=%s account_id=%s runs=%s",
@@ -160,6 +117,68 @@ class RegisterIntegrationService:
         except Exception as exc:
             logger.exception("register webhook processing failed event_id=%s", event_id)
             self._retry_or_fail(event_id, attempts, exc)
+
+    async def _registered_account(self, event: dict[str, Any]) -> dict[str, Any]:
+        account = await self.account_service.find_registered_account(
+            event.get("grok2api_account_id"), str(event["email"])
+        )
+        if account is None:
+            raise RegisteredAccountPending("grok2api 中尚未发现该注册账号")
+        if self.settings.initial_probe_on_register:
+            self._ensure_initial_probe_ready(event, account)
+        return account
+
+    async def _record_registration_risk(
+        self,
+        event_id: str,
+        event: dict[str, Any],
+        account: dict[str, Any],
+    ) -> None:
+        if not bool(event.get("bot_risk")):
+            return
+        account_id = int(account.get("id") or 0)
+        previous_assessment = self.accounts.get_assessment(account_id)
+        assessment = self.accounts.mark_registration_risk(
+            account_id=account_id,
+            bfs=event.get("bfs"),
+            registration_id=str(event.get("registration_id") or ""),
+            risk_score_cap=self.settings.risk_score_cap,
+            risk_high_floor=self.settings.risk_high_floor,
+        )
+        if self.notifications is None:
+            return
+        try:
+            await self.notifications.notify_account_transition(
+                account=account,
+                previous=previous_assessment,
+                current=assessment,
+                source="grok-register",
+            )
+        except Exception:
+            logger.exception(
+                "wechat notification failed event_id=%s account_id=%s",
+                event_id,
+                account_id,
+            )
+
+    async def _enqueue_initial_probe(
+        self, event_id: str, account: dict[str, Any]
+    ) -> list[str]:
+        if not self.settings.initial_probe_on_register:
+            return []
+        if int(account.get("egressNodeId") or 0) <= 0:
+            account = await self.account_service.ensure_account_egress(account)
+        result = await self.probes.enqueue_register_event(
+            source_event_id=event_id,
+            account=account,
+            profile_ids=self.settings.register_probe_profile_ids,
+            execution_mode=REGISTER_PROBE_EXECUTION_MODE,
+            rounds=REGISTER_PROBE_ROUNDS,
+            proxy_targets=[
+                dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
+            ],
+        )
+        return list(result.get("runIds") or [])
 
     @staticmethod
     def _timestamp(value: Any) -> datetime | None:

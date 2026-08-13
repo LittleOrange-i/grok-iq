@@ -52,13 +52,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import {
   FormattedContentPreviewButton,
   FormattedContentRenderer,
 } from '@/components/formatted-content'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
-import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 
 type ProfileView = 'built-in' | 'custom'
@@ -225,7 +225,11 @@ export function ProbeProfilesPage() {
         }
       />
 
-      <Tabs value={profileView} onValueChange={changeProfileView} className='gap-4'>
+      <Tabs
+        value={profileView}
+        onValueChange={changeProfileView}
+        className='gap-4'
+      >
         <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
           <TabsTrigger value='built-in'>
             <ShieldCheck />
@@ -359,9 +363,7 @@ function ProfileGrid({
           profile={profile}
           selected={selectedProfileIds.includes(profile.id)}
           pending={pending}
-          onSelectedChange={(checked) =>
-            onSelectedChange(profile.id, checked)
-          }
+          onSelectedChange={(checked) => onSelectedChange(profile.id, checked)}
           onEdit={() => onEdit(profile)}
           onDelete={() => onDelete(profile)}
         />
@@ -592,7 +594,9 @@ function ProfileDialog({
                 onChange={(event) => set('name', event.target.value)}
                 placeholder='例如：HTML 生成质量探针'
                 aria-invalid={Boolean(errors.name)}
-                aria-describedby={errors.name ? 'profile-name-error' : undefined}
+                aria-describedby={
+                  errors.name ? 'profile-name-error' : undefined
+                }
               />
             </Field>
             <Field
@@ -829,10 +833,7 @@ function ProfileDialog({
             <Button variant='outline' onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button
-              disabled={mutation.isPending}
-              onClick={handleSave}
-            >
+            <Button disabled={mutation.isPending} onClick={handleSave}>
               {mutation.isPending ? '保存中…' : '保存方案'}
             </Button>
           </DialogFooter>
@@ -928,7 +929,8 @@ const DEFAULT_PROFILE_FORM = {
   description: '用于检测账号在固定格式、指令遵循和完整输出方面是否出现异常。',
   model: '',
   system_prompt: '请严格遵循用户要求，完整输出结果，不要省略关键内容。',
-  prompt: '请用三点解释为什么天空呈蓝色，每点包含标题和一句说明，最后给出一句总结。',
+  prompt:
+    '请用三点解释为什么天空呈蓝色，每点包含标题和一句说明，最后给出一句总结。',
   expected_text: '',
   expected_output: '',
   expected_image_url: '',

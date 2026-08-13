@@ -42,7 +42,8 @@ export function ProfileMultiSelect({
     .map((id) => profiles.find((profile) => profile.id === id))
     .filter((profile): profile is ProbeProfile => profile != null)
   const selectableProfiles = profiles.filter(
-    (profile) => !enabledOnly || profile.enabled || selectedIdSet.has(profile.id)
+    (profile) =>
+      !enabledOnly || profile.enabled || selectedIdSet.has(profile.id)
   )
   const enabledIds = profiles
     .filter((profile) => profile.enabled)

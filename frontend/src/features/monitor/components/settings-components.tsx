@@ -1,0 +1,836 @@
+import { Fragment, useState, type ReactNode } from 'react'
+import {
+  ArrowRight,
+  Copy,
+  Database,
+  Eye,
+  EyeOff,
+  Inbox,
+  KeyRound,
+  MessageSquareText,
+  Network,
+  SquareCode,
+  Webhook,
+  Workflow,
+} from 'lucide-react'
+import { toast } from 'sonner'
+import { api, type RuntimeSettings, type SecretSettingName } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
+import { cn, getErrorMessage } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { InfoTooltip } from '@/components/info-tooltip'
+import {
+  REGISTER_WEBHOOK_MINIMAL_BODY,
+  REGISTER_WEBHOOK_RECOMMENDED_BODY,
+  secretMetadata,
+} from './settings-model'
+
+export function SettingsCard({
+  icon: Icon,
+  title,
+  description,
+  descriptionAsHint = false,
+  className,
+  children,
+}: {
+  icon: typeof Network
+  title: string
+  description: string
+  descriptionAsHint?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <Card className={className}>
+      <CardHeader className={descriptionAsHint ? 'pb-0' : undefined}>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Icon className='size-4 text-primary' />
+          {title}
+          {descriptionAsHint && (
+            <InfoTooltip label={title} content={description} />
+          )}
+        </CardTitle>
+        {!descriptionAsHint && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  )
+}
+
+export function IntegrationFlow({
+  tokenConfigured,
+  automaticProbe,
+}: {
+  tokenConfigured: boolean
+  automaticProbe: boolean
+}) {
+  const steps = [
+    {
+      icon: Webhook,
+      label: 'grok-register',
+      detail: '导入成功事件',
+      active: true,
+    },
+    {
+      icon: KeyRound,
+      label: '安全 Webhook',
+      detail: '令牌校验',
+      active: tokenConfigured,
+    },
+    {
+      icon: Inbox,
+      label: '持久收件箱',
+      detail: '去重与重试',
+      active: tokenConfigured,
+    },
+    {
+      icon: Workflow,
+      label: '探针队列',
+      detail: automaticProbe ? '自动创建任务' : '按需启用',
+      active: tokenConfigured && automaticProbe,
+    },
+  ]
+
+  return (
+    <div className='border-b bg-muted/[0.08] px-4 py-4 md:px-5'>
+      <div className='mb-3 flex items-center justify-between gap-3'>
+        <div className='text-[11px] font-semibold tracking-[0.16em] text-muted-foreground uppercase'>
+          事件链路
+        </div>
+        <span className='text-xs text-muted-foreground'>
+          接收成功即与注册机解耦
+        </span>
+      </div>
+      <div className='flex items-stretch gap-2 overflow-x-auto pb-1'>
+        {steps.map((step, index) => {
+          const Icon = step.icon
+          return (
+            <Fragment key={step.label}>
+              <div
+                className={cn(
+                  'flex min-w-40 flex-1 items-center gap-3 rounded-lg border px-3 py-2.5',
+                  step.active
+                    ? 'border-primary/20 bg-background'
+                    : 'border-border/70 bg-muted/20'
+                )}
+              >
+                <div
+                  className={cn(
+                    'flex size-8 shrink-0 items-center justify-center rounded-lg',
+                    step.active
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  <Icon className='size-4' />
+                </div>
+                <div className='min-w-0'>
+                  <div className='truncate text-xs font-medium'>
+                    {step.label}
+                  </div>
+                  <div className='mt-0.5 truncate text-[11px] text-muted-foreground'>
+                    {step.detail}
+                  </div>
+                </div>
+              </div>
+              {index < steps.length - 1 && (
+                <ArrowRight className='my-auto size-4 shrink-0 text-muted-foreground/50' />
+              )}
+            </Fragment>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export function WebhookContractDialog() {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type='button'
+          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-background p-3.5 text-start shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          aria-label='查看 grok-register 请求协议'
+        >
+          <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+            <SquareCode className='size-4' />
+          </div>
+          <div className='min-w-0 flex-1'>
+            <div className='text-sm font-medium'>查看请求协议</div>
+            <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+              POST JSON · 请求体示例与可选字段
+            </div>
+          </div>
+          <ArrowRight className='size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
+        </button>
+      </DialogTrigger>
+      <DialogContent size='wide' className='gap-0 overflow-hidden p-0 sm:p-0'>
+        <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
+          <DialogTitle>grok-register 请求协议</DialogTitle>
+          <DialogDescription>
+            POST JSON；必填字段只有 email，探针策略由本页面统一维护。
+          </DialogDescription>
+        </DialogHeader>
+        <div className='min-h-0 overflow-y-auto'>
+          <WebhookContract />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function WebhookContract() {
+  const copyBody = (body: string, label: string) =>
+    void copyText(body)
+      .then(() => toast.success(`已复制${label}`))
+      .catch((error) => toast.error(getErrorMessage(error)))
+
+  const optionalFields = [
+    {
+      name: 'event_id',
+      type: 'string',
+      description: '推荐传入；重试时保持不变，用于幂等去重。省略时按邮箱生成。',
+    },
+    {
+      name: 'event_type',
+      type: 'string',
+      description: '事件类型，默认 grok2api.account_imported。',
+    },
+    {
+      name: 'registration_id',
+      type: 'string',
+      description: '调用方自己的注册记录 ID。',
+    },
+    {
+      name: 'grok2api_account_id',
+      type: 'integer',
+      description: '已知时可传；未知时监控端按邮箱精确匹配。',
+    },
+    {
+      name: 'bot_risk',
+      type: 'boolean',
+      description: '注册阶段是否发现风控，默认 false。',
+    },
+    {
+      name: 'bfs',
+      type: 'string | integer',
+      description: '注册阶段的 bfs 风控值。',
+    },
+    {
+      name: 'occurred_at',
+      type: 'string',
+      description: '事件发生时间，建议使用 ISO 8601。',
+    },
+  ]
+
+  return (
+    <section className='bg-background'>
+      <div className='flex flex-col gap-2 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6'>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          调用方使用相同令牌请求 Webhook；示例内容可分别复制。
+        </p>
+        <div className='flex flex-wrap gap-2 text-xs'>
+          <Badge variant='outline'>POST</Badge>
+          <Badge variant='outline'>Content-Type: application/json</Badge>
+          <Badge variant='outline'>x-grokiq-token: 联动令牌</Badge>
+        </div>
+      </div>
+
+      <div className='grid gap-0 divide-y'>
+        <WebhookBodyExample
+          title='最小请求体'
+          description='适合简单调用方，监控端自动生成事件 ID。'
+          body={REGISTER_WEBHOOK_MINIMAL_BODY}
+          onCopy={() => copyBody(REGISTER_WEBHOOK_MINIMAL_BODY, '最小请求体')}
+        />
+        <WebhookBodyExample
+          title='推荐请求体'
+          description='调用方会重试时传 event_id，避免重复创建任务。'
+          body={REGISTER_WEBHOOK_RECOMMENDED_BODY}
+          onCopy={() =>
+            copyBody(REGISTER_WEBHOOK_RECOMMENDED_BODY, '推荐请求体')
+          }
+        />
+      </div>
+
+      <div className='border-t px-4 py-3 sm:px-6'>
+        <div className='mb-2 text-xs font-medium'>可选字段</div>
+        <div className='grid gap-x-5 gap-y-2 md:grid-cols-2'>
+          {optionalFields.map((field) => (
+            <div
+              key={field.name}
+              className='grid min-w-0 grid-cols-[minmax(7rem,auto)_1fr] gap-3 text-xs leading-5'
+            >
+              <div className='min-w-0'>
+                <code className='font-mono break-all text-foreground'>
+                  {field.name}
+                </code>
+                <div className='text-[11px] text-muted-foreground'>
+                  {field.type}
+                </div>
+              </div>
+              <p className='text-muted-foreground'>{field.description}</p>
+            </div>
+          ))}
+        </div>
+        <p className='mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground'>
+          返回 HTTP 202
+          表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
+        </p>
+      </div>
+    </section>
+  )
+}
+
+function WebhookBodyExample({
+  title,
+  description,
+  body,
+  onCopy,
+}: {
+  title: string
+  description: string
+  body: string
+  onCopy: () => void
+}) {
+  return (
+    <div className='min-w-0 p-4'>
+      <div className='mb-3 flex items-start justify-between gap-3'>
+        <div>
+          <div className='text-xs font-medium'>{title}</div>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            {description}
+          </p>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type='button'
+              size='icon'
+              variant='ghost'
+              className='size-8 shrink-0'
+              onClick={onCopy}
+              aria-label={`复制${title}`}
+            >
+              <Copy />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>复制请求体</TooltipContent>
+        </Tooltip>
+      </div>
+      <pre className='max-w-full overflow-x-auto rounded-lg bg-muted/45 p-3 font-mono text-xs leading-5 text-foreground'>
+        <code>{body}</code>
+      </pre>
+    </div>
+  )
+}
+
+export function IntegrationPanel({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: typeof Network
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <section className='rounded-xl border bg-background p-4 md:p-5'>
+      <div className='mb-4 flex items-start gap-3 border-b pb-4'>
+        <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-primary'>
+          <Icon className='size-4' />
+        </div>
+        <div className='min-w-0'>
+          <h3 className='text-sm font-semibold'>{title}</h3>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            {description}
+          </p>
+        </div>
+      </div>
+      <div className='min-w-0'>{children}</div>
+    </section>
+  )
+}
+
+export function FixedProbeSetting({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof MessageSquareText
+  label: string
+  value: string
+}) {
+  return (
+    <div className='flex min-h-20 min-w-0 items-center gap-3 bg-muted/[0.12] px-4 py-3'>
+      <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-xs ring-1 ring-border'>
+        <Icon className='size-4' />
+      </div>
+      <div className='min-w-0'>
+        <div className='text-[11px] text-muted-foreground'>{label}</div>
+        <div className='mt-1 text-sm font-medium break-words'>{value}</div>
+      </div>
+    </div>
+  )
+}
+
+export function BootstrapSetting({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className='min-w-0 rounded-lg border bg-muted/[0.12] px-3 py-3'>
+      <div className='text-[11px] font-medium text-muted-foreground'>
+        {label}
+      </div>
+      <div
+        className={cn(
+          'mt-1.5 text-sm font-medium break-all',
+          mono && 'font-mono text-xs leading-5'
+        )}
+        title={value}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+export function Field({
+  label,
+  hint,
+  children,
+  className = '',
+}: {
+  label: string
+  hint?: string
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div className={`space-y-2 ${className}`}>
+      <div className='flex min-h-5 items-center gap-1.5'>
+        <Label>{label}</Label>
+        {hint && <InfoTooltip label={label} content={hint} />}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+export function NumberField({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step = 1,
+  disabled = false,
+  hint,
+  suffix,
+  displayMultiplier = 1,
+}: {
+  label: string
+  value: number
+  onChange: (value: number) => void
+  min?: number
+  max?: number
+  step?: number
+  disabled?: boolean
+  hint?: string
+  suffix?: string
+  displayMultiplier?: number
+}) {
+  return (
+    <Field label={label} hint={hint}>
+      <div className='relative'>
+        <Input
+          type='number'
+          value={value * displayMultiplier}
+          min={min === undefined ? undefined : min * displayMultiplier}
+          max={max === undefined ? undefined : max * displayMultiplier}
+          step={step * displayMultiplier}
+          disabled={disabled}
+          className={suffix ? 'pr-9' : undefined}
+          onChange={(event) =>
+            onChange(Number(event.target.value) / displayMultiplier)
+          }
+        />
+        {suffix && (
+          <span className='pointer-events-none absolute inset-y-0 end-3 flex items-center text-xs text-muted-foreground'>
+            {suffix}
+          </span>
+        )}
+      </div>
+    </Field>
+  )
+}
+
+export function RiskFieldGroup({
+  title,
+  hint,
+  divided = false,
+  children,
+}: {
+  title: string
+  hint: string
+  divided?: boolean
+  children: ReactNode
+}) {
+  return (
+    <section className={cn(divided && 'border-t pt-5')}>
+      <div className='mb-3 flex items-center gap-1.5'>
+        <h3 className='text-xs font-semibold tracking-wide text-muted-foreground uppercase'>
+          {title}
+        </h3>
+        <InfoTooltip label={title} content={hint} />
+      </div>
+      <div className='grid gap-4 sm:grid-cols-2'>{children}</div>
+    </section>
+  )
+}
+
+export function RiskStatusRule({
+  status,
+  description,
+  tone,
+  divided = false,
+}: {
+  status: string
+  description: string
+  tone: 'warning' | 'danger'
+  divided?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5',
+        divided && 'border-t'
+      )}
+    >
+      <Badge variant={tone === 'warning' ? 'warning' : 'destructive'}>
+        {status}
+      </Badge>
+      <span className='text-xs leading-5 text-muted-foreground'>
+        {description}
+      </span>
+    </div>
+  )
+}
+
+export function RiskFactorRow({
+  title,
+  description,
+  weight,
+  cap,
+  onWeightChange,
+  onCapChange,
+  automaticCap = false,
+}: {
+  title: string
+  description: string
+  weight: number
+  cap?: number
+  onWeightChange: (value: number) => void
+  onCapChange?: (value: number) => void
+  automaticCap?: boolean
+}) {
+  return (
+    <div className='grid gap-3 border-b px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_9rem_9rem] md:items-center md:gap-4'>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <span className='text-sm font-medium'>{title}</span>
+        <InfoTooltip label={title} content={description} />
+      </div>
+      <div>
+        <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
+          {automaticCap ? '满占比得分' : '每次加分'}
+        </div>
+        <Input
+          type='number'
+          value={weight}
+          min={0}
+          max={100}
+          step={0.1}
+          aria-label={`${title}${automaticCap ? '满占比得分' : '每次加分'}`}
+          onChange={(event) => onWeightChange(Number(event.target.value))}
+        />
+      </div>
+      <div>
+        <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
+          最多计分
+        </div>
+        {automaticCap ? (
+          <div className='flex h-9 items-center rounded-md border bg-muted/35 px-3 text-xs text-muted-foreground'>
+            同左侧
+          </div>
+        ) : (
+          <Input
+            type='number'
+            value={cap}
+            min={0}
+            max={100}
+            step={0.1}
+            aria-label={`${title}最多计分`}
+            onChange={(event) => onCapChange?.(Number(event.target.value))}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function RiskScoreField({
+  label,
+  hint,
+  tone,
+  value,
+  min = 0,
+  onChange,
+}: {
+  label: string
+  hint: string
+  tone: 'default' | 'warning' | 'danger'
+  value: number
+  min?: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <div className='overflow-hidden rounded-lg border'>
+      <div
+        className={cn(
+          'px-3 py-2 text-xs font-medium',
+          tone === 'warning' &&
+            'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+          tone === 'danger' && 'bg-destructive/10 text-destructive',
+          tone === 'default' && 'bg-muted/45 text-foreground'
+        )}
+      >
+        <span className='flex items-center gap-1.5'>
+          {label}
+          <InfoTooltip label={label} content={hint} />
+        </span>
+      </div>
+      <div className='p-2'>
+        <Input
+          type='number'
+          value={value}
+          min={min}
+          max={100}
+          step={0.1}
+          aria-label={label}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </div>
+    </div>
+  )
+}
+
+export function SecretField({
+  name,
+  value,
+  settings,
+  clearing,
+  onChange,
+  onToggleClear,
+}: {
+  name: SecretSettingName
+  value: string
+  settings: RuntimeSettings
+  clearing: boolean
+  onChange: (value: string) => void
+  onToggleClear: () => void
+}) {
+  const metadata = secretMetadata[name]
+  const configured = Boolean(settings[metadata.configuredKey])
+  const [visible, setVisible] = useState(false)
+  const [revealing, setRevealing] = useState(false)
+
+  const toggleVisibility = async () => {
+    if (visible) {
+      setVisible(false)
+      return
+    }
+    if (value || !configured) {
+      setVisible(true)
+      return
+    }
+    setRevealing(true)
+    try {
+      const secret = await api.revealSettingSecret(name)
+      onChange(secret.value)
+      setVisible(true)
+    } catch (error) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setRevealing(false)
+    }
+  }
+
+  return (
+    <Field
+      label={metadata.label}
+      hint='已保存值会以密码形式载入；点击显示图标查看，留空会保留当前值'
+    >
+      <div className='flex gap-2'>
+        <div className='relative min-w-0 flex-1'>
+          <Input
+            type={visible ? 'text' : 'password'}
+            value={value}
+            disabled={clearing}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={clearing ? '保存后清除当前值' : metadata.placeholder}
+            autoComplete='new-password'
+            className='pr-10'
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type='button'
+                size='icon'
+                variant='ghost'
+                disabled={clearing || revealing}
+                className='absolute inset-e-1 top-1/2 size-7 -translate-y-1/2 rounded-md text-muted-foreground'
+                onClick={() => void toggleVisibility()}
+                aria-label={visible ? '隐藏当前输入内容' : '显示当前输入内容'}
+              >
+                {visible ? <EyeOff /> : <Eye />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {visible ? '隐藏当前输入内容' : '显示当前输入内容'}
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <Button
+          type='button'
+          variant={clearing ? 'destructive' : 'outline'}
+          className='shrink-0'
+          onClick={onToggleClear}
+        >
+          {clearing ? '撤销清除' : '清除'}
+        </Button>
+      </div>
+      <Badge
+        variant={
+          clearing ? 'destructive' : configured ? 'success' : 'secondary'
+        }
+      >
+        {clearing ? '待清除' : configured ? '已配置' : '未配置'}
+      </Badge>
+    </Field>
+  )
+}
+
+export function SwitchRow({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  onCheckedChange: (value: boolean) => void
+}) {
+  return (
+    <div className='flex items-center justify-between gap-4 rounded-lg border p-3'>
+      <div>
+        <div className='flex items-center gap-1.5 text-sm font-medium'>
+          {label}
+          <InfoTooltip label={label} content={description} />
+        </div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  )
+}
+
+export function StatusCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  healthy,
+}: {
+  icon: typeof Network
+  label: string
+  value: string
+  detail: string
+  healthy: boolean
+}) {
+  return (
+    <Card>
+      <CardContent className='flex items-start gap-3 p-4'>
+        <div
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${
+            healthy
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+          }`}
+        >
+          <Icon className='size-4' />
+        </div>
+        <div className='min-w-0'>
+          <div className='text-xs text-muted-foreground'>{label}</div>
+          <div className='mt-0.5 text-sm font-semibold'>{value}</div>
+          <div
+            className='mt-1 truncate text-xs text-muted-foreground'
+            title={detail}
+          >
+            {detail}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+export function Boundary({
+  icon: Icon,
+  title,
+  text,
+}: {
+  icon: typeof Database
+  title: string
+  text: string
+}) {
+  return (
+    <div className='rounded-lg border bg-background p-3'>
+      <Icon className='size-4 text-primary' />
+      <div className='mt-2 text-sm font-semibold'>{title}</div>
+      <p className='mt-1 text-xs leading-5 text-muted-foreground'>{text}</p>
+    </div>
+  )
+}

@@ -89,15 +89,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import {
-  extractHtmlPreviews,
   FormattedContentPreviewButton,
   HtmlPreviewButton,
   MarkdownView,
   SourceCodeView,
 } from '@/components/formatted-content'
+import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
-import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
   ServerPagination,
@@ -244,13 +244,11 @@ export function RunsPage() {
         ? false
         : 1_500,
   })
-  const {
-    beginTableInteraction,
-    tableLoading: showTableLoading,
-  } = useServerTableLoading({
-    isFetching: query.isFetching,
-    inputPending: searchPending,
-  })
+  const { beginTableInteraction, tableLoading: showTableLoading } =
+    useServerTableLoading({
+      isFetching: query.isFetching,
+      inputPending: searchPending,
+    })
   const currentPageRuns = useMemo(
     () => query.data?.items ?? [],
     [query.data?.items]
@@ -298,8 +296,7 @@ export function RunsPage() {
     [selectedItems]
   )
   const selectedCurrentPageCount = useMemo(
-    () =>
-      currentPageActionable.filter((item) => selection.has(item.id)).length,
+    () => currentPageActionable.filter((item) => selection.has(item.id)).length,
     [currentPageActionable, selection]
   )
   const allCurrentPageSelected =
@@ -327,7 +324,10 @@ export function RunsPage() {
           changed = true
           continue
         }
-        if (fresh.action !== item.action || fresh.accountId !== item.accountId) {
+        if (
+          fresh.action !== item.action ||
+          fresh.accountId !== item.accountId
+        ) {
           next.set(id, fresh)
           changed = true
         }
@@ -399,7 +399,11 @@ export function RunsPage() {
       })
       setAllFilteredSelected(false)
       setBulkDeleteOpen(false)
-      if (detailId && requestedIds.includes(detailId) && !skipped.has(detailId)) {
+      if (
+        detailId &&
+        requestedIds.includes(detailId) &&
+        !skipped.has(detailId)
+      ) {
         detailScrollTopRef.current = 0
         setDetailId(null)
       }
@@ -415,7 +419,8 @@ export function RunsPage() {
     mutationFn: api.cancelRuns,
     onSuccess: (result, requestedIds) => {
       const messages = []
-      if (result.cancelled) messages.push(`${result.cancelled} 个排队任务已取消`)
+      if (result.cancelled)
+        messages.push(`${result.cancelled} 个排队任务已取消`)
       if (result.cancelRequested) {
         messages.push(`${result.cancelRequested} 个执行任务正在停止`)
       }
@@ -696,10 +701,7 @@ export function RunsPage() {
             <LoadingState />
           ) : (
             <>
-              <div
-                className='relative min-h-48'
-                aria-busy={showTableLoading}
-              >
+              <div className='relative min-h-48' aria-busy={showTableLoading}>
                 {currentPageRuns.length ? (
                   <Table rememberRowKey='monitor-runs'>
                     <TableHeader>
@@ -832,8 +834,7 @@ export function RunsPage() {
               </span>
               {selectedItems.length > selectedCancellableRuns.length && (
                 <span className='block'>
-                  另外{' '}
-                  {selectedItems.length - selectedCancellableRuns.length}{' '}
+                  另外 {selectedItems.length - selectedCancellableRuns.length}{' '}
                   个已结束或已在停止的任务保持不变。
                 </span>
               )}
@@ -848,7 +849,9 @@ export function RunsPage() {
                 bulkCancel.isPending || selectedCancellableRuns.length === 0
               }
               onClick={() =>
-                bulkCancel.mutate(selectedCancellableRuns.map((item) => item.id))
+                bulkCancel.mutate(
+                  selectedCancellableRuns.map((item) => item.id)
+                )
               }
             >
               <Square />
@@ -1316,9 +1319,8 @@ function RunDurationEstimate({
       </TooltipTrigger>
       <TooltipContent className='max-w-96'>
         基于同一探针方案和执行模式的 {estimate.sample_count}{' '}
-        个有效样本，平均每个样本{' '}
-        {formatDuration(estimate.average_sample_ms)}，预计总执行时间{' '}
-        {formatDuration(estimate.estimated_total_ms)}
+        个有效样本，平均每个样本 {formatDuration(estimate.average_sample_ms)}
+        ，预计总执行时间 {formatDuration(estimate.estimated_total_ms)}
         。排队、步骤间隔、重试等待和任务收尾可能产生额外耗时。
       </TooltipContent>
     </Tooltip>
@@ -1416,17 +1418,19 @@ function RunDetail({
               : '耗时'
           }
           value={
-            run.started_at && run.completed_at
-              ? formatDuration(
-                  Math.max(
-                    0,
-                    new Date(run.completed_at).getTime() -
-                      new Date(run.started_at).getTime()
-                  )
+            run.started_at && run.completed_at ? (
+              formatDuration(
+                Math.max(
+                  0,
+                  new Date(run.completed_at).getTime() -
+                    new Date(run.started_at).getTime()
                 )
-              : run.status === 'queued' || run.status === 'running'
-                ? <RunDurationEstimate run={run} />
-                : '—'
+              )
+            ) : run.status === 'queued' || run.status === 'running' ? (
+              <RunDurationEstimate run={run} />
+            ) : (
+              '—'
+            )
           }
         />
       </div>

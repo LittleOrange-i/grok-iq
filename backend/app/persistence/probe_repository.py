@@ -3,10 +3,9 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -14,7 +13,6 @@ from app.core.clock import utc_now
 
 from .database import Database
 from .models import (
-    MetadataRow,
     ProbeDurationEstimate,
     ProbePlan,
     ProbeProfile,
@@ -23,7 +21,16 @@ from .models import (
     ScheduleExecution,
     model_dict,
 )
-from .seeds import DEFAULT_PROFILE_IDS, DEFAULT_PROFILES
+from .probe_catalog_seeder import (
+    PROBE_DURATION_ESTIMATE_BACKFILL_KEY as _PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
+)
+from .probe_catalog_seeder import (
+    SAFE_CURRENT_EGRESS_MIGRATION_KEY as _SAFE_CURRENT_EGRESS_MIGRATION_KEY,
+)
+from .probe_catalog_seeder import ProbeCatalogSeeder
+from .probe_queue_writer import ProbeQueueWriter, QueuePolicy
+from .probe_run_reader import ProbeRunReader
+from .seeds import DEFAULT_PROFILE_IDS
 
 ACTIVE_RUN_STATUSES = {"queued", "running", "cancel_requested", "recovering"}
 CANCELLABLE_RUN_STATUSES = {"queued", "running", "recovering"}
@@ -34,42 +41,8 @@ BLOCKING_ACCOUNT_RESTORE_STATUSES = {"restoring", "restore_failed"}
 DEGRADATION_CLASSIFICATIONS = frozenset(
     {"elevated", "buffered_soft", "buffered_hard", "fast_risk", "marker_miss"}
 )
-DEFAULT_PROFILES_UNLIMITED_MIGRATION_KEY = "default_probe_profiles_follow_upstream_v1"
-DEFAULT_PROFILES_EXPECTED_OUTPUT_MIGRATION_KEY = "default_probe_profiles_expected_output_v1"
-DEFAULT_QUALITY_MARKER_MIGRATION_KEY = "default_probe_profiles_quality_marker_cn_v1"
-DEFAULT_HTML_PREVIEW_MIGRATION_KEY = "default_probe_profiles_html_preview_pelican_v1"
-PROBE_DURATION_ESTIMATE_BACKFILL_KEY = "probe_duration_estimates_backfill_v1"
-SAFE_CURRENT_EGRESS_MIGRATION_KEY = "probe_targets_current_egress_v1"
-LEGACY_QUALITY_MARKER_FIELDS = {
-    "prompt": "先用三点总结为什么天空呈蓝色，最后一行只输出 QUALITY_OK。",
-    "expected_text": "QUALITY_OK",
-    "expected_output": "最后一行应包含 `QUALITY_OK`。",
-}
-LEGACY_HTML_PREVIEW_FIELDS = {
-    "name": "HTML 生成基线",
-    "prompt": "生成一个深色风格的服务状态卡片 HTML，包含正常、观察、风险三种状态。",
-    "expected_output": """<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>服务状态卡片</title>
-    <style>
-      body { margin: 0; padding: 32px; background: #09090b; color: #fafafa; font-family: sans-serif; }
-      .grid { display: grid; gap: 16px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .card { padding: 20px; border: 1px solid #27272a; border-radius: 14px; background: #18181b; }
-      .ok { color: #34d399; } .watch { color: #fbbf24; } .risk { color: #fb7185; }
-    </style>
-  </head>
-  <body>
-    <main class="grid">
-      <section class="card ok">正常</section>
-      <section class="card watch">观察</section>
-      <section class="card risk">风险</section>
-    </main>
-  </body>
-</html>""",
-}
+PROBE_DURATION_ESTIMATE_BACKFILL_KEY = _PROBE_DURATION_ESTIMATE_BACKFILL_KEY
+SAFE_CURRENT_EGRESS_MIGRATION_KEY = _SAFE_CURRENT_EGRESS_MIGRATION_KEY
 
 
 def _profile_ids(profile_ids: Any, profile_id: Any = "") -> list[str]:
@@ -126,160 +99,39 @@ class AccountSettingsSnapshot:
 class ProbeRepository:
     def __init__(self, database: Database):
         self.database = database
+        self._catalog_seeder = ProbeCatalogSeeder()
+        self._queue_writer = ProbeQueueWriter(
+            database,
+            QueuePolicy(
+                active_statuses=ACTIVE_RUN_STATUSES,
+                restore_statuses=BLOCKING_ACCOUNT_RESTORE_STATUSES,
+            ),
+            profile_ids=_profile_ids,
+            require_profiles=lambda session, profile_ids: self._require_profiles(
+                session, profile_ids, require_enabled=True
+            ),
+            queue_full_error=QueueFullError,
+            run_state_error=RunStateError,
+        )
+        self._run_reader = ProbeRunReader(
+            database,
+            active_statuses=ACTIVE_RUN_STATUSES,
+            cancellable_statuses=CANCELLABLE_RUN_STATUSES,
+            executing_statuses=EXECUTING_RUN_STATUSES,
+            estimated_statuses=ESTIMATED_RUN_STATUSES,
+            terminal_statuses=TERMINAL_RUN_STATUSES,
+            restore_statuses=BLOCKING_ACCOUNT_RESTORE_STATUSES,
+            degradation_classifications=DEGRADATION_CLASSIFICATIONS,
+            profile_dict=_profile_dict,
+        )
 
     def seed_defaults(self) -> None:
         with self.database.transaction() as session:
-            for values in DEFAULT_PROFILES:
-                if session.get(ProbeProfile, values["id"]) is None:
-                    session.add(ProbeProfile(**values))
-            migration = session.get(MetadataRow, DEFAULT_PROFILES_UNLIMITED_MIGRATION_KEY)
-            if migration is None:
-                for values in DEFAULT_PROFILES:
-                    profile = session.get(ProbeProfile, values["id"])
-                    if profile is not None:
-                        profile.max_output_tokens = 0
-                        profile.updated_at = utc_now()
-                session.add(
-                    MetadataRow(
-                        key=DEFAULT_PROFILES_UNLIMITED_MIGRATION_KEY,
-                        value=utc_now().isoformat(),
-                    )
-                )
-            expected_output_migration = session.get(
-                MetadataRow, DEFAULT_PROFILES_EXPECTED_OUTPUT_MIGRATION_KEY
-            )
-            if expected_output_migration is None:
-                for values in DEFAULT_PROFILES:
-                    profile = session.get(ProbeProfile, values["id"])
-                    if profile is not None and not profile.expected_output:
-                        profile.expected_output = str(values.get("expected_output") or "")
-                        profile.updated_at = utc_now()
-                session.add(
-                    MetadataRow(
-                        key=DEFAULT_PROFILES_EXPECTED_OUTPUT_MIGRATION_KEY,
-                        value=utc_now().isoformat(),
-                    )
-                )
-            marker_migration = session.get(
-                MetadataRow, DEFAULT_QUALITY_MARKER_MIGRATION_KEY
-            )
-            if marker_migration is None:
-                defaults = next(
-                    values
-                    for values in DEFAULT_PROFILES
-                    if values["id"] == "quality-marker"
-                )
-                profile = session.get(ProbeProfile, "quality-marker")
-                changed = False
-                if profile is not None:
-                    for field, legacy_value in LEGACY_QUALITY_MARKER_FIELDS.items():
-                        if getattr(profile, field) == legacy_value:
-                            setattr(profile, field, defaults[field])
-                            changed = True
-                    if changed:
-                        profile.updated_at = utc_now()
-                session.add(
-                    MetadataRow(
-                        key=DEFAULT_QUALITY_MARKER_MIGRATION_KEY,
-                        value=utc_now().isoformat(),
-                    )
-                )
-            html_preview_migration = session.get(
-                MetadataRow, DEFAULT_HTML_PREVIEW_MIGRATION_KEY
-            )
-            if html_preview_migration is None:
-                defaults = next(
-                    values for values in DEFAULT_PROFILES if values["id"] == "html-preview"
-                )
-                profile = session.get(ProbeProfile, "html-preview")
-                changed = False
-                if profile is not None:
-                    for field, legacy_value in LEGACY_HTML_PREVIEW_FIELDS.items():
-                        if getattr(profile, field) == legacy_value:
-                            setattr(profile, field, defaults[field])
-                            changed = True
-                    if changed:
-                        profile.updated_at = utc_now()
-                session.add(
-                    MetadataRow(
-                        key=DEFAULT_HTML_PREVIEW_MIGRATION_KEY,
-                        value=utc_now().isoformat(),
-                    )
-                )
-            duration_backfill = session.get(
-                MetadataRow, PROBE_DURATION_ESTIMATE_BACKFILL_KEY
-            )
-            if duration_backfill is None:
-                session.execute(delete(ProbeDurationEstimate))
-                rows = session.execute(
-                    select(
-                        ProbeRun.profile_id,
-                        ProbeRun.execution_mode,
-                        func.count(ProbeSample.id),
-                        func.sum(ProbeSample.duration_ms),
-                    )
-                    .join(ProbeSample, ProbeSample.run_id == ProbeRun.id)
-                    .where(ProbeSample.duration_ms > 0)
-                    .group_by(ProbeRun.profile_id, ProbeRun.execution_mode)
-                ).all()
-                now = utc_now()
-                session.add_all(
-                    [
-                        ProbeDurationEstimate(
-                            profile_id=str(profile_id),
-                            execution_mode=str(execution_mode or "chat"),
-                            sample_count=int(sample_count or 0),
-                            total_duration_ms=int(total_duration_ms or 0),
-                            created_at=now,
-                            updated_at=now,
-                        )
-                        for profile_id, execution_mode, sample_count, total_duration_ms in rows
-                    ]
-                )
-                session.add(
-                    MetadataRow(
-                        key=PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
-                        value=now.isoformat(),
-                    )
-                )
-            current_egress_migration = session.get(
-                MetadataRow, SAFE_CURRENT_EGRESS_MIGRATION_KEY
-            )
-            if current_egress_migration is None:
-                for plan in session.scalars(
-                    select(ProbePlan).where(ProbePlan.execution_mode == "chat")
-                ).all():
-                    if self._is_legacy_direct_only(plan.proxy_targets):
-                        plan.proxy_targets = [
-                            {"kind": "current", "id": None, "name": "账号当前出口"}
-                        ]
-                        plan.updated_at = utc_now()
-                for run in session.scalars(
-                    select(ProbeRun).where(
-                        ProbeRun.execution_mode == "chat",
-                        ProbeRun.status == "queued",
-                    )
-                ).all():
-                    if self._is_legacy_direct_only(run.proxy_targets):
-                        run.proxy_targets = [
-                            {"kind": "current", "id": None, "name": "账号当前出口"}
-                        ]
-                        run.current_target_key = None
-                session.add(
-                    MetadataRow(
-                        key=SAFE_CURRENT_EGRESS_MIGRATION_KEY,
-                        value=utc_now().isoformat(),
-                    )
-                )
+            self._catalog_seeder.seed(session)
 
     @staticmethod
     def _is_legacy_direct_only(targets: Any) -> bool:
-        return (
-            isinstance(targets, list)
-            and len(targets) == 1
-            and isinstance(targets[0], dict)
-            and targets[0].get("kind") == "direct"
-        )
+        return ProbeCatalogSeeder.is_legacy_direct_only(targets)
 
     # Profiles -----------------------------------------------------------------
     def list_profiles(self) -> list[dict[str, Any]]:
@@ -547,44 +399,20 @@ class ProbeRepository:
         parent_run_id: str | None = None,
         execution_mode: str = "chat",
     ) -> str:
-        run_id = uuid.uuid4().hex
-        now = utc_now()
-        with self.database.transaction() as session:
-            profile = session.get(ProbeProfile, profile_id)
-            if profile is None or not profile.enabled:
-                raise ValueError("探针方案不存在或已停用")
-            if plan_id and session.get(ProbePlan, plan_id) is None:
-                raise ValueError("Cron 探针计划不存在")
-            active_count = (
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(ProbeRun.status.in_(ACTIVE_RUN_STATUSES))
-                )
-                or 0
-            )
-            if active_count >= queue_limit:
-                raise QueueFullError(f"探针队列已达到上限 {queue_limit}")
-            session.add(
-                ProbeRun(
-                    id=run_id,
-                    account_id=account_id,
-                    account_name=account_name,
-                    account_email=account_email,
-                    profile_id=profile_id,
-                    plan_id=plan_id,
-                    parent_run_id=parent_run_id,
-                    status="queued",
-                    trigger=trigger,
-                    automatic=trigger != "manual",
-                    priority=priority,
-                    execution_mode=execution_mode,
-                    rounds=rounds,
-                    proxy_targets=proxy_targets,
-                    total_steps=rounds * len(proxy_targets),
-                    created_at=now,
-                    queued_at=now,
-                )
-            )
-        return run_id
+        return self._queue_writer.create_run(
+            account_id=account_id,
+            account_name=account_name,
+            account_email=account_email,
+            profile_id=profile_id,
+            rounds=rounds,
+            proxy_targets=proxy_targets,
+            trigger=trigger,
+            priority=priority,
+            queue_limit=queue_limit,
+            plan_id=plan_id,
+            parent_run_id=parent_run_id,
+            execution_mode=execution_mode,
+        )
 
     def create_manual_runs_batch(
         self,
@@ -598,97 +426,16 @@ class ProbeRepository:
         profile_ids: list[str] | None = None,
         profile_id: str = "",
     ) -> dict[str, Any]:
-        """Atomically enqueue many account runs with one ORM transaction."""
-
-        unique_accounts = {
-            int(account["id"]): account for account in accounts if int(account.get("id") or 0) > 0
-        }
-        requested_profile_ids = _profile_ids(profile_ids, profile_id)
-        requested_ids = set(unique_accounts)
-        if not requested_ids:
-            return {
-                "runIds": [],
-                "createdAccountIds": [],
-                "activeAccountIds": [],
-                "restoreBlockedAccountIds": [],
-                "profileIds": requested_profile_ids,
-            }
-
-        now = utc_now()
-        with self.database.transaction() as session:
-            selected_profile_ids = self._require_profiles(
-                session, requested_profile_ids, require_enabled=True
-            )
-
-            active_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id).where(
-                        ProbeRun.account_id.in_(requested_ids),
-                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
-                    )
-                ).all()
-            )
-            restore_blocked_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id).where(
-                        ProbeRun.account_id.in_(requested_ids),
-                        (
-                            ProbeRun.account_restore_status.in_(BLOCKING_ACCOUNT_RESTORE_STATUSES)
-                            | ProbeRun.diagnostic_activation_active.is_(True)
-                        ),
-                    )
-                ).all()
-            )
-            candidate_ids = sorted(requested_ids - active_account_ids - restore_blocked_account_ids)
-            active_count = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(ProbeRun.status.in_(ACTIVE_RUN_STATUSES))
-                )
-                or 0
-            )
-            available = max(queue_limit - active_count, 0)
-            required_capacity = len(candidate_ids) * len(selected_profile_ids)
-            if required_capacity > available:
-                raise QueueFullError(
-                    f"队列剩余容量 {available}，本次需要 {required_capacity}；"
-                    "本次未创建任务，请提高全局队列上限或等待现有任务完成"
-                )
-
-            rows: list[ProbeRun] = []
-            run_ids: list[str] = []
-            for account_id in candidate_ids:
-                account = unique_accounts[account_id]
-                for profile_id in selected_profile_ids:
-                    run_id = uuid.uuid4().hex
-                    run_ids.append(run_id)
-                    rows.append(
-                        ProbeRun(
-                            id=run_id,
-                            account_id=account_id,
-                            account_name=str(account.get("name") or f"account-{account_id}"),
-                            account_email=str(account.get("email") or ""),
-                            profile_id=profile_id,
-                            status="queued",
-                            trigger="manual",
-                            automatic=False,
-                            priority=priority,
-                            execution_mode=execution_mode,
-                            rounds=rounds,
-                            proxy_targets=proxy_targets,
-                            total_steps=rounds * len(proxy_targets),
-                            created_at=now,
-                            queued_at=now,
-                        )
-                    )
-            session.add_all(rows)
-
-        return {
-            "runIds": run_ids,
-            "createdAccountIds": candidate_ids,
-            "activeAccountIds": sorted(active_account_ids),
-            "restoreBlockedAccountIds": sorted(restore_blocked_account_ids),
-            "profileIds": selected_profile_ids,
-        }
+        return self._queue_writer.create_manual_runs_batch(
+            accounts=accounts,
+            rounds=rounds,
+            proxy_targets=proxy_targets,
+            execution_mode=execution_mode,
+            priority=priority,
+            queue_limit=queue_limit,
+            profile_ids=profile_ids,
+            profile_id=profile_id,
+        )
 
     def create_register_runs(
         self,
@@ -702,97 +449,16 @@ class ProbeRepository:
         priority: int,
         queue_limit: int,
     ) -> dict[str, Any]:
-        """Idempotently expand one accepted registration event into probe runs."""
-
-        account_id = int(account.get("id") or 0)
-        if account_id <= 0:
-            raise ValueError("注册账号 ID 无效")
-        event_id = str(source_event_id or "").strip()
-        if not event_id:
-            raise ValueError("注册事件 ID 不能为空")
-        now = utc_now()
-        with self.database.transaction() as session:
-            existing = session.scalars(
-                select(ProbeRun)
-                .where(ProbeRun.source_event_id == event_id)
-                .order_by(ProbeRun.created_at.asc())
-            ).all()
-            if existing:
-                return {
-                    "runIds": [run.id for run in existing],
-                    "profileIds": [run.profile_id for run in existing],
-                    "created": 0,
-                }
-
-            selected_profile_ids = self._require_profiles(
-                session, profile_ids, require_enabled=True
-            )
-            active_for_account = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.account_id == account_id,
-                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
-                    )
-                )
-                or 0
-            )
-            if active_for_account:
-                raise RunStateError("账号已有未完成探针，注册探针将在其结束后重试")
-            restore_blocked = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.account_id == account_id,
-                        (
-                            ProbeRun.account_restore_status.in_(
-                                BLOCKING_ACCOUNT_RESTORE_STATUSES
-                            )
-                            | ProbeRun.diagnostic_activation_active.is_(True)
-                        ),
-                    )
-                )
-                or 0
-            )
-            if restore_blocked:
-                raise RunStateError("账号存在未完成的原设置恢复，注册探针稍后重试")
-            active_count = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES)
-                    )
-                )
-                or 0
-            )
-            if active_count + len(selected_profile_ids) > queue_limit:
-                raise QueueFullError(f"探针队列已达到上限 {queue_limit}")
-
-            rows: list[ProbeRun] = []
-            for profile_id in selected_profile_ids:
-                rows.append(
-                    ProbeRun(
-                        id=uuid.uuid4().hex,
-                        account_id=account_id,
-                        account_name=str(account.get("name") or f"account-{account_id}"),
-                        account_email=str(account.get("email") or ""),
-                        profile_id=profile_id,
-                        source_event_id=event_id,
-                        status="queued",
-                        trigger="register",
-                        automatic=True,
-                        priority=priority,
-                        execution_mode=execution_mode,
-                        rounds=rounds,
-                        proxy_targets=proxy_targets,
-                        total_steps=rounds * len(proxy_targets),
-                        created_at=now,
-                        queued_at=now,
-                    )
-                )
-            session.add_all(rows)
-            return {
-                "runIds": [run.id for run in rows],
-                "profileIds": selected_profile_ids,
-                "created": len(rows),
-            }
+        return self._queue_writer.create_register_runs(
+            source_event_id=source_event_id,
+            account=account,
+            profile_ids=profile_ids,
+            rounds=rounds,
+            proxy_targets=proxy_targets,
+            execution_mode=execution_mode,
+            priority=priority,
+            queue_limit=queue_limit,
+        )
 
     def create_plan_runs_batch(
         self,
@@ -807,126 +473,17 @@ class ProbeRepository:
         queue_limit: int,
         register_cooldown_minutes: int = 0,
     ) -> dict[str, Any]:
-        """Atomically expand one Cron trigger into account/profile runs."""
-
-        unique_accounts = {
-            int(account["id"]): account
-            for account in accounts
-            if int(account.get("id") or 0) > 0
-        }
-        requested_ids = set(unique_accounts)
-        if not requested_ids:
-            return {
-                "runIds": [],
-                "createdAccountIds": [],
-                "activeAccountIds": [],
-                "restoreBlockedAccountIds": [],
-                "registerCooldownAccountIds": [],
-                "profileIds": _profile_ids(profile_ids),
-            }
-
-        now = utc_now()
-        with self.database.transaction() as session:
-            if session.get(ProbePlan, plan_id) is None:
-                raise ValueError("Cron 探针计划不存在")
-            selected_profile_ids = self._require_profiles(
-                session, profile_ids, require_enabled=True
-            )
-            active_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id).where(
-                        ProbeRun.account_id.in_(requested_ids),
-                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
-                    )
-                ).all()
-            )
-            cooldown_account_ids: set[int] = set()
-            if register_cooldown_minutes > 0:
-                cooldown_cutoff = now - timedelta(minutes=register_cooldown_minutes)
-                cooldown_account_ids = set(
-                    session.scalars(
-                        select(ProbeRun.account_id).where(
-                            ProbeRun.account_id.in_(requested_ids),
-                            ProbeRun.trigger == "register",
-                            ProbeRun.completed_at.is_not(None),
-                            ProbeRun.completed_at >= cooldown_cutoff,
-                        )
-                    ).all()
-                )
-            restore_blocked_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id).where(
-                        ProbeRun.account_id.in_(requested_ids),
-                        (
-                            ProbeRun.account_restore_status.in_(
-                                BLOCKING_ACCOUNT_RESTORE_STATUSES
-                            )
-                            | ProbeRun.diagnostic_activation_active.is_(True)
-                        ),
-                    )
-                ).all()
-            )
-            candidate_ids = sorted(
-                requested_ids
-                - active_account_ids
-                - restore_blocked_account_ids
-                - cooldown_account_ids
-            )
-            active_count = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.status.in_(ACTIVE_RUN_STATUSES)
-                    )
-                )
-                or 0
-            )
-            available = max(queue_limit - active_count, 0)
-            required_capacity = len(candidate_ids) * len(selected_profile_ids)
-            if required_capacity > available:
-                raise QueueFullError(
-                    f"队列剩余容量 {available}，本次需要 {required_capacity}；"
-                    "本次未创建任务，请提高全局队列上限或等待现有任务完成"
-                )
-
-            rows: list[ProbeRun] = []
-            run_ids: list[str] = []
-            for account_id in candidate_ids:
-                account = unique_accounts[account_id]
-                for profile_id in selected_profile_ids:
-                    run_id = uuid.uuid4().hex
-                    run_ids.append(run_id)
-                    rows.append(
-                        ProbeRun(
-                            id=run_id,
-                            account_id=account_id,
-                            account_name=str(
-                                account.get("name") or f"account-{account_id}"
-                            ),
-                            account_email=str(account.get("email") or ""),
-                            profile_id=profile_id,
-                            plan_id=plan_id,
-                            status="queued",
-                            trigger="cron",
-                            automatic=True,
-                            priority=priority,
-                            execution_mode=execution_mode,
-                            rounds=rounds,
-                            proxy_targets=proxy_targets,
-                            total_steps=rounds * len(proxy_targets),
-                            created_at=now,
-                            queued_at=now,
-                        )
-                    )
-            session.add_all(rows)
-
-        return {
-            "runIds": run_ids,
-            "createdAccountIds": candidate_ids,
-            "activeAccountIds": sorted(active_account_ids),
-            "restoreBlockedAccountIds": sorted(restore_blocked_account_ids),
-            "registerCooldownAccountIds": sorted(cooldown_account_ids),
-            "profileIds": selected_profile_ids,
-        }
+        return self._queue_writer.create_plan_runs_batch(
+            plan_id=plan_id,
+            accounts=accounts,
+            profile_ids=profile_ids,
+            rounds=rounds,
+            proxy_targets=proxy_targets,
+            execution_mode=execution_mode,
+            priority=priority,
+            queue_limit=queue_limit,
+            register_cooldown_minutes=register_cooldown_minutes,
+        )
 
     def has_active_run(self, *, account_id: int, plan_id: str | None = None) -> bool:
         with self.database.session() as session:
@@ -1571,32 +1128,6 @@ class ProbeRepository:
             if cleanup_error:
                 run.error = f"重启恢复清理: {cleanup_error}"[:4000]
 
-    def _run_list_filters(
-        self,
-        *,
-        status: str,
-        search: str,
-        account_id: int | None,
-        plan_id: str | None,
-    ) -> list[Any]:
-        filters: list[Any] = []
-        if status:
-            filters.append(ProbeRun.status == status)
-        token = search.strip().lower()
-        if token:
-            account_filters = [
-                func.lower(ProbeRun.account_name).contains(token),
-                func.lower(ProbeRun.account_email).contains(token),
-            ]
-            if token.isdigit():
-                account_filters.append(ProbeRun.account_id == int(token))
-            filters.append(or_(*account_filters))
-        if account_id is not None:
-            filters.append(ProbeRun.account_id == account_id)
-        if plan_id is not None:
-            filters.append(ProbeRun.plan_id == plan_id)
-        return filters
-
     def select_run_ids(
         self,
         *,
@@ -1605,54 +1136,12 @@ class ProbeRepository:
         account_id: int | None = None,
         plan_id: str | None = None,
     ) -> dict[str, Any]:
-        """Return every run id matching the current UI filters, split by action.
-
-        The task centre uses this to select across pages: each bulk action then
-        applies to its own subset instead of the visible page only.
-        """
-
-        filters = self._run_list_filters(
+        return self._run_reader.select_run_ids(
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
         )
-        with self.database.session() as session:
-            values = session.execute(
-                select(
-                    ProbeRun.id,
-                    ProbeRun.account_id,
-                    ProbeRun.status,
-                    ProbeRun.account_restore_status,
-                    ProbeRun.diagnostic_activation_active,
-                ).where(*filters)
-            ).all()
-
-        items: list[dict[str, Any]] = []
-        for run_id, account_id_value, run_status, restore_status, diagnostic_active in values:
-            restore_pending = (
-                restore_status in BLOCKING_ACCOUNT_RESTORE_STATUSES
-                or bool(diagnostic_active)
-            )
-            if run_status in CANCELLABLE_RUN_STATUSES:
-                action = "cancel"
-            elif run_status in TERMINAL_RUN_STATUSES:
-                action = "restore" if restore_pending else "delete"
-            else:
-                continue
-            items.append(
-                {
-                    "id": run_id,
-                    "accountId": int(account_id_value or 0),
-                    "action": action,
-                }
-            )
-        return {
-            "items": items,
-            "matched": len(values),
-            "selectable": len(items),
-            "excluded": len(values) - len(items),
-        }
 
     def list_runs(
         self,
@@ -1664,275 +1153,26 @@ class ProbeRepository:
         account_id: int | None = None,
         plan_id: str | None = None,
     ) -> dict[str, Any]:
-        filters = self._run_list_filters(
+        return self._run_reader.list_runs(
+            page=page,
+            page_size=page_size,
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
         )
-        with self.database.session() as session:
-            total, active_count = session.execute(
-                select(
-                    func.count(ProbeRun.id),
-                    func.count(ProbeRun.id).filter(ProbeRun.status.in_(ACTIVE_RUN_STATUSES)),
-                ).where(*filters)
-            ).one()
-            values = session.scalars(
-                select(ProbeRun)
-                .where(*filters)
-                .order_by(ProbeRun.created_at.desc())
-                .offset((page - 1) * page_size)
-                .limit(page_size)
-            ).all()
-            duration_estimates = self._duration_estimates_for_runs(session, values)
-            executing_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id)
-                    .where(ProbeRun.status.in_(EXECUTING_RUN_STATUSES))
-                    .distinct()
-                ).all()
-            )
-            restore_blocked_account_ids = set(
-                session.scalars(
-                    select(ProbeRun.account_id)
-                    .where(
-                        ProbeRun.account_restore_status.in_(
-                            BLOCKING_ACCOUNT_RESTORE_STATUSES
-                        )
-                        | ProbeRun.diagnostic_activation_active.is_(True)
-                    )
-                    .distinct()
-                ).all()
-            )
-            items = []
-            for value in values:
-                item = model_dict(value)
-                item["duration_estimate"] = self._run_duration_estimate(
-                    value,
-                    duration_estimates.get((value.profile_id, value.execution_mode)),
-                )
-                reason = ""
-                if value.status == "queued":
-                    if value.account_id in executing_account_ids:
-                        reason = "same_account_running"
-                    elif value.account_id in restore_blocked_account_ids:
-                        reason = "account_restore_blocked"
-                    else:
-                        reason = "worker_capacity"
-                item["queue_blocked_reason"] = reason
-                items.append(item)
-            return {
-                "items": items,
-                "total": total,
-                "page": page,
-                "pageSize": page_size,
-                "activeCount": int(active_count or 0),
-            }
 
     def run_detail(self, run_id: str) -> dict[str, Any] | None:
-        with self.database.session() as session:
-            run = session.get(ProbeRun, run_id)
-            if run is None:
-                return None
-            profile = session.get(ProbeProfile, run.profile_id)
-            samples = session.scalars(
-                select(ProbeSample)
-                .where(ProbeSample.run_id == run_id)
-                .order_by(ProbeSample.round_number.asc(), ProbeSample.target_key.asc())
-            ).all()
-            duration_estimates = self._duration_estimates_for_runs(session, [run])
-            run_value = model_dict(run)
-            run_value["duration_estimate"] = self._run_duration_estimate(
-                run,
-                duration_estimates.get((run.profile_id, run.execution_mode)),
-            )
-            return {
-                "run": run_value,
-                "profile": _profile_dict(profile) if profile else None,
-                "samples": [model_dict(value) for value in samples],
-            }
-
-    @staticmethod
-    def _duration_estimates_for_runs(
-        session: Session,
-        runs: list[ProbeRun],
-    ) -> dict[tuple[str, str], ProbeDurationEstimate]:
-        profile_ids = {
-            run.profile_id for run in runs if run.status in ESTIMATED_RUN_STATUSES
-        }
-        if not profile_ids:
-            return {}
-        values = session.scalars(
-            select(ProbeDurationEstimate).where(
-                ProbeDurationEstimate.profile_id.in_(profile_ids)
-            )
-        ).all()
-        return {
-            (value.profile_id, value.execution_mode): value for value in values
-        }
-
-    @staticmethod
-    def _run_duration_estimate(
-        run: ProbeRun,
-        estimate: ProbeDurationEstimate | None,
-    ) -> dict[str, Any] | None:
-        if (
-            run.status not in ESTIMATED_RUN_STATUSES
-            or estimate is None
-            or estimate.sample_count <= 0
-            or estimate.total_duration_ms <= 0
-        ):
-            return None
-        average_sample_ms = max(
-            1, round(estimate.total_duration_ms / estimate.sample_count)
-        )
-        remaining_steps = max(run.total_steps - run.completed_steps, 0)
-        return {
-            "average_sample_ms": average_sample_ms,
-            "estimated_total_ms": average_sample_ms * run.total_steps,
-            "estimated_remaining_ms": average_sample_ms * remaining_steps,
-            "sample_count": estimate.sample_count,
-            "updated_at": model_dict(estimate)["updated_at"],
-        }
+        return self._run_reader.run_detail(run_id)
 
     def account_history(self, account_id: int, limit: int = 200) -> dict[str, Any]:
-        with self.database.session() as session:
-            samples = session.scalars(
-                select(ProbeSample)
-                .where(ProbeSample.account_id == account_id)
-                .order_by(ProbeSample.created_at.desc())
-                .limit(limit)
-            ).all()
-            runs = session.scalars(
-                select(ProbeRun)
-                .where(ProbeRun.account_id == account_id)
-                .order_by(ProbeRun.created_at.desc())
-                .limit(50)
-            ).all()
-            grouped = session.execute(
-                select(
-                    ProbeSample.target_key,
-                    ProbeSample.target_kind,
-                    ProbeSample.egress_node_id,
-                    ProbeSample.egress_name,
-                    func.count(ProbeSample.id).label("samples"),
-                    func.sum(
-                        case(
-                            (
-                                ProbeSample.classification.in_(
-                                    DEGRADATION_CLASSIFICATIONS
-                                ),
-                                1,
-                            ),
-                            else_=0,
-                        )
-                    ).label("anomalies"),
-                    func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0).label("avg_tps"),
-                    func.max(ProbeSample.tps).label("max_tps"),
-                )
-                .where(ProbeSample.account_id == account_id)
-                .group_by(
-                    ProbeSample.target_key,
-                    ProbeSample.target_kind,
-                    ProbeSample.egress_node_id,
-                    ProbeSample.egress_name,
-                )
-                .order_by(func.max(ProbeSample.tps).desc())
-            ).all()
-            return {
-                "samples": [model_dict(value) for value in samples],
-                "runs": [model_dict(value) for value in runs],
-                "byTarget": [
-                    {
-                        **dict(row._mapping),
-                        "samples": int(row.samples or 0),
-                        "anomalies": int(row.anomalies or 0),
-                    }
-                    for row in grouped
-                ],
-            }
+        return self._run_reader.account_history(account_id, limit)
 
     def queue_stats(self) -> dict[str, int]:
-        with self.database.session() as session:
-            return {
-                status: int(count)
-                for status, count in session.execute(
-                    select(ProbeRun.status, func.count(ProbeRun.id)).group_by(ProbeRun.status)
-                )
-            }
+        return self._run_reader.queue_stats()
 
     def worker_queue_stats(self) -> dict[str, int]:
-        """Return queue eligibility without loading a large queued run list."""
-
-        with self.database.session() as session:
-            executing_accounts = (
-                select(ProbeRun.account_id.label("account_id"))
-                .where(ProbeRun.status.in_(EXECUTING_RUN_STATUSES))
-                .distinct()
-                .subquery()
-            )
-            restore_blocked_accounts = (
-                select(ProbeRun.account_id.label("account_id"))
-                .where(
-                    ProbeRun.account_restore_status.in_(BLOCKING_ACCOUNT_RESTORE_STATUSES)
-                    | ProbeRun.diagnostic_activation_active.is_(True)
-                )
-                .distinct()
-                .subquery()
-            )
-            queued = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(ProbeRun.status == "queued")
-                )
-                or 0
-            )
-            blocked_same_account = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.status == "queued",
-                        ProbeRun.account_id.in_(select(executing_accounts.c.account_id)),
-                    )
-                )
-                or 0
-            )
-            blocked_restore = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.status == "queued",
-                        ProbeRun.account_id.not_in(
-                            select(executing_accounts.c.account_id)
-                        ),
-                        ProbeRun.account_id.in_(
-                            select(restore_blocked_accounts.c.account_id)
-                        ),
-                    )
-                )
-                or 0
-            )
-            running = int(
-                session.scalar(
-                    select(func.count(ProbeRun.id)).where(
-                        ProbeRun.status.in_(EXECUTING_RUN_STATUSES)
-                    )
-                )
-                or 0
-            )
-            oldest_queued_at = session.scalar(
-                select(func.min(ProbeRun.queued_at)).where(ProbeRun.status == "queued")
-            )
-            oldest_queue_wait_seconds = 0
-            if oldest_queued_at is not None:
-                oldest_queue_wait_seconds = max(
-                    0, int((utc_now() - oldest_queued_at).total_seconds())
-                )
-            return {
-                "queued": queued,
-                "running": running,
-                "eligible": max(0, queued - blocked_same_account - blocked_restore),
-                "blockedSameAccount": blocked_same_account,
-                "blockedRestore": blocked_restore,
-                "oldestQueueWaitSeconds": oldest_queue_wait_seconds,
-            }
+        return self._run_reader.worker_queue_stats()
 
     # Scheduler execution history ----------------------------------------------
     def start_schedule_execution(self, schedule_key: str) -> str:

@@ -34,12 +34,7 @@ import {
 import { cn, formatDate, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -52,10 +47,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { SourceCodeView } from '@/components/formatted-content'
-import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { SourceCodeView } from '@/components/formatted-content'
 import { InfoTooltip } from '@/components/info-tooltip'
+import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import {
   buildEgressNodeNameMap,
   getEgressNodeName,

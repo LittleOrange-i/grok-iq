@@ -29,17 +29,6 @@ export function formatDate(value?: string | null, withTime = true) {
   }).format(date)
 }
 
-export function relativeTime(value?: string | null) {
-  if (!value) return '暂无'
-  const timestamp = new Date(value).getTime()
-  if (Number.isNaN(timestamp)) return value
-  const delta = Date.now() - timestamp
-  if (delta < 60_000) return '刚刚'
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`
-  return `${Math.floor(delta / 86_400_000)} 天前`
-}
-
 export function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error

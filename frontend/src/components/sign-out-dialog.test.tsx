@@ -54,9 +54,7 @@ describe('SignOutDialog', () => {
       <SignOutDialog open onOpenChange={onOpenChange} />
     )
 
-    await userEvent.click(
-      screen.getByRole('button', { name: '退出登录' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: '退出登录' }))
 
     await vi.waitFor(() => expect(mocks.authLogout).toHaveBeenCalledOnce())
     expect(mocks.reset).toHaveBeenCalledOnce()
@@ -70,9 +68,7 @@ describe('SignOutDialog', () => {
   })
 
   it('keeps the session when cancellation is selected', async () => {
-    const screen = await render(
-      <SignOutDialog open onOpenChange={vi.fn()} />
-    )
+    const screen = await render(<SignOutDialog open onOpenChange={vi.fn()} />)
 
     await userEvent.click(screen.getByRole('button', { name: '取消' }))
 

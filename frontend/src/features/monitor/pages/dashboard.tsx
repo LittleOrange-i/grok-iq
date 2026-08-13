@@ -20,15 +20,10 @@ import {
 import { api, type ProbeRun, type UpstreamAccount } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { formatDate, formatNumber } from '@/lib/utils'
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Page, PageHeader, LoadingState } from '@/components/page'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { InfoTooltip } from '@/components/info-tooltip'
+import { Page, PageHeader, LoadingState } from '@/components/page'
 
 export function DashboardPage() {
   const query = useQuery({

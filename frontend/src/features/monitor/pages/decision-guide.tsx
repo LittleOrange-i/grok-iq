@@ -35,8 +35,8 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Page, PageHeader } from '@/components/page'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { Page, PageHeader } from '@/components/page'
 
 type Thresholds = Pick<
   RuntimeSettings,
@@ -396,10 +396,11 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
           风险分公式
         </CardTitle>
         <CardDescription>
-          各项相加后封顶 {formatNumber(thresholds.riskScoreCap)} 分；“观察”最低显示{' '}
-          {formatNumber(thresholds.riskWatchFloor)} 分，“疑似降智”最低显示{' '}
-          {formatNumber(thresholds.riskSuspectFloor)} 分，“高风险”最低显示{' '}
-          {formatNumber(thresholds.riskHighFloor)} 分。公式因子来自系统设置，诊断出口样本不参与计算。
+          各项相加后封顶 {formatNumber(thresholds.riskScoreCap)}{' '}
+          分；“观察”最低显示 {formatNumber(thresholds.riskWatchFloor)}{' '}
+          分，“疑似降智”最低显示 {formatNumber(thresholds.riskSuspectFloor)}{' '}
+          分，“高风险”最低显示 {formatNumber(thresholds.riskHighFloor)}{' '}
+          分。公式因子来自系统设置，诊断出口样本不参与计算。
         </CardDescription>
       </CardHeader>
       <CardContent>
