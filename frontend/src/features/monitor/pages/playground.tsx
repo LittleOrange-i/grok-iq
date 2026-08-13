@@ -1237,7 +1237,7 @@ function Composer({
       onSubmit={onSubmit}
       className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
     >
-      <div className='mx-auto w-full max-w-7xl overflow-hidden rounded-lg border bg-card shadow-xs'>
+      <div className='mx-auto w-full max-w-5xl overflow-hidden rounded-lg border bg-card shadow-xs'>
         <Textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
@@ -1415,7 +1415,9 @@ function ChatBubble({
       <div
         className={cn(
           'flex min-w-0 flex-col',
-          user ? 'max-w-[92%] items-end lg:max-w-[85%]' : 'flex-1'
+          user
+            ? 'max-w-[90%] items-end sm:max-w-[78%] lg:max-w-[70%]'
+            : 'w-[calc(100%_-_3.25rem)] sm:w-[88%] lg:w-[82%]'
         )}
       >
         <div
