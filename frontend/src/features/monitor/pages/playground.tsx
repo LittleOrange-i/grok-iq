@@ -1237,7 +1237,7 @@ function Composer({
       onSubmit={onSubmit}
       className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
     >
-      <div className='mx-auto w-full max-w-5xl overflow-hidden rounded-lg border bg-card shadow-xs'>
+      <div className='mx-auto w-full max-w-4xl overflow-hidden rounded-lg border bg-card shadow-xs'>
         <Textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
@@ -1266,7 +1266,7 @@ function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型提供商'
-                className='max-w-44 border-0 bg-muted/60 px-2 shadow-none sm:max-w-56'
+                className='w-[min(8rem,28vw)] border-0 bg-muted/60 px-2 shadow-none sm:w-44'
               >
                 <SelectValue
                   placeholder={providersLoading ? '读取提供商中' : '提供商'}
@@ -1289,7 +1289,7 @@ function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型'
-                className='min-w-0 max-w-56 border-0 bg-muted/60 px-2 font-mono shadow-none sm:max-w-80'
+                className='w-[min(10rem,34vw)] min-w-0 border-0 bg-muted/60 px-2 font-mono shadow-none sm:w-56'
               >
                 <SelectValue
                   placeholder={modelsLoading ? '读取模型中' : '模型'}
@@ -1305,7 +1305,13 @@ function Composer({
             </Select>
           </div>
           {streaming ? (
-            <Button type='button' size='sm' variant='outline' onClick={onStop}>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              className='shrink-0'
+              onClick={onStop}
+            >
               <Square />
               停止
             </Button>
@@ -1313,6 +1319,7 @@ function Composer({
             <Button
               type='submit'
               size='sm'
+              className='shrink-0'
               disabled={
                 !input.trim() || !providerId || !model || !requestValid
               }
@@ -1416,8 +1423,8 @@ function ChatBubble({
         className={cn(
           'flex min-w-0 flex-col',
           user
-            ? 'max-w-[90%] items-end sm:max-w-[78%] lg:max-w-[70%]'
-            : 'w-[calc(100%_-_3.25rem)] sm:w-[88%] lg:w-[82%]'
+            ? 'max-w-[88%] items-end sm:max-w-[74%] lg:max-w-[64%]'
+            : 'w-fit max-w-[calc(100%_-_3.25rem)] sm:max-w-[90%] lg:max-w-[86%]'
         )}
       >
         <div
