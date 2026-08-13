@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.clock import utc_now
@@ -56,6 +56,92 @@ class RegisterEventRepository:
                 if event is None:
                     raise
                 return self._existing_event(event, values), False
+
+    def list_events(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str = "",
+        search: str = "",
+    ) -> dict[str, Any]:
+        filters: list[Any] = []
+        if status:
+            filters.append(RegisterWebhookEvent.status == status)
+        token = search.strip().lower()
+        if token:
+            search_filters = [
+                func.lower(RegisterWebhookEvent.event_id).contains(token),
+                func.lower(RegisterWebhookEvent.event_type).contains(token),
+                func.lower(RegisterWebhookEvent.registration_id).contains(token),
+                func.lower(RegisterWebhookEvent.email).contains(token),
+            ]
+            if token.isdigit():
+                numeric_token = int(token)
+                search_filters.extend(
+                    [
+                        RegisterWebhookEvent.grok2api_account_id == numeric_token,
+                        RegisterWebhookEvent.resolved_account_id == numeric_token,
+                    ]
+                )
+            filters.append(or_(*search_filters))
+
+        now = utc_now()
+        with self.database.session() as session:
+            total = int(
+                session.scalar(
+                    select(func.count(RegisterWebhookEvent.event_id)).where(*filters)
+                )
+                or 0
+            )
+            events = session.scalars(
+                select(RegisterWebhookEvent)
+                .where(*filters)
+                .order_by(RegisterWebhookEvent.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+            status_counts = {
+                "pending": 0,
+                "processing": 0,
+                "completed": 0,
+                "failed": 0,
+            }
+            for event_status, count in session.execute(
+                select(
+                    RegisterWebhookEvent.status,
+                    func.count(RegisterWebhookEvent.event_id),
+                ).group_by(RegisterWebhookEvent.status)
+            ).all():
+                status_counts[str(event_status)] = int(count or 0)
+            due_count = int(
+                session.scalar(
+                    select(func.count(RegisterWebhookEvent.event_id)).where(
+                        RegisterWebhookEvent.status == "pending",
+                        RegisterWebhookEvent.next_attempt_at <= now,
+                    )
+                )
+                or 0
+            )
+            retrying_count = int(
+                session.scalar(
+                    select(func.count(RegisterWebhookEvent.event_id)).where(
+                        RegisterWebhookEvent.status == "pending",
+                        RegisterWebhookEvent.attempts > 0,
+                    )
+                )
+                or 0
+            )
+
+        return {
+            "items": [model_dict(event) for event in events],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+            "statusCounts": status_counts,
+            "dueCount": due_count,
+            "retryingCount": retrying_count,
+        }
 
     @staticmethod
     def _existing_event(

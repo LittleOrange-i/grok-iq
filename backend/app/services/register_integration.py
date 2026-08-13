@@ -83,6 +83,21 @@ class RegisterIntegrationService:
             "eventId": event["event_id"],
         }
 
+    def list_events(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status: str = "",
+        search: str = "",
+    ) -> dict[str, Any]:
+        return self.repository.list_events(
+            page=page,
+            page_size=page_size,
+            status=status,
+            search=search,
+        )
+
     async def _worker(self) -> None:
         while True:
             event = self.repository.claim_due()

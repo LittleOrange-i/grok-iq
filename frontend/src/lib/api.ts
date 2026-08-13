@@ -22,6 +22,35 @@ export type AuthSession = {
 
 export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
 
+export type RegisterWebhookEventStatus =
+  'pending' | 'processing' | 'completed' | 'failed'
+
+export type RegisterWebhookEvent = {
+  event_id: string
+  event_type: string
+  registration_id: string
+  email: string
+  grok2api_account_id: number | null
+  bot_risk: boolean
+  bfs: string
+  occurred_at: string
+  status: RegisterWebhookEventStatus
+  attempts: number
+  last_error: string
+  resolved_account_id: number | null
+  run_ids: string[]
+  next_attempt_at: string
+  created_at: string
+  updated_at: string
+  completed_at: string | null
+}
+
+export type RegisterWebhookEventsResponse = Page<RegisterWebhookEvent> & {
+  statusCounts: Record<RegisterWebhookEventStatus, number>
+  dueCount: number
+  retryingCount: number
+}
+
 type SsoReportSummary = {
   total: number
   valid: number
@@ -1495,6 +1524,14 @@ export const api = {
   probeWorkerLogs: (limit = 300) =>
     request<ProbeWorkerLogsResponse>(
       `/probe-workers/logs${query({ limit: Math.min(1500, limit) })}`
+    ),
+  registerWebhookEvents: (
+    params: Record<string, string | number | undefined> = {},
+    signal?: AbortSignal
+  ) =>
+    request<RegisterWebhookEventsResponse>(
+      `/register-webhook-events${query(params)}`,
+      { signal }
     ),
   run: (id: string) =>
     request<{

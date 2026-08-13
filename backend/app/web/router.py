@@ -23,7 +23,10 @@ from .routes.auth import build_auth_router
 from .routes.chat import build_chat_router
 from .routes.egress import build_egress_router
 from .routes.health import build_health_router
-from .routes.integrations import build_integrations_router
+from .routes.integrations import (
+    build_integrations_router,
+    build_register_events_router,
+)
 from .routes.probes import build_probes_router
 from .routes.settings import build_settings_router
 from .routes.sso_reports import build_sso_reports_router
@@ -88,6 +91,7 @@ def build_router(
     )
     protected.include_router(build_chat_router(chat_service))
     protected.include_router(build_sso_reports_router(sso_reports))
+    protected.include_router(build_register_events_router(register_integration))
 
     router.include_router(protected)
     return router

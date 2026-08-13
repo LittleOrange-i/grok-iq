@@ -67,6 +67,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/settings/test-wechat"),
     ("POST", "/api/integrations/grok-register/account-created"),
     ("POST", "/api/integrations/grok-register/account-imported"),
+    ("GET", "/api/register-webhook-events"),
     ("GET", "/api/chat/providers"),
     ("POST", "/api/chat/providers"),
     ("PUT", "/api/chat/providers/{provider_id}"),

@@ -57,6 +57,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { EgressNodeReference } from '@/features/monitor/components/egress-node-reference'
+import { RegisterWebhookInbox } from '@/features/monitor/components/register-webhook-inbox'
 
 const workerStatusMeta: Record<
   string,
@@ -142,6 +143,8 @@ export function WorkersPage() {
           egressNodeNames={egressNodeNames}
         />
       )}
+
+      <RegisterWebhookInbox />
 
       <WorkerLogsDialog
         open={logsOpen}

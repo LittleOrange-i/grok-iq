@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.config import Settings
 from app.services.register_integration import RegisterIntegrationService
@@ -41,5 +41,27 @@ def build_integrations_router(
     ) -> dict[str, Any]:
         require_register_token(request)
         return register.accept(payload.model_dump())
+
+    return router
+
+
+def build_register_events_router(
+    register: RegisterIntegrationService,
+) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/register-webhook-events")
+    async def register_webhook_events(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
+        status: str = "",
+        search: str = "",
+    ) -> dict[str, Any]:
+        return register.list_events(
+            page=page,
+            page_size=page_size,
+            status=status,
+            search=search,
+        )
 
     return router
