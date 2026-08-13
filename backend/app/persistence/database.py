@@ -15,7 +15,7 @@ class Database:
     """SQLAlchemy engine/session owner.
 
     API and service code receive this object through application composition;
-    they never open sqlite3 connections to the monitor database directly.
+    they never open sqlite3 connections to the GrokIQ database directly.
     """
 
     def __init__(self, path: Path):
@@ -159,6 +159,37 @@ class Database:
                     "ALTER TABLE probe_samples ADD COLUMN retry_after_seconds FLOAT NOT NULL DEFAULT 0",
                 ),
             ],
+            "sso_reports": [
+                (
+                    "completed_count",
+                    "ALTER TABLE sso_reports ADD COLUMN completed_count INTEGER NOT NULL DEFAULT 0",
+                ),
+                (
+                    "proxy_used",
+                    "ALTER TABLE sso_reports ADD COLUMN proxy_used BOOLEAN NOT NULL DEFAULT 0",
+                ),
+                (
+                    "concurrency",
+                    "ALTER TABLE sso_reports ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 8",
+                ),
+                (
+                    "request_timeout_seconds",
+                    "ALTER TABLE sso_reports ADD COLUMN request_timeout_seconds INTEGER "
+                    "NOT NULL DEFAULT 20",
+                ),
+                (
+                    "error",
+                    "ALTER TABLE sso_reports ADD COLUMN error TEXT NOT NULL DEFAULT ''",
+                ),
+                (
+                    "started_at",
+                    "ALTER TABLE sso_reports ADD COLUMN started_at DATETIME",
+                ),
+                (
+                    "completed_at",
+                    "ALTER TABLE sso_reports ADD COLUMN completed_at DATETIME",
+                ),
+            ],
         }
         compatibility_indexes = {
             "account_assessments": [
@@ -204,10 +235,18 @@ class Database:
             for name, statement in indexes:
                 if name not in existing_indexes.get(table, set()):
                     statements.append(statement)
-        if statements or "probe_plans" in inspector.get_table_names():
+        if statements or any(
+            table in inspector.get_table_names()
+            for table in ("probe_plans", "sso_reports")
+        ):
             with self.engine.begin() as connection:
                 for statement in statements:
                     connection.exec_driver_sql(statement)
+                if "sso_reports" in inspector.get_table_names():
+                    connection.exec_driver_sql(
+                        "UPDATE sso_reports SET completed_count = total "
+                        "WHERE status = 'completed' AND completed_count = 0 AND total > 0"
+                    )
                 if "probe_plans" in inspector.get_table_names():
                     rows = connection.exec_driver_sql(
                         "SELECT id, profile_id, profile_ids FROM probe_plans"

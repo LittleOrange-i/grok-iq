@@ -7,18 +7,19 @@ from typing import Any, ClassVar
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "monitor.db"
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "grokiq.db"
 
 DEFAULT_REGISTER_PROBE_PROFILE_IDS = ["quality-marker"]
+DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS = 15.0
 REGISTER_PROBE_EXECUTION_MODE = "chat"
 REGISTER_PROBE_ROUNDS = 3
 REGISTER_PROBE_PROXY_TARGETS = [{"kind": "current", "id": None}]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="GAM_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="GROKIQ_", env_file=".env", extra="ignore")
 
-    app_name: str = "Grok Account Monitor"
+    app_name: str = "GrokIQ"
     host: str = "0.0.0.0"
     port: int = 8090
     debug: bool = False
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
     # the application creates a mode-0600 key beside the SQLite database.
     runtime_secret_key: str = ""
     # JWT signing is bootstrap-only. When omitted, a mode-0600 key is generated
-    # next to the monitor database and therefore persists with the Docker volume.
+    # next to the GrokIQ database and therefore persists with the Docker volume.
     jwt_secret_key: str = ""
     jwt_ttl_seconds: int = Field(
         default=7 * 24 * 60 * 60,
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
 
     grok_register_webhook_token: str = ""
     initial_probe_on_register: bool = True
+    register_probe_stabilization_seconds: float = Field(
+        default=DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS,
+        ge=0,
+        le=300,
+    )
     register_probe_profile_ids: list[str] = Field(
         default_factory=lambda: list(DEFAULT_REGISTER_PROBE_PROFILE_IDS)
     )
@@ -67,7 +73,7 @@ class Settings(BaseSettings):
     wechat_openid: str = ""
     wechat_template_id: str = ""
 
-    # User-created probe plans and monitor-owned quarantine recovery are
+    # User-created probe plans and GrokIQ-owned quarantine recovery are
     # independently configurable while sharing the same scheduler process.
     scheduler_enabled: bool = True
     quarantine_recovery_enabled: bool = True
@@ -91,7 +97,7 @@ class Settings(BaseSettings):
     probe_transient_retry_attempts: int = Field(default=2, ge=0, le=5)
     probe_transient_retry_base_seconds: float = Field(default=5.0, ge=0.1, le=60)
     probe_transient_retry_max_seconds: float = Field(default=30.0, ge=0.1, le=300)
-    probe_route_prefix: str = "gam-probe"
+    probe_route_prefix: str = "grokiq-probe"
     probe_diagnostic_priority: int = Field(default=-1_000_000, ge=-2_000_000_000, le=0)
 
     analysis_window_hours: int = Field(default=168, ge=1, le=24 * 365)
@@ -128,6 +134,7 @@ class Settings(BaseSettings):
         "grok2api_http_impersonate",
         "grok_register_webhook_token",
         "initial_probe_on_register",
+        "register_probe_stabilization_seconds",
         "register_probe_profile_ids",
         "register_probe_execution_mode",
         "register_probe_rounds",

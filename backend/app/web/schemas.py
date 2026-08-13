@@ -206,7 +206,7 @@ SecretSettingName = Literal[
 
 
 class RuntimeSettingsInput(BaseModel):
-    """Editable settings exposed by the monitor UI.
+    """Editable settings exposed by the GrokIQ UI.
 
     Secret values are write-only. An omitted or blank secret keeps the current
     value; ``clearSecrets`` performs an explicit clear.
@@ -220,6 +220,12 @@ class RuntimeSettingsInput(BaseModel):
     grok2api_http_impersonate: str | None = Field(default=None, alias="grok2apiHttpImpersonate")
     grok_register_webhook_token: str | None = Field(default=None, alias="grokRegisterWebhookToken")
     initial_probe_on_register: bool | None = Field(default=None, alias="initialProbeOnRegister")
+    register_probe_stabilization_seconds: float | None = Field(
+        default=None,
+        alias="registerProbeStabilizationSeconds",
+        ge=0,
+        le=300,
+    )
     register_probe_profile_ids: list[str] | None = Field(
         default=None, alias="registerProbeProfileIds", max_length=1000
     )
@@ -353,7 +359,7 @@ class ProfileInput(BaseModel):
     expected_text: str = Field(default="", max_length=2000)
     expected_output: str = Field(default="", max_length=500_000)
     expected_image_url: str = Field(default="", max_length=4000)
-    # Zero means the monitor omits the output-token field and lets the upstream
+    # Zero means GrokIQ omits the output-token field and lets the upstream
     # route/model apply its own limit.
     max_output_tokens: int = Field(default=0, ge=0)
     temperature: float | None = Field(default=None, ge=0, le=2)
@@ -402,6 +408,19 @@ class ProbePlanEnabledInput(BaseModel):
 
 class BulkIdsInput(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class SsoReportCreateInput(BaseModel):
+    name: str = Field(default="", max_length=160)
+    sso_content: str = Field(alias="ssoContent", min_length=1, max_length=4_000_000)
+    proxy: str = Field(default="", max_length=8000)
+    concurrency: int = Field(default=8, ge=1, le=32)
+    request_timeout_seconds: int = Field(
+        default=20,
+        alias="requestTimeoutSeconds",
+        ge=5,
+        le=120,
+    )
 
 
 class RegisterAccountEvent(BaseModel):

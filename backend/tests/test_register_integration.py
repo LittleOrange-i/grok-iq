@@ -7,10 +7,7 @@ import pytest
 
 from app.core.clock import utc_now
 from app.core.config import Settings
-from app.services.register_integration import (
-    REGISTER_PROBE_STABILIZATION_SECONDS,
-    RegisterIntegrationService,
-)
+from app.services.register_integration import RegisterIntegrationService
 
 
 class RegisterRepository:
@@ -113,7 +110,11 @@ async def test_webhook_auto_binds_before_enqueue():
 
 @pytest.mark.asyncio
 async def test_webhook_defers_probe_during_new_account_stabilization():
-    settings = Settings(initial_probe_on_register=True)
+    stabilization_seconds = 15
+    settings = Settings(
+        initial_probe_on_register=True,
+        register_probe_stabilization_seconds=stabilization_seconds,
+    )
     repository = RegisterRepository()
     account_service = RegisterAccountService()
     probes = RegisterProbeManager()
@@ -141,9 +142,84 @@ async def test_webhook_defers_probe_during_new_account_stabilization():
     assert repository.retried is not None
     assert repository.retried[0] == "event-new-account"
     assert "模型权限传播" in repository.retried[1]
-    assert 1 <= repository.retried[2] <= REGISTER_PROBE_STABILIZATION_SECONDS
+    assert 1 <= repository.retried[2] <= stabilization_seconds
     assert account_service.auto_bound is False
     assert probes.values is None
+
+
+@pytest.mark.asyncio
+async def test_webhook_can_disable_new_account_stabilization():
+    settings = Settings(
+        initial_probe_on_register=True,
+        register_probe_stabilization_seconds=0,
+    )
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    service = RegisterIntegrationService(
+        settings=settings,
+        repository=repository,  # type: ignore[arg-type]
+        accounts=UnusedAccountRepository(),  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-no-stabilization",
+            "attempts": 1,
+            "created_at": utc_now(),
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+
+    assert repository.retried is None
+    assert repository.completed == ("event-no-stabilization", 17, ["run-1"])
+
+
+@pytest.mark.asyncio
+async def test_webhook_uses_longest_initial_readiness_delay():
+    settings = Settings(
+        initial_probe_on_register=True,
+        register_probe_stabilization_seconds=15,
+    )
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    service = RegisterIntegrationService(
+        settings=settings,
+        repository=repository,  # type: ignore[arg-type]
+        accounts=UnusedAccountRepository(),  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    original_find = account_service.find_registered_account
+
+    async def cooling_account(account_id: int | None, email: str) -> dict[str, Any]:
+        account = await original_find(account_id, email)
+        return {
+            **account,
+            "cooldownUntil": (utc_now() + timedelta(seconds=40)).isoformat(),
+        }
+
+    account_service.find_registered_account = cooling_account  # type: ignore[method-assign]
+    await service._process_claimed(
+        {
+            "event_id": "event-longest-readiness-delay",
+            "attempts": 1,
+            "created_at": utc_now(),
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+
+    assert repository.retried is not None
+    assert "冷却" in repository.retried[1]
+    assert 39 <= repository.retried[2] <= 40
 
 
 @pytest.mark.asyncio

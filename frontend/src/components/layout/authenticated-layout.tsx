@@ -29,7 +29,7 @@ export function AuthenticatedLayout({
             </span>
             <span className='hidden min-w-0 sm:block'>
               <span className='block truncate text-sm leading-4 font-semibold'>
-                Grok Monitor
+                GrokIQ
               </span>
               <span className='block truncate text-[11px] text-muted-foreground'>
                 Account intelligence

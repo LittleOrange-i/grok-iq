@@ -1,8 +1,18 @@
-import { type ComponentProps, useMemo, useState } from 'react'
-import { Code2, ExternalLink, Eye, X } from 'lucide-react'
+import {
+  Children,
+  isValidElement,
+  type ComponentProps,
+  type ReactNode,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { Check, Code2, Copy, ExternalLink, Eye, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+import { copyText } from '@/lib/clipboard'
+import { cn, getErrorMessage } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -25,9 +35,10 @@ export function MarkdownView({
   codeBlockClassName?: string
 }) {
   const preClassName = cn(
-    'my-3 rounded-lg border bg-white p-4 text-xs leading-5 text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-100 [&_code]:rounded-none [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit',
-    !codeBlockClassName && 'max-h-[28rem] overflow-auto overscroll-contain'
+    'm-0 max-h-[28rem] overflow-auto overscroll-contain bg-transparent p-4 text-xs leading-5 text-foreground [&_code]:rounded-none [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit',
+    codeBlockClassName
   )
+
   return (
     <div className={cn('prose-monitor min-w-0 break-words', className)}>
       <ReactMarkdown
@@ -48,9 +59,9 @@ export function MarkdownView({
             </code>
           ),
           pre: ({ children }) => (
-            <pre className={cn(preClassName, codeBlockClassName)}>
+            <MarkdownCodeBlock className={preClassName}>
               {children}
-            </pre>
+            </MarkdownCodeBlock>
           ),
         }}
       >
@@ -58,6 +69,98 @@ export function MarkdownView({
       </ReactMarkdown>
     </div>
   )
+}
+
+type MarkdownCodeElementProps = {
+  className?: string
+  children?: ReactNode
+}
+
+function MarkdownCodeBlock({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className: string
+}) {
+  const [copied, setCopied] = useState(false)
+  const resetTimerRef = useRef<number | undefined>(undefined)
+  const codeElement = Children.toArray(children).find((child) =>
+    isValidElement<MarkdownCodeElementProps>(child)
+  )
+  const codeProps = isValidElement<MarkdownCodeElementProps>(codeElement)
+    ? codeElement.props
+    : undefined
+  const languageMatch = codeProps?.className?.match(/language-([\w-]+)/i)
+  const language = formatCodeLanguage(languageMatch?.[1])
+  const code = stringifyMarkdownChildren(codeProps?.children ?? children).replace(
+    /\n$/,
+    ''
+  )
+
+  const handleCopy = () => {
+    void copyText(code)
+      .then(() => {
+        setCopied(true)
+        toast.success('代码内容已复制')
+        if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = window.setTimeout(() => {
+          setCopied(false)
+          resetTimerRef.current = undefined
+        }, 1800)
+      })
+      .catch((error) => toast.error(getErrorMessage(error)))
+  }
+
+  return (
+    <div className='my-3 overflow-hidden rounded-lg border border-border/70 bg-muted/20 shadow-sm'>
+      <div className='flex items-center justify-between gap-2 border-b border-border/60 bg-muted/45 px-3 py-1.5'>
+        <span className='min-w-0 truncate font-mono text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>
+          {language}
+        </span>
+        <Button
+          type='button'
+          size='sm'
+          variant='ghost'
+          className='h-7 shrink-0 gap-1.5 px-2 text-xs'
+          onClick={handleCopy}
+          disabled={!code}
+          aria-label={`复制${language}代码`}
+        >
+          {copied ? <Check /> : <Copy />}
+          {copied ? '已复制' : '复制'}
+        </Button>
+      </div>
+      <pre className={className}>
+        {codeElement ?? children}
+      </pre>
+    </div>
+  )
+}
+
+function formatCodeLanguage(language?: string) {
+  if (!language) return '代码'
+  const normalized = language.toLowerCase()
+  if (normalized === 'sh' || normalized === 'shell' || normalized === 'zsh') {
+    return 'bash'
+  }
+  if (normalized === 'md') return 'markdown'
+  if (normalized === 'yml') return 'yaml'
+  return language
+}
+
+function stringifyMarkdownChildren(value: ReactNode): string {
+  return Children.toArray(value)
+    .map((child) => {
+      if (typeof child === 'string' || typeof child === 'number') {
+        return String(child)
+      }
+      if (isValidElement<{ children?: ReactNode }>(child)) {
+        return stringifyMarkdownChildren(child.props.children)
+      }
+      return ''
+    })
+    .join('')
 }
 
 export function SourceCodeView({

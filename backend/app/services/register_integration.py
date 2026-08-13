@@ -8,6 +8,7 @@ from typing import Any
 
 from app.core.clock import ensure_utc, utc_now
 from app.core.config import (
+    DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS,
     REGISTER_PROBE_EXECUTION_MODE,
     REGISTER_PROBE_PROXY_TARGETS,
     REGISTER_PROBE_ROUNDS,
@@ -23,7 +24,9 @@ from app.services.wechat_notification import WeChatAccountNotificationService
 logger = logging.getLogger(__name__)
 MAX_EVENT_ATTEMPTS = 20
 RETRY_DELAYS = (2, 5, 10, 20, 30, 60, 120, 300)
-REGISTER_PROBE_STABILIZATION_SECONDS = 15
+# Kept as a compatibility alias for integrations importing the former constant;
+# runtime behavior uses the hot-updatable Settings value below.
+REGISTER_PROBE_STABILIZATION_SECONDS = DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS
 
 
 class RegisteredAccountPending(RuntimeError):
@@ -179,34 +182,40 @@ class RegisterIntegrationService:
 
         grok2api finishes credential and model-catalog persistence before its
         import request returns, while the upstream chat permission can take a
-        few more seconds to propagate.  Calling immediately can produce one
-        temporary permission denial, which grok2api correctly isolates as a
-        five-minute model cooldown.  Keep the durable webhook pending during a
-        short stabilization window so the first real probe starts after that
-        propagation period instead of creating a false error sample.
+        few more seconds to propagate. Calling immediately can create a false
+        first sample and trigger an upstream cooldown. Keep the durable webhook
+        pending for the configured stabilization window, but always prefer a
+        longer live account cooldown when grok2api exposes one.
         """
 
         now = utc_now()
+        stabilization_remaining = 0.0
         received_at = self._timestamp(event.get("created_at"))
         if received_at is not None:
             ready_at = received_at + timedelta(
-                seconds=REGISTER_PROBE_STABILIZATION_SECONDS
+                seconds=self.settings.register_probe_stabilization_seconds
             )
-            remaining = (ready_at - now).total_seconds()
-            if remaining > 0:
-                raise RegisteredAccountPending(
-                    "新导入账号正在等待 grok2api 模型权限传播",
-                    retry_after_seconds=math.ceil(remaining),
-                )
+            stabilization_remaining = max(0.0, (ready_at - now).total_seconds())
 
+        cooldown_remaining = 0.0
         cooldown_until = self._timestamp(account.get("cooldownUntil"))
         if cooldown_until is not None:
-            remaining = (cooldown_until - now).total_seconds()
-            if remaining > 0:
-                raise RegisteredAccountPending(
-                    "新导入账号仍在 grok2api 冷却中",
-                    retry_after_seconds=math.ceil(remaining),
-                )
+            cooldown_remaining = max(
+                0.0,
+                (cooldown_until - now).total_seconds(),
+            )
+
+        remaining = max(stabilization_remaining, cooldown_remaining)
+        if remaining <= 0:
+            return
+        if cooldown_remaining >= stabilization_remaining:
+            reason = "新导入账号仍在 grok2api 冷却中"
+        else:
+            reason = "新导入账号正在等待 grok2api 模型权限传播"
+        raise RegisteredAccountPending(
+            reason,
+            retry_after_seconds=math.ceil(remaining),
+        )
 
     def _retry_or_fail(self, event_id: str, attempts: int, exc: Exception) -> None:
         if attempts >= MAX_EVENT_ATTEMPTS:

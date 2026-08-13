@@ -1,1 +1,1 @@
-"""Grok Account Monitor backend."""
+"""GrokIQ backend."""

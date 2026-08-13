@@ -23,7 +23,7 @@ def build_integrations_router(
                 status_code=503,
                 detail="grok-register 联动令牌尚未配置",
             )
-        supplied_token = request.headers.get("x-monitor-token", "").strip()
+        supplied_token = request.headers.get("x-grokiq-token", "").strip()
         if not hmac.compare_digest(supplied_token, expected_token):
             raise HTTPException(status_code=401, detail="联动令牌无效")
 

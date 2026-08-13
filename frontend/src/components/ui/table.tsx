@@ -16,7 +16,7 @@ type TableProps = React.ComponentProps<'table'> & {
 
 function Table({ className, rememberRowKey, ...props }: TableProps) {
   const storageKey = rememberRowKey
-    ? `gam-current-table-row::${rememberRowKey}`
+    ? `grokiq-current-table-row::${rememberRowKey}`
     : ''
   const [activeRowId, setActiveRowId] = React.useState<string | null>(() => {
     if (!storageKey || typeof window === 'undefined') return null

@@ -14,7 +14,7 @@ from .models import AppSetting, MetadataRow
 
 
 class RuntimeSecretCipher:
-    """Encrypt runtime credentials stored in the monitor-owned database."""
+    """Encrypt runtime credentials stored in the GrokIQ database."""
 
     def __init__(self, settings: Settings):
         key = settings.runtime_secret_key.strip().encode()
@@ -23,7 +23,7 @@ class RuntimeSecretCipher:
         try:
             self._fernet = Fernet(key)
         except (TypeError, ValueError) as exc:
-            raise ValueError("GAM_RUNTIME_SECRET_KEY 不是有效的 Fernet key") from exc
+            raise ValueError("GROKIQ_RUNTIME_SECRET_KEY 不是有效的 Fernet key") from exc
 
     @staticmethod
     def _load_or_create_key(database_path: Path) -> bytes:

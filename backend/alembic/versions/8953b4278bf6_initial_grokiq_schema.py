@@ -1,4 +1,4 @@
-"""initial monitor schema
+"""initial GrokIQ schema
 
 Revision ID: 8953b4278bf6
 Revises:

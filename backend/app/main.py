@@ -17,6 +17,7 @@ from app.persistence.database import Database
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.settings_repository import SettingsRepository
+from app.persistence.sso_report_repository import SsoReportRepository
 from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
@@ -25,6 +26,7 @@ from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
+from app.services.sso_report_service import SsoReportService
 from app.services.wechat_notification import WeChatAccountNotificationService
 from app.web.exception_handlers import install_exception_handlers
 from app.web.router import build_router
@@ -62,9 +64,11 @@ chat_provider_repository = ChatProviderRepository(database, settings)
 probe_repository = ProbeRepository(database)
 settings_repository = SettingsRepository(database, settings)
 register_event_repository = RegisterEventRepository(database)
+sso_report_repository = SsoReportRepository(database)
 runtime_settings_service = RuntimeSettingsService(settings, settings_repository)
 auth_service = AuthService(settings, auth_repository)
 chat_service = ChatService(settings=settings, providers=chat_provider_repository)
+sso_report_service = SsoReportService(sso_report_repository)
 grok_client = Grok2APIClient(settings)
 wechat_client = WeChatTestAccountClient(settings)
 wechat_notification_service = WeChatAccountNotificationService(
@@ -115,11 +119,13 @@ async def lifespan(_: FastAPI):
     )
     await probe_manager.start()
     await register_integration_service.start()
+    await sso_report_service.start()
     await scheduler_service.start()
     try:
         yield
     finally:
         await scheduler_service.stop()
+        await sso_report_service.stop()
         await register_integration_service.stop()
         await probe_manager.stop()
         database.dispose()
@@ -149,6 +155,7 @@ app.include_router(
         runtime_settings_service=runtime_settings_service,
         auth_service=auth_service,
         chat_service=chat_service,
+        sso_reports=sso_report_service,
         register_integration=register_integration_service,
         wechat_notifications=wechat_notification_service,
     )

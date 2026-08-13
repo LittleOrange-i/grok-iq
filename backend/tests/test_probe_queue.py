@@ -30,7 +30,7 @@ from app.services.probe_manager import ProbeManager
 
 @pytest.fixture
 def repository(tmp_path: Path) -> ProbeRepository:
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     value = ProbeRepository(database)
     value.seed_defaults()
@@ -88,7 +88,7 @@ async def wait_for_terminal_run(
 
 
 def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     tables = set(inspect(database.engine).get_table_names())
     assessment_columns = {
@@ -98,6 +98,11 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
     assert "recovery_guarded" in assessment_columns
     assert "probe_runs" in tables
     assert "probe_duration_estimates" in tables
+    assert "sso_reports" in tables
+    sso_report_columns = {
+        value["name"] for value in inspect(database.engine).get_columns("sso_reports")
+    }
+    assert {"concurrency", "request_timeout_seconds"} <= sso_report_columns
     assert "monitored_accounts" not in tables
     assert "account_snapshots" not in tables
     assert "egress_mirrors" not in tables
@@ -105,7 +110,7 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
 
 
 def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     repository.seed_defaults()
@@ -183,7 +188,7 @@ def test_account_risk_uses_only_current_fixed_egress_samples(tmp_path: Path):
 def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
     tmp_path: Path,
 ):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     accounts = AccountRepository(database)
     accounts.set_manual_status(account_id=10, status="high_risk", note="legacy")
@@ -203,7 +208,7 @@ def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
 
 
 def test_recalculate_all_uses_new_formula_for_existing_samples(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probes = ProbeRepository(database)
     probes.seed_defaults()
@@ -273,7 +278,7 @@ def test_recalculate_all_uses_new_formula_for_existing_samples(tmp_path: Path):
 
 
 def test_probe_recalculation_preserves_registration_risk(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     accounts = AccountRepository(database)
     accounts.mark_registration_risk(
@@ -568,7 +573,7 @@ class FakeGrokClient:
         }
 
     async def create_probe_route(self, **_: Any) -> tuple[str, str]:
-        return "route-1", "gam-probe-test"
+        return "route-1", "grokiq-probe-test"
 
     async def create_probe_client_key(self, _: str, **__: Any) -> tuple[str, str]:
         return "key-1", "secret"
@@ -675,11 +680,11 @@ class DisabledFakeGrokClient(FakeGrokClient):
 
 
 def test_worker_activity_stats_use_rolling_process_window(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     manager = ProbeManager(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         repository=repository,
         accounts=AccountRepository(database),
         client=FakeGrokClient(),  # type: ignore[arg-type]
@@ -708,14 +713,14 @@ def test_worker_activity_stats_use_rolling_process_window(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_manual_batch_reports_skipped_account_details(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     repository.seed_defaults()
     client = FakeGrokClient()
     client.account_egress_node_id = 7
     manager = ProbeManager(
-        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        settings=Settings(database_path=tmp_path / "grokiq.db", scheduler_enabled=False),
         repository=repository,
         accounts=AccountRepository(database),
         client=client,  # type: ignore[arg-type]
@@ -749,13 +754,13 @@ async def test_manual_batch_reports_skipped_account_details(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_disabled_account_uses_diagnostic_activation_and_restores_snapshot(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     client = DisabledFakeGrokClient()
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -799,14 +804,14 @@ async def test_disabled_account_uses_diagnostic_activation_and_restores_snapshot
 
 @pytest.mark.asyncio
 async def test_probe_error_still_restores_disabled_account_automatically(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     client = DisabledFakeGrokClient()
     client.probe_error = RuntimeError("simulated upstream probe failure")
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -839,7 +844,7 @@ async def test_probe_error_still_restores_disabled_account_automatically(tmp_pat
 
 @pytest.mark.asyncio
 async def test_transient_scheduler_error_is_retried_as_one_successful_sample(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     client = FakeGrokClient()
@@ -853,7 +858,7 @@ async def test_transient_scheduler_error_is_retried_as_one_successful_sample(tmp
     ]
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -886,12 +891,12 @@ async def test_transient_scheduler_error_is_retried_as_one_successful_sample(tmp
 
 @pytest.mark.asyncio
 async def test_transient_retry_delay_honors_retry_after_beyond_local_max(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     client = FakeGrokClient()
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_transient_retry_base_seconds=5,
             probe_transient_retry_max_seconds=30,
@@ -918,11 +923,11 @@ async def test_transient_retry_delay_honors_retry_after_beyond_local_max(tmp_pat
 
 @pytest.mark.asyncio
 async def test_final_cooling_error_delays_the_next_round_by_retry_after(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     client = FakeGrokClient()
     manager = ProbeManager(
-        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        settings=Settings(database_path=tmp_path / "grokiq.db", scheduler_enabled=False),
         repository=ProbeRepository(database),
         accounts=AccountRepository(database),
         client=client,  # type: ignore[arg-type]
@@ -950,7 +955,7 @@ async def test_final_cooling_error_delays_the_next_round_by_retry_after(tmp_path
 
 @pytest.mark.asyncio
 async def test_final_transient_error_preserves_http_and_retry_metadata(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     client = FakeGrokClient()
@@ -963,7 +968,7 @@ async def test_final_transient_error_preserves_http_and_retry_metadata(tmp_path:
     )
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -997,7 +1002,7 @@ async def test_final_transient_error_preserves_http_and_retry_metadata(tmp_path:
 
 @pytest.mark.asyncio
 async def test_restore_failure_is_marked_then_manual_sync_clears_it(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     client = DisabledFakeGrokClient()
@@ -1005,7 +1010,7 @@ async def test_restore_failure_is_marked_then_manual_sync_clears_it(tmp_path: Pa
     client.restore_routing_failures = 2
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1045,7 +1050,7 @@ async def test_restore_failure_is_marked_then_manual_sync_clears_it(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_startup_recovery_marks_cancelled_run_as_startup_restored(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     repository.seed_defaults()
@@ -1066,7 +1071,7 @@ async def test_startup_recovery_marks_cancelled_run_as_startup_restored(tmp_path
         original_node_id=None,
         original_mode="",
         route_id="route-1",
-        public_model="gam-probe-test",
+        public_model="grokiq-probe-test",
         client_key_id="key-1",
     )
     repository.set_diagnostic_activation(run_id, True)
@@ -1078,7 +1083,7 @@ async def test_startup_recovery_marks_cancelled_run_as_startup_restored(tmp_path
     client.account_max_concurrent = 1
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1136,14 +1141,14 @@ def test_failed_restore_blocks_followup_claim_delete_and_retry(repository: Probe
 
 @pytest.mark.asyncio
 async def test_worker_persists_result_and_restores_upstream(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
     account_repository = AccountRepository(database)
     client = FakeGrokClient()
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1171,14 +1176,14 @@ async def test_worker_persists_result_and_restores_upstream(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_chat_probe_marks_actual_egress_mismatch_as_error_with_evidence(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
     client = FakeGrokClient()
     client.chat_egress_override = 3
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1213,7 +1218,7 @@ async def test_chat_probe_marks_actual_egress_mismatch_as_error_with_evidence(tm
 
 @pytest.mark.asyncio
 async def test_current_egress_probe_preserves_binding_and_routing_settings(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
     client = FakeGrokClient()
@@ -1221,7 +1226,7 @@ async def test_current_egress_probe_preserves_binding_and_routing_settings(tmp_p
     client.account_egress_mode = "manual"
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1260,11 +1265,11 @@ async def test_current_egress_probe_preserves_binding_and_routing_settings(tmp_p
 
 @pytest.mark.asyncio
 async def test_current_egress_probe_rejects_unbound_or_disabled_account(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     client = FakeGrokClient()
     manager = ProbeManager(
-        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        settings=Settings(database_path=tmp_path / "grokiq.db", scheduler_enabled=False),
         repository=ProbeRepository(database),
         accounts=AccountRepository(database),
         client=client,  # type: ignore[arg-type]
@@ -1291,7 +1296,7 @@ async def test_current_egress_probe_rejects_unbound_or_disabled_account(tmp_path
 
 @pytest.mark.asyncio
 async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
     client = FakeGrokClient()
@@ -1300,7 +1305,7 @@ async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path
     client.chat_egress_override = 3
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,
@@ -1343,10 +1348,10 @@ async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path
 
 @pytest.mark.asyncio
 async def test_current_egress_cannot_be_mixed_with_diagnostic_targets(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     manager = ProbeManager(
-        settings=Settings(database_path=tmp_path / "monitor.db", scheduler_enabled=False),
+        settings=Settings(database_path=tmp_path / "grokiq.db", scheduler_enabled=False),
         repository=ProbeRepository(database),
         accounts=AccountRepository(database),
         client=FakeGrokClient(),  # type: ignore[arg-type]
@@ -1363,14 +1368,14 @@ async def test_current_egress_cannot_be_mixed_with_diagnostic_targets(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_quality_test_pins_account_and_node_without_changing_binding(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
     account_repository = AccountRepository(database)
     client = FakeGrokClient()
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduler_enabled=False,
             probe_worker_concurrency=1,
             probe_step_delay_seconds=0,

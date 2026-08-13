@@ -1,4 +1,4 @@
-# Grok Account Monitor
+# GrokIQ
 
 > 面向账号质量巡检的可视化工作台：批量发起探针、追踪任务与样本证据、识别异常表现，并支持后续处置与复测。
 
@@ -8,7 +8,7 @@
 
 ## 一眼了解
 
-Grok Account Monitor 将日常账号巡检集中到一个界面中：从账号筛选、批量建测、排队执行，到样本详情、风险趋势和复测，所有操作都有清晰的进度与可回看记录。
+GrokIQ 将日常账号巡检集中到一个界面中：从账号筛选、批量建测、排队执行，到样本详情、风险趋势和复测，所有操作都有清晰的进度与可回看记录。
 
 - **账号探针**：按状态、判定等条件筛选账号，批量创建测试、启用或停用。
 - **任务中心**：查看队列和执行进度，支持停止、删除、重测与批量操作。
@@ -17,6 +17,7 @@ Grok Account Monitor 将日常账号巡检集中到一个界面中：从账号�
 - **计划任务**：用 Cron 定期巡检，避免重复堆积任务。
 - **Worker 可观测性**：查看并发执行状态、阻塞原因和近期日志。
 - **聊天广场**：用于流式对话验证，支持多套模型配置、本地会话历史和 Markdown / HTML 预览。
+- **SSO 检测**：每行导入一个 SSO 批量检查登录态和 Bot 标记；每次执行保存独立报告，支持回看、筛选和批量删除。
 
 ## 界面预览
 
@@ -156,6 +157,7 @@ Grok Account Monitor 将日常账号巡检集中到一个界面中：从账号�
 - **任务控制**：查看队列和 Worker，支持停止、重试、删除以及批量操作。
 - **结果回看**：从账号、任务或样本详情里直接看指标和原始输出，长内容按需展开。
 - **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可自动创建探针任务。
+- **SSO 报告**：仅 `bot=0` 记为正常，其他值记为风控标记；持久报告不保存 SSO、哈希或会话 ID。
 
 ## 风险因子怎么调
 
@@ -207,25 +209,25 @@ grok-register 注册完成
   -> 记录注册风险 / 可选自动创建探针
 ```
 
-只有 `grok_build` 已被 Grok2API 接收后才会发送事件。注册成功但导入失败时不会提前触发监控。
+只有 `grok_build` 已被 Grok2API 接收后才会发送事件。注册成功但导入失败时不会提前触发 GrokIQ。
 
 ### 怎么接
 
 1. 在本项目打开“系统设置 → 联动与启动项”。
 2. 设置 `grok-register` 联动令牌，复制页面生成的完整 Webhook 地址。
 3. 按需开启“注册后自动探针”，并选择方案、执行模式、轮次和出口。
-4. 在 `grok-register` 打开“系统设置 → Grok2API”，开启账号监控联动。
+4. 在 `grok-register` 打开“系统设置 → Grok2API”，开启 GrokIQ 联动。
 5. 粘贴 Webhook 地址和同一个 Token，保存即可。
 
 独立部署时，Webhook 地址必须能从 `grok-register` 进程或容器访问。统一 Compose 中使用内部地址：
 
 ```text
-http://monitor-backend:8090/api/integrations/grok-register/account-imported
+http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 ```
 
-请求使用 `x-monitor-token`，两边填写的 Token 必须一致。
+请求使用 `x-grokiq-token`，两边填写的 Token 必须一致。
 
-最小请求体只需要邮箱，监控端会从 Grok2API 按邮箱精确匹配账号：
+最小请求体只需要邮箱，GrokIQ 会从 Grok2API 按邮箱精确匹配账号：
 
 ```json
 {
@@ -254,7 +256,7 @@ http://monitor-backend:8090/api/integrations/grok-register/account-imported
 | `bfs` | string / integer | 注册阶段的 bfs 风控值 |
 | `occurred_at` | string | 事件发生时间，建议使用 ISO 8601 |
 
-接口返回 HTTP `202` 表示事件已经持久接收，账号匹配、失败重试和探针执行由后台继续完成。探针方案、模式、轮次和出口均使用监控端“默认策略”，调用方不需要传入。
+接口返回 HTTP `202` 表示事件已经持久接收，账号匹配、失败重试和探针执行由后台继续完成。探针方案、模式、轮次和出口均使用 GrokIQ 的默认策略，调用方不需要传入。
 
 ### 投递行为
 
@@ -266,7 +268,7 @@ http://monitor-backend:8090/api/integrations/grok-register/account-imported
 
 ### 三个服务一起跑
 
-`grok-register` 仓库已经提供 `compose.monitor.yaml`，可以一起启动注册机、监控后端和监控前端：
+`grok-register` 仓库已经提供 `compose.grokiq.yaml`，可以一起启动注册机、GrokIQ 后端和 GrokIQ 前端：
 
 ```bash
 git clone https://github.com/kaibush/grok-register.git
@@ -274,16 +276,18 @@ cd grok-register
 cp .env.example .env
 
 # 编辑 .env，至少设置：
-# MONITOR_GROK2API_BASE_URL
-# MONITOR_GROK2API_ADMIN_USERNAME
-# MONITOR_GROK2API_ADMIN_PASSWORD
-# MONITOR_WEBHOOK_TOKEN
+# GROKIQ_GROK2API_BASE_URL
+# GROKIQ_GROK2API_ADMIN_USERNAME
+# GROKIQ_GROK2API_ADMIN_PASSWORD
+# GROKIQ_WEBHOOK_TOKEN
 
-docker compose -f compose.yaml -f compose.monitor.yaml pull
-docker compose -f compose.yaml -f compose.monitor.yaml up -d
+docker compose -f compose.yaml -f compose.grokiq.yaml pull
+docker compose -f compose.yaml -f compose.grokiq.yaml up -d
 ```
 
 默认端口：`grok-register` 使用 `8787`，本项目 Web 页面使用 `8091`。探针配置只在本项目维护，注册机只负责在导入成功后发送事件。
+
+新账号首次探针默认等待 `15` 秒，可通过 `GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS` 或“联动与启动项”调整；设为 `0` 可关闭等待。
 
 ## grok2api 运行依赖
 
@@ -352,7 +356,7 @@ npm run dev
 
 ## 数据保存与备份
 
-Docker Compose 默认使用命名卷 `monitor-data` 保存运行数据，包括任务、样本、设置、自动生成的密钥和轮转日志。迁移或备份时，请将该数据卷作为一个整体处理。
+Docker Compose 默认使用命名卷 `grokiq-data` 保存运行数据，包括任务、样本、设置、自动生成的密钥和轮转日志。迁移或备份时，请将该数据卷作为一个整体处理。
 
 ## 许可
 

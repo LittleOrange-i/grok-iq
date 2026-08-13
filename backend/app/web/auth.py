@@ -11,7 +11,7 @@ from app.services.auth_service import AuthenticationError, AuthService
 admin_bearer = HTTPBearer(
     auto_error=False,
     scheme_name="AdminJWT",
-    description="Grok Account Monitor administrator JWT",
+    description="GrokIQ administrator JWT",
 )
 
 

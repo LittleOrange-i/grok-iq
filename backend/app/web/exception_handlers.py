@@ -11,6 +11,7 @@ from app.persistence.auth_repository import AdminAlreadyExistsError
 from app.persistence.probe_repository import QueueFullError, RunStateError
 from app.services.auth_service import AuthenticationError
 from app.services.chat_service import ChatUpstreamError
+from app.services.sso_report_service import SsoReportNotFoundError
 
 from .auth import AdminAuthenticationRequired
 
@@ -68,6 +69,13 @@ def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(QueueFullError)
     async def queue_full_error(_: Request, exc: QueueFullError) -> JSONResponse:
         return _error_response(429, exc)
+
+    @app.exception_handler(SsoReportNotFoundError)
+    async def sso_report_not_found(
+        _: Request,
+        exc: SsoReportNotFoundError,
+    ) -> JSONResponse:
+        return _error_response(404, exc)
 
     @app.exception_handler(ChatUpstreamError)
     async def chat_upstream_error(

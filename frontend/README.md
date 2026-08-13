@@ -1,6 +1,6 @@
-# Grok Account Monitor Frontend
+# GrokIQ Frontend
 
-本目录使用完整的 [satnaing/shadcn-admin](https://github.com/satnaing/shadcn-admin) 源码作为 UI 基座，并针对 Grok Account Monitor 二次开发。
+本目录使用完整的 [satnaing/shadcn-admin](https://github.com/satnaing/shadcn-admin) 源码作为 UI 基座，并针对 GrokIQ 二次开发。
 
 业务入口：
 
@@ -9,6 +9,7 @@
 - 任务中心
 - Cron 计划与探针方案
 - 聊天广场
+- SSO 检测与报告
 - 系统设置
 
 ```bash

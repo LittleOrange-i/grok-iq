@@ -514,7 +514,7 @@ export function EgressNodesPage() {
           <DialogHeader>
             <DialogTitle>新增 Grok Build 节点</DialogTitle>
             <DialogDescription>
-              代理凭据只发送给 grok2api，不在 Monitor 数据库保存或回显。
+              代理凭据只发送给 grok2api，不在 GrokIQ 数据库保存或回显。
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-4'>

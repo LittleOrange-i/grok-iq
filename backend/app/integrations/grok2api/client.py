@@ -78,7 +78,7 @@ def is_transient_gateway_error(*, status_code: int, error_code: str) -> bool:
 
     A remaining quota value does not imply that the selector can lease the
     account right now.  These codes represent cooling, transport, or capacity
-    state and are safe for the monitor to retry once the upstream scheduler
+    state and are safe for GrokIQ to retry once the upstream scheduler
     has had time to recover.  Credential, model, and quota failures are left
     as final samples so they are not hidden by retries.
     """
@@ -845,7 +845,7 @@ class Grok2APIClient:
         temperature: float | None,
         extra_body: dict[str, Any],
     ) -> ChatProbeResult:
-        request_id = f"gam_{uuid.uuid4().hex}"
+        request_id = f"grokiq_{uuid.uuid4().hex}"
         messages: list[dict[str, str]] = []
         if system_prompt.strip():
             messages.append({"role": "system", "content": system_prompt.strip()})

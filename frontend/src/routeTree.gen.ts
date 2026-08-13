@@ -41,6 +41,7 @@ import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_auth
 import { Route as AuthenticatedSettingsAppearanceRouteImport } from './routes/_authenticated/settings/appearance'
 import { Route as AuthenticatedSettingsDisplayRouteImport } from './routes/_authenticated/settings/display'
 import { Route as AuthenticatedSettingsNotificationsRouteImport } from './routes/_authenticated/settings/notifications'
+import { Route as AuthenticatedSsoReportsIndexRouteImport } from './routes/_authenticated/sso-reports/index'
 import { Route as AuthenticatedTasksIndexRouteImport } from './routes/_authenticated/tasks/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWorkersIndexRouteImport } from './routes/_authenticated/workers/index'
@@ -217,6 +218,12 @@ const AuthenticatedSettingsNotificationsRoute =
     path: '/notifications',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
+const AuthenticatedSsoReportsIndexRoute =
+  AuthenticatedSsoReportsIndexRouteImport.update({
+    id: '/sso-reports/',
+    path: '/sso-reports/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedTasksIndexRoute = AuthenticatedTasksIndexRouteImport.update({
   id: '/tasks/',
   path: '/tasks/',
@@ -283,6 +290,7 @@ export interface FileRoutesByFullPath {
   '/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
   '/runs/': typeof AuthenticatedRunsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
+  '/sso-reports/': typeof AuthenticatedSsoReportsIndexRoute
   '/tasks/': typeof AuthenticatedTasksIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/workers/': typeof AuthenticatedWorkersIndexRoute
@@ -319,6 +327,7 @@ export interface FileRoutesByTo {
   '/probe-profiles': typeof AuthenticatedProbeProfilesIndexRoute
   '/runs': typeof AuthenticatedRunsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
+  '/sso-reports': typeof AuthenticatedSsoReportsIndexRoute
   '/tasks': typeof AuthenticatedTasksIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/workers': typeof AuthenticatedWorkersIndexRoute
@@ -360,6 +369,7 @@ export interface FileRoutesById {
   '/_authenticated/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
   '/_authenticated/runs/': typeof AuthenticatedRunsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
+  '/_authenticated/sso-reports/': typeof AuthenticatedSsoReportsIndexRoute
   '/_authenticated/tasks/': typeof AuthenticatedTasksIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/workers/': typeof AuthenticatedWorkersIndexRoute
@@ -399,6 +409,7 @@ export interface FileRouteTypes {
     | '/probe-profiles/'
     | '/runs/'
     | '/settings/'
+    | '/sso-reports/'
     | '/tasks/'
     | '/users/'
     | '/workers/'
@@ -435,6 +446,7 @@ export interface FileRouteTypes {
     | '/probe-profiles'
     | '/runs'
     | '/settings'
+    | '/sso-reports'
     | '/tasks'
     | '/users'
     | '/workers'
@@ -475,6 +487,7 @@ export interface FileRouteTypes {
     | '/_authenticated/probe-profiles/'
     | '/_authenticated/runs/'
     | '/_authenticated/settings/'
+    | '/_authenticated/sso-reports/'
     | '/_authenticated/tasks/'
     | '/_authenticated/users/'
     | '/_authenticated/workers/'
@@ -721,6 +734,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsNotificationsRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
+    '/_authenticated/sso-reports/': {
+      id: '/_authenticated/sso-reports/'
+      path: '/sso-reports'
+      fullPath: '/sso-reports/'
+      preLoaderRoute: typeof AuthenticatedSsoReportsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/tasks/': {
       id: '/_authenticated/tasks/'
       path: '/tasks'
@@ -803,6 +823,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProbeProfilesIndexRoute: typeof AuthenticatedProbeProfilesIndexRoute
   AuthenticatedRunsIndexRoute: typeof AuthenticatedRunsIndexRoute
+  AuthenticatedSsoReportsIndexRoute: typeof AuthenticatedSsoReportsIndexRoute
   AuthenticatedTasksIndexRoute: typeof AuthenticatedTasksIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWorkersIndexRoute: typeof AuthenticatedWorkersIndexRoute
@@ -822,6 +843,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProbeProfilesIndexRoute: AuthenticatedProbeProfilesIndexRoute,
   AuthenticatedRunsIndexRoute: AuthenticatedRunsIndexRoute,
+  AuthenticatedSsoReportsIndexRoute: AuthenticatedSsoReportsIndexRoute,
   AuthenticatedTasksIndexRoute: AuthenticatedTasksIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWorkersIndexRoute: AuthenticatedWorkersIndexRoute,

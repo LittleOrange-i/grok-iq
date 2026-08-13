@@ -20,12 +20,12 @@ COPY app ./app
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install . && \
-    addgroup --system monitor && \
-    adduser --system --ingroup monitor --home /app monitor && \
+    addgroup --system grokiq && \
+    adduser --system --ingroup grokiq --home /app grokiq && \
     mkdir -p /app/data && \
-    chown -R monitor:monitor /app
+    chown -R grokiq:grokiq /app
 
-USER monitor
+USER grokiq
 
 VOLUME ["/app/data"]
 EXPOSE 8090

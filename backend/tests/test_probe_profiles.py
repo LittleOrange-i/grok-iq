@@ -47,7 +47,7 @@ def test_profile_input_follows_upstream_output_limit_by_default():
 
 
 def test_profile_source_distinguishes_built_in_and_custom(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     repository.seed_defaults()
@@ -62,7 +62,7 @@ def test_profile_source_distinguishes_built_in_and_custom(tmp_path: Path):
 
 
 def test_default_profiles_migrate_to_follow_upstream_once(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     legacy_limits = {values["id"]: 256 for values in DEFAULT_PROFILES}
     legacy_limits["html-preview"] = 4096

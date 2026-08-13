@@ -182,6 +182,9 @@ class RuntimeSettingsService:
             "grok2apiHttpImpersonate": s.grok2api_http_impersonate,
             "grokRegisterWebhookTokenConfigured": bool(s.grok_register_webhook_token),
             "initialProbeOnRegister": s.initial_probe_on_register,
+            "registerProbeStabilizationSeconds": (
+                s.register_probe_stabilization_seconds
+            ),
             "registerProbeProfileIds": s.register_probe_profile_ids,
             "registerProbeExecutionMode": s.register_probe_execution_mode,
             "registerProbeRounds": s.register_probe_rounds,

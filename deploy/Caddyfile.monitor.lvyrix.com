@@ -1,4 +1,4 @@
-# Grok Account Monitor frontend and API.
+# GrokIQ frontend and API.
 # Caddy only reaches the loopback-bound frontend. Its nginx forwards /api to
 # the backend over the private Compose network, so the backend needs no host port.
 monitor.lvyrix.com {

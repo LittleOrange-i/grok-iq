@@ -20,9 +20,96 @@ export type AuthSession = {
   user: AuthUser
 }
 
+export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
+
+export type SsoReportSummary = {
+  total: number
+  valid: number
+  clean: number
+  flagged: number
+  mismatched: number
+  invalid: number
+  errors: number
+  valid_rate: number
+  flagged_rate: number
+  verdict_distribution: Record<string, number>
+  bot_flag_distribution: Record<string, number>
+  region_distribution: Record<string, number>
+  median_response_ms: number
+}
+
+export type SsoReportItem = {
+  id: string
+  name: string
+  status: SsoReportStatus
+  total: number
+  completed_count: number
+  progress_percent: number
+  queue_position: number | null
+  valid: number
+  clean: number
+  flagged: number
+  mismatched: number
+  invalid: number
+  errors: number
+  elapsed_seconds: number
+  summary: Partial<SsoReportSummary>
+  proxy_used: boolean
+  concurrency: number
+  request_timeout_seconds: number
+  error: string
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type SsoCheckResult = {
+  label: string
+  expected_email: string
+  checked_at: string
+  jwt_valid: boolean
+  status_code: number
+  final_url: string
+  valid_session: boolean
+  email_match: boolean | null
+  verdict: string
+  account: {
+    email?: string
+    user_id?: string
+    given_name?: string
+    family_name?: string
+    display_name?: string
+    email_confirmed?: boolean | null
+    session_tier_id?: string
+    x_subscription_type?: string
+    country_code?: string
+    region?: string
+    region_code?: string
+    organization_id?: string
+    organization_type?: number | null
+    create_time?: number | null
+  }
+  bot_flag: {
+    found: boolean
+    source: number | null
+    details: string
+    policy: string
+    risk: number | null
+    event: string
+    denied: boolean
+    flagged: boolean
+  }
+  error: string
+  response_ms: number
+}
+
+export type SsoReportDetail = SsoReportItem & {
+  results: SsoCheckResult[]
+}
+
 export type AuthenticationRequiredCode =
   'authentication_required' | 'setup_required'
-export const AUTH_REQUIRED_EVENT = 'gam-auth-required'
+export const AUTH_REQUIRED_EVENT = 'grokiq-auth-required'
 const AUTH_REQUIRED_CODES = new Set<AuthenticationRequiredCode>([
   'authentication_required',
   'setup_required',
@@ -467,6 +554,7 @@ export type RuntimeSettings = {
   grok2apiHttpImpersonate: string
   grokRegisterWebhookTokenConfigured: boolean
   initialProbeOnRegister: boolean
+  registerProbeStabilizationSeconds: number
   registerProbeProfileIds: string[]
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
@@ -540,6 +628,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'grok2apiAdminUsername'
     | 'grok2apiHttpImpersonate'
     | 'initialProbeOnRegister'
+    | 'registerProbeStabilizationSeconds'
     | 'registerProbeProfileIds'
     | 'registerProbeExecutionMode'
     | 'registerProbeRounds'
@@ -622,6 +711,7 @@ type RuntimeSettingsWire = Omit<
   | 'wechatTemplateId'
   | 'quarantineRecoveryEnabled'
   | 'scheduledProbeRegisterCooldownMinutes'
+  | 'registerProbeStabilizationSeconds'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
@@ -650,6 +740,7 @@ type RuntimeSettingsWire = Omit<
   wechatTemplateId?: string
   quarantineRecoveryEnabled?: boolean
   scheduledProbeRegisterCooldownMinutes?: number
+  registerProbeStabilizationSeconds?: number
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -660,6 +751,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     ],
     registerProbeExecutionMode: value.registerProbeExecutionMode ?? 'chat',
     registerProbeRounds: value.registerProbeRounds ?? 3,
+    registerProbeStabilizationSeconds:
+      value.registerProbeStabilizationSeconds ?? 15,
     registerProbeProxyTargets: value.registerProbeProxyTargets ?? [
       { kind: 'current', id: null },
     ],
@@ -1262,6 +1355,31 @@ export const api = {
   health: () => request<HealthResponse>('/health'),
   dashboard: (hours = 168) =>
     request<DashboardResponse>(`/dashboard?hours=${hours}`),
+  ssoReports: () => request<SsoReportItem[]>('/sso-reports'),
+  ssoReport: (id: string) =>
+    request<SsoReportDetail>(`/sso-reports/${id}`),
+  createSsoReport: (body: {
+    name: string
+    ssoContent: string
+    proxy: string
+    concurrency: number
+    requestTimeoutSeconds: number
+  }) =>
+    request<SsoReportDetail>('/sso-reports', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteSsoReports: (ids: string[]) =>
+    request<{
+      requested: number
+      deleted: number
+      missing: number
+      skipped: number
+      skipped_ids: string[]
+    }>(
+      '/sso-reports',
+      { method: 'DELETE', body: JSON.stringify({ ids }) }
+    ),
   accounts: (
     params: Record<string, string | number | undefined>,
     signal?: AbortSignal

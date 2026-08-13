@@ -75,6 +75,11 @@ EXPECTED_ROUTES = {
     ("POST", "/api/chat/providers/{provider_id}/sync-models"),
     ("GET", "/api/chat/models"),
     ("POST", "/api/chat/completions"),
+    ("GET", "/api/sso-reports"),
+    ("POST", "/api/sso-reports"),
+    ("DELETE", "/api/sso-reports"),
+    ("GET", "/api/sso-reports/{report_id}"),
+    ("DELETE", "/api/sso-reports/{report_id}"),
 }
 
 PUBLIC_PATHS = {
@@ -85,6 +90,7 @@ PUBLIC_PATHS = {
     "/api/integrations/grok-register/account-created",
     "/api/integrations/grok-register/account-imported",
 }
+
 
 
 def build_test_router():
@@ -102,6 +108,7 @@ def build_test_router():
         runtime_settings_service=MagicMock(),
         auth_service=dependency,
         chat_service=MagicMock(),
+        sso_reports=MagicMock(),
         register_integration=MagicMock(),
         wechat_notifications=MagicMock(),
     )

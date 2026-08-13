@@ -82,7 +82,7 @@ export function SignIn() {
             <ShieldCheck className='size-5' />
           </span>
           <div>
-            <div className='font-semibold'>Grok Monitor</div>
+            <div className='font-semibold'>GrokIQ</div>
             <div className='text-xs text-zinc-400'>账号质量与风控探针</div>
           </div>
         </div>
@@ -120,7 +120,7 @@ export function SignIn() {
                 <ShieldCheck className='size-5' />
               </span>
               <div>
-                <div className='font-semibold'>Grok Monitor</div>
+                <div className='font-semibold'>GrokIQ</div>
                 <div className='text-xs text-muted-foreground'>
                   账号质量与风控探针
                 </div>

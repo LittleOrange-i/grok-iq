@@ -1,4 +1,4 @@
-"""SQLAlchemy persistence layer owned by the monitor service."""
+"""SQLAlchemy persistence layer owned by GrokIQ."""
 
 from .database import Database
 

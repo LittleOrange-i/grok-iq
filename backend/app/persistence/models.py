@@ -24,7 +24,7 @@ from .sql_types import AppDateTime
 
 
 class Base(DeclarativeBase):
-    """Declarative root for data owned by this monitor."""
+    """Declarative root for data owned by GrokIQ."""
 
 
 class MetadataRow(Base):
@@ -35,7 +35,7 @@ class MetadataRow(Base):
 
 
 class AdminUser(Base):
-    """The single local administrator for this independent monitor."""
+    """The single local administrator for this GrokIQ deployment."""
 
     __tablename__ = "admin_users"
     __table_args__ = (CheckConstraint("id = 1", name="ck_admin_users_singleton"),)
@@ -57,10 +57,10 @@ class AdminUser(Base):
 
 
 class AccountAssessment(Base):
-    """Monitor-owned verdict keyed by an upstream account ID.
+    """GrokIQ-owned verdict keyed by an upstream account ID.
 
     Account credentials and account-list fields stay in grok2api. This table
-    contains only the monitor's result, operator action, and quarantine state.
+    contains only GrokIQ's result, operator action, and quarantine state.
     """
 
     __tablename__ = "account_assessments"
@@ -340,6 +340,38 @@ class ChatProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+
+class SsoReport(Base):
+    """Credential-free result of one user-triggered SSO batch inspection."""
+
+    __tablename__ = "sso_reports"
+    __table_args__ = (Index("ix_sso_reports_created_at", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="queued", nullable=False)
+    total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    completed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    valid_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    clean_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    flagged_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    invalid_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    elapsed_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    results: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    proxy_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    concurrency: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
+    request_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, default=20, nullable=False
+    )
+    error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, nullable=False
+    )
+    started_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    completed_at: Mapped[datetime | None] = mapped_column(AppDateTime())
 
 
 class AppSetting(Base):

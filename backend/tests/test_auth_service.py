@@ -18,7 +18,7 @@ def build_service(
 ) -> tuple[Database, AuthService]:
     settings = Settings(
         _env_file=None,
-        database_path=tmp_path / "monitor.db",
+        database_path=tmp_path / "grokiq.db",
         jwt_secret_key="s" * 48 if configured_secret else "",
         jwt_ttl_seconds=7 * 24 * 60 * 60,
     )
@@ -54,7 +54,7 @@ def test_first_admin_setup_login_and_logout_revocation(tmp_path: Path):
 
 def test_generated_jwt_secret_is_private_and_persistent(tmp_path: Path):
     database, service = build_service(tmp_path, configured_secret=False)
-    secret_path = tmp_path / "monitor.jwt.key"
+    secret_path = tmp_path / "grokiq.jwt.key"
 
     assert secret_path.read_text(encoding="utf-8").strip() == service.secret
     assert stat.S_IMODE(secret_path.stat().st_mode) == 0o600

@@ -6,10 +6,13 @@ import {
   BellRing,
   Calculator,
   CheckCircle2,
+  Clock3,
   Copy,
   Database,
   Eye,
   EyeOff,
+  ExternalLink,
+  HelpCircle,
   Inbox,
   KeyRound,
   Layers3,
@@ -21,11 +24,13 @@ import {
   Send,
   ServerCog,
   ShieldCheck,
+  SquareCode,
   TestTube2,
   Webhook,
   Workflow,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { IconGithub } from '@/assets/brand-icons'
 import {
   api,
   type EditableRuntimeSettings,
@@ -46,6 +51,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -67,6 +80,7 @@ type SettingsForm = {
   grok2apiHttpImpersonate: string
   grokRegisterWebhookToken: string
   initialProbeOnRegister: boolean
+  registerProbeStabilizationSeconds: number
   registerProbeProfileIds: string[]
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
@@ -132,7 +146,21 @@ const secretMetadata: Record<
   },
 }
 
+const RECOMMENDED_RISK_SCORING = {
+  riskAnomalyRateWeight: 30,
+  riskHardWeight: 6,
+  riskHardCap: 24,
+  riskFastWeight: 12,
+  riskFastCap: 30,
+  riskMarkerMissWeight: 16,
+  riskMarkerMissCap: 32,
+  riskStreakWeight: 3,
+  riskStreakCap: 15,
+} as const
+
 const REGISTER_WEBHOOK_PATH = '/api/integrations/grok-register/account-imported'
+const GROK_REGISTER_REPOSITORY_URL =
+  'https://github.com/kaibush/grok-register'
 const REGISTER_PROBE_EXECUTION_MODE: ExecutionMode = 'chat'
 const REGISTER_PROBE_ROUNDS = 3
 const REGISTER_PROBE_PROXY_TARGETS: ProxyTarget[] = [
@@ -304,6 +332,13 @@ export function SettingsPage() {
     wechatTestMutation.isPending
   const set = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) =>
     setForm((current) => (current ? { ...current, [key]: value } : current))
+
+  const restoreRecommendedRiskScoring = () => {
+    setForm((current) =>
+      current ? { ...current, ...RECOMMENDED_RISK_SCORING } : current
+    )
+    toast.success('已填入推荐风险评分参数，保存后生效')
+  }
 
   const toggleSecretClear = (name: SecretSettingName) => {
     setClearSecrets((current) =>
@@ -537,7 +572,7 @@ export function SettingsPage() {
             </div>
             <div className='mt-4 rounded-lg border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground'>
               账号级并发固定为 1。正常定检启动间隔在所有 Worker
-              之间共享，用于降低短时间账号扩散；Monitor 无法获知 Resin 最终物理
+              之间共享，用于降低短时间账号扩散；GrokIQ 无法获知 Resin 最终物理
               IP，因此该间隔不等同于每 IP 精确限流。
             </div>
           </SettingsCard>
@@ -558,6 +593,7 @@ export function SettingsPage() {
                 >
                   <NumberField
                     label='分析窗口（小时）'
+                    hint='账号风险只统计“当前固定出口”在最近这段时间内的探针样本。默认 168 小时即最近 7 天；更短会更快淡化旧异常，更长会保留更久的历史影响。保存后会立即按新窗口重算全部账号。'
                     value={form.analysisWindowHours}
                     min={1}
                     max={8760}
@@ -571,6 +607,16 @@ export function SettingsPage() {
                     onChange={(value) => set('minimumOutputTokens', value)}
                   />
                 </RiskFieldGroup>
+
+                <div className='rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs leading-5 text-muted-foreground'>
+                  <div className='flex items-center gap-2 font-medium text-foreground'>
+                    <Clock3 className='size-3.5 text-sky-600' />
+                    当前统计范围：最近 {formatDurationHours(form.analysisWindowHours)}
+                  </div>
+                  <p className='mt-1.5'>
+                    每次探针完成、删除探针结果或保存风险设置时，系统都会重新截取这个时间范围内的样本，计算异常占比、连续次数、风险分和账号状态。诊断出口样本不进入该窗口。
+                  </p>
+                </div>
 
                 <RiskFieldGroup
                   title='TPS 阈值'
@@ -682,25 +728,56 @@ export function SettingsPage() {
           <SettingsCard
             icon={Calculator}
             title='风险评分规则'
-            description='配置各类风险信号的权重、单项上限和状态最低分。评分用于账号排序和风险展示。'
+            description='配置各类风险信号每次增加多少分、同类信号最多累计多少分，以及不同账号状态的最低显示分。评分用于账号排序和风险展示，不直接改变状态判定条件。'
             descriptionAsHint
           >
+            <div className='mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
+              <div className='rounded-lg border border-sky-500/20 bg-sky-500/5 p-3'>
+                <div className='flex items-center gap-2 text-sm font-medium'>
+                  <HelpCircle className='size-4 text-sky-600' />
+                  加分强度和最多计分怎么理解？
+                </div>
+                <div className='mt-2 grid gap-2 text-xs leading-5 text-muted-foreground sm:grid-cols-2'>
+                  <p>
+                    <span className='font-medium text-foreground'>每次加分</span>
+                    ：该信号每出现 1 次增加多少分。数值越大，这类信号对排序越敏感。
+                  </p>
+                  <p>
+                    <span className='font-medium text-foreground'>最多计分</span>
+                    ：同类信号累计到这个分数后停止增加，避免单一原因占满总分。
+                  </p>
+                </div>
+                <p className='mt-2 text-xs leading-5 text-muted-foreground'>
+                  例如“强信号”每次加 {formatNumber(form.riskHardWeight)} 分、最多计{' '}
+                  {formatNumber(form.riskHardCap)} 分，达到上限通常需要{' '}
+                  {formatFactorLimit(form.riskHardWeight, form.riskHardCap)} 个强信号。账号状态仍由上方“账号风险判定”决定；这里主要影响风险分和排序。
+                </p>
+              </div>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={restoreRecommendedRiskScoring}
+              >
+                恢复推荐计分参数
+              </Button>
+            </div>
+
             <div className='overflow-hidden rounded-xl border'>
               <div className='hidden grid-cols-[minmax(0,1fr)_9rem_9rem] gap-4 border-b bg-muted/35 px-4 py-2.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:grid'>
                 <span>计分因子</span>
-                <span>权重</span>
-                <span>封顶</span>
+                <span>加分强度</span>
+                <span>最多计分</span>
               </div>
               <RiskFactorRow
                 title='异常信号率'
-                description='异常样本数 ÷ 可测样本数；满占比得分等于权重'
+                description='按异常样本占比计分，不按次数累加。例如设置 30 分，异常占比 50% 时本项得 15 分。'
                 weight={form.riskAnomalyRateWeight}
                 automaticCap
                 onWeightChange={(value) => set('riskAnomalyRateWeight', value)}
               />
               <RiskFactorRow
                 title='强信号'
-                description='buffered_hard、fast_risk 和 marker_miss'
+                description='buffered_hard、fast_risk、marker_miss 每出现 1 次先在本项加分；fast_risk 和 marker_miss 还会进入各自的专项计分。'
                 weight={form.riskHardWeight}
                 cap={form.riskHardCap}
                 onWeightChange={(value) => set('riskHardWeight', value)}
@@ -708,7 +785,7 @@ export function SettingsPage() {
               />
               <RiskFactorRow
                 title='持续高速'
-                description='对 fast_risk 样本额外加分'
+                description='每个 fast_risk 样本的专项额外加分，用于提高持续高速生成信号的优先级。'
                 weight={form.riskFastWeight}
                 cap={form.riskFastCap}
                 onWeightChange={(value) => set('riskFastWeight', value)}
@@ -716,7 +793,7 @@ export function SettingsPage() {
               />
               <RiskFactorRow
                 title='标记缺失'
-                description='对 marker_miss 样本额外加分'
+                description='每个 marker_miss 样本的专项额外加分，用于提高预期标记缺失信号的优先级。'
                 weight={form.riskMarkerMissWeight}
                 cap={form.riskMarkerMissCap}
                 onWeightChange={(value) => set('riskMarkerMissWeight', value)}
@@ -724,7 +801,7 @@ export function SettingsPage() {
               />
               <RiskFactorRow
                 title='连续信号'
-                description='按窗口内最大连续异常次数加分'
+                description='按分析窗口内最大连续异常次数逐次加分，中间的正常可测样本会中断连续计数。'
                 weight={form.riskStreakWeight}
                 cap={form.riskStreakCap}
                 onWeightChange={(value) => set('riskStreakWeight', value)}
@@ -976,254 +1053,275 @@ export function SettingsPage() {
         </TabsContent>
 
         <TabsContent value='integration' className='space-y-4'>
-          <Card className='gap-0 overflow-hidden py-0 shadow-none'>
-            <CardHeader className='border-b bg-muted/15 px-5 py-5 md:px-6'>
-              <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-                <div className='flex min-w-0 items-start gap-3'>
-                  <div className='flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background text-primary shadow-xs'>
-                    <Webhook className='size-5' />
-                  </div>
-                  <div className='min-w-0'>
-                    <CardTitle className='text-base'>
+          <section className='overflow-hidden rounded-xl border bg-card shadow-sm'>
+            <div className='grid gap-5 border-b bg-muted/15 p-5 md:p-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-center'>
+              <div className='flex min-w-0 items-start gap-4'>
+                <div className='flex size-11 shrink-0 items-center justify-center rounded-xl border bg-background text-primary shadow-xs'>
+                  <Webhook className='size-5' />
+                </div>
+                <div className='min-w-0'>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <h2 className='text-base font-semibold'>
                       grok-register 自动联动
-                    </CardTitle>
-                    <CardDescription className='mt-1 max-w-3xl leading-5'>
-                      注册机只投递账号导入事件；监控端负责账号匹配、持久接收和后续探针调度。
-                    </CardDescription>
-                  </div>
-                </div>
-                <Badge
-                  variant={
-                    !registerTokenReady
-                      ? 'warning'
-                      : form.initialProbeOnRegister
-                        ? 'success'
-                        : 'secondary'
-                  }
-                  className='h-6 self-start'
-                >
-                  <Power />
-                  {!registerTokenReady
-                    ? '等待配置令牌'
-                    : form.initialProbeOnRegister
-                      ? '自动探针已开启'
-                      : '仅接收事件'}
-                </Badge>
-              </div>
-            </CardHeader>
-
-            <CardContent className='p-0'>
-              <IntegrationFlow
-                tokenConfigured={registerTokenReady}
-                automaticProbe={form.initialProbeOnRegister}
-              />
-
-              <IntegrationSection
-                icon={KeyRound}
-                eyebrow='接入配置'
-                title='Webhook 与自动处理'
-                description='令牌在两个项目中保持一致即可建立接入；关闭自动探针时仍会持久记录导入事件。'
-              >
-                <div className='grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.55fr)]'>
-                  <div className='grid content-start gap-4 lg:grid-cols-2'>
-                    <SecretField
-                      name='grokRegisterWebhookToken'
-                      value={form.grokRegisterWebhookToken}
-                      settings={settingsValue}
-                      clearing={clearSecrets.includes(
-                        'grokRegisterWebhookToken'
-                      )}
-                      onChange={(value) =>
-                        set('grokRegisterWebhookToken', value)
+                    </h2>
+                    <Badge
+                      variant={
+                        !registerTokenReady
+                          ? 'warning'
+                          : form.initialProbeOnRegister
+                            ? 'success'
+                            : 'secondary'
                       }
-                      onToggleClear={() =>
-                        toggleSecretClear('grokRegisterWebhookToken')
-                      }
-                    />
-                    <Field
-                      label='Webhook 接收地址'
-                      hint='复制完整地址到注册机；请求头：x-monitor-token'
                     >
-                      <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
-                        <code
-                          className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
-                          title={webhookUrl}
-                        >
-                          {webhookUrl}
-                        </code>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type='button'
-                              size='icon'
-                              variant='ghost'
-                              className='size-8 shrink-0 rounded-sm'
-                              onClick={() =>
-                                void copyText(webhookUrl)
-                                  .then(() =>
-                                    toast.success('已复制完整 Webhook 地址')
-                                  )
-                                  .catch((error) =>
-                                    toast.error(getErrorMessage(error))
-                                  )
-                              }
-                              aria-label='复制完整 Webhook 地址'
-                            >
-                              <Copy />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>复制完整地址</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </Field>
+                      <Power />
+                      {!registerTokenReady
+                        ? '等待配置令牌'
+                        : form.initialProbeOnRegister
+                          ? '自动探针已开启'
+                          : '仅接收事件'}
+                    </Badge>
                   </div>
-
-                  <div
-                    className={cn(
-                      'flex min-h-36 flex-col justify-between rounded-xl border p-4 transition-colors',
-                      form.initialProbeOnRegister
-                        ? 'border-primary/25 bg-primary/[0.035]'
-                        : 'bg-muted/20'
-                    )}
-                  >
-                    <div className='flex items-start justify-between gap-4'>
-                      <div className='flex items-start gap-3'>
-                        <div
-                          className={cn(
-                            'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                            form.initialProbeOnRegister
-                              ? 'bg-primary/10 text-primary'
-                              : 'bg-muted text-muted-foreground'
-                          )}
-                        >
-                          <Workflow className='size-4' />
-                        </div>
-                        <div>
-                          <div className='text-sm font-medium'>
-                            注册后创建探针
-                          </div>
-                          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                            匹配账号后先等待 15
-                            秒模型权限传播，再补齐稳定出口并自动加入持久队列。
-                          </p>
-                        </div>
-                      </div>
-                      <Switch
-                        checked={form.initialProbeOnRegister}
-                        onCheckedChange={(value) =>
-                          set('initialProbeOnRegister', value)
-                        }
-                        aria-label='注册后创建探针'
-                      />
-                    </div>
-                    <div className='mt-4 flex items-center gap-2 text-xs text-muted-foreground'>
-                      <span
-                        className={cn(
-                          'size-1.5 rounded-full',
-                          form.initialProbeOnRegister
-                            ? 'bg-emerald-500'
-                            : 'bg-muted-foreground/50'
-                        )}
-                      />
-                      {form.initialProbeOnRegister
-                        ? '新账号就绪后自动固定健康出口；遇到冷却会按上游时间延后'
-                        : '事件入库后结束，不创建探针任务'}
-                    </div>
-                  </div>
+                  <p className='mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground'>
+                    注册完成后自动投递账号导入事件，由监控端完成持久接收、账号匹配与首次探针调度。
+                  </p>
                 </div>
+              </div>
 
-                <WebhookContract />
-              </IntegrationSection>
+              <div className='grid gap-2'>
+                <a
+                  href={GROK_REGISTER_REPOSITORY_URL}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  className='group flex min-w-0 items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+                  aria-label='在 GitHub 新标签页打开 grok-register 项目'
+                >
+                  <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background'>
+                    <IconGithub className='size-4' />
+                  </div>
+                  <div className='min-w-0 flex-1'>
+                    <div className='text-sm font-medium'>查看配套注册项目</div>
+                    <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+                      github.com/kaibush/grok-register
+                    </div>
+                  </div>
+                  <ExternalLink className='size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground' />
+                </a>
 
-              <IntegrationSection
-                icon={Layers3}
-                eyebrow='首次策略'
-                title='新账号首次探针'
-                description='探针方案可多选；执行方式、轮次和出口策略由系统固定。'
-                className='border-t'
+                <WebhookContractDialog />
+              </div>
+            </div>
+
+            <IntegrationFlow
+              tokenConfigured={registerTokenReady}
+              automaticProbe={form.initialProbeOnRegister}
+            />
+
+            <div className='space-y-4 p-4 md:p-5'>
+              <IntegrationPanel
+                icon={KeyRound}
+                title='接入配置'
+                description='令牌与 Webhook 地址用于建立两个项目之间的安全连接。'
               >
-                <div className='space-y-5'>
+                <div className='grid gap-4 lg:grid-cols-2'>
+                  <SecretField
+                    name='grokRegisterWebhookToken'
+                    value={form.grokRegisterWebhookToken}
+                    settings={settingsValue}
+                    clearing={clearSecrets.includes(
+                      'grokRegisterWebhookToken'
+                    )}
+                    onChange={(value) =>
+                      set('grokRegisterWebhookToken', value)
+                    }
+                    onToggleClear={() =>
+                      toggleSecretClear('grokRegisterWebhookToken')
+                    }
+                  />
                   <Field
-                    label='探针方案'
-                    hint='可多选；每个方案分别生成一个持久任务'
+                    label='Webhook 接收地址'
+                    hint='复制完整地址到注册机；请求头：x-grokiq-token'
                   >
-                    <ProfileMultiSelect
-                      profiles={profiles.data ?? []}
-                      value={form.registerProbeProfileIds}
-                      onChange={(value) =>
-                        set('registerProbeProfileIds', value)
-                      }
-                      enabledOnly
-                      disabled={profiles.isLoading}
-                      invalid={
-                        form.initialProbeOnRegister &&
-                        !form.registerProbeProfileIds.length
-                      }
-                    />
+                    <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
+                      <code
+                        className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
+                        title={webhookUrl}
+                      >
+                        {webhookUrl}
+                      </code>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type='button'
+                            size='icon'
+                            variant='ghost'
+                            className='size-8 shrink-0 rounded-sm'
+                            onClick={() =>
+                              void copyText(webhookUrl)
+                                .then(() =>
+                                  toast.success('已复制完整 Webhook 地址')
+                                )
+                                .catch((error) =>
+                                  toast.error(getErrorMessage(error))
+                                )
+                            }
+                            aria-label='复制完整 Webhook 地址'
+                          >
+                            <Copy />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>复制完整地址</TooltipContent>
+                      </Tooltip>
+                    </div>
                   </Field>
-
-                  <div className='grid divide-y overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
-                    <FixedProbeSetting
-                      icon={MessageSquareText}
-                      label='执行方式'
-                      value='完整对话'
-                    />
-                    <FixedProbeSetting
-                      icon={Layers3}
-                      label='执行轮数'
-                      value='每个方案 3 轮'
-                    />
-                    <FixedProbeSetting
-                      icon={ShieldCheck}
-                      label='出口策略'
-                      value='账号当前绑定出口'
-                    />
-                  </div>
                 </div>
-              </IntegrationSection>
-            </CardContent>
-          </Card>
 
-          <Card className='gap-0 overflow-hidden py-0 shadow-none'>
-            <CardHeader className='border-b px-5 py-4 md:px-6'>
-              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                <div className='flex items-center gap-3'>
-                  <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground'>
-                    <ServerCog className='size-4' />
-                  </div>
-                  <div>
-                    <CardTitle className='text-sm'>启动级参数</CardTitle>
-                    <CardDescription className='mt-1 text-xs'>
-                      由容器或环境变量提供，只读展示当前进程实际值。
-                    </CardDescription>
-                  </div>
+                <div className='mt-4 max-w-xs'>
+                  <NumberField
+                    label='新账号稳定等待'
+                    hint='Webhook 接收后延迟创建首次探针，用于等待模型权限传播；设为 0 可关闭。账号实际冷却时间仍会优先。'
+                    value={form.registerProbeStabilizationSeconds}
+                    min={0}
+                    max={300}
+                    step={1}
+                    suffix='秒'
+                    onChange={(value) =>
+                      set('registerProbeStabilizationSeconds', value)
+                    }
+                  />
                 </div>
-                <Badge variant='warning'>修改后重启生效</Badge>
+
+                <div
+                  className={cn(
+                    'mt-4 flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between',
+                    form.initialProbeOnRegister
+                      ? 'border-primary/25 bg-primary/[0.035]'
+                      : 'bg-muted/20'
+                  )}
+                >
+                  <div className='flex min-w-0 items-start gap-3'>
+                    <div
+                      className={cn(
+                        'flex size-9 shrink-0 items-center justify-center rounded-lg',
+                        form.initialProbeOnRegister
+                          ? 'bg-primary/10 text-primary'
+                          : 'bg-muted text-muted-foreground'
+                      )}
+                    >
+                      <Workflow className='size-4' />
+                    </div>
+                    <div className='min-w-0'>
+                      <div className='text-sm font-medium'>
+                        注册后创建探针
+                      </div>
+                      <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+                        匹配账号后按上方稳定窗口等待，再补齐稳定出口并加入持久队列。
+                      </p>
+                      <div className='mt-2 flex items-center gap-2 text-xs text-muted-foreground'>
+                        <span
+                          className={cn(
+                            'size-1.5 rounded-full',
+                            form.initialProbeOnRegister
+                              ? 'bg-emerald-500'
+                              : 'bg-muted-foreground/50'
+                          )}
+                        />
+                        {form.initialProbeOnRegister
+                          ? '自动处理新导入账号'
+                          : '仅持久接收导入事件'}
+                      </div>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={form.initialProbeOnRegister}
+                    onCheckedChange={(value) =>
+                      set('initialProbeOnRegister', value)
+                    }
+                    aria-label='注册后创建探针'
+                  />
+                </div>
+              </IntegrationPanel>
+
+              <IntegrationPanel
+                icon={Layers3}
+                title='首次探针策略'
+                description='选择新账号导入后使用的探针方案，其他执行参数保持固定。'
+              >
+                <Field
+                  label='探针方案'
+                  hint='可多选；每个方案分别生成一个持久任务'
+                >
+                  <ProfileMultiSelect
+                    profiles={profiles.data ?? []}
+                    value={form.registerProbeProfileIds}
+                    onChange={(value) =>
+                      set('registerProbeProfileIds', value)
+                    }
+                    enabledOnly
+                    disabled={profiles.isLoading}
+                    invalid={
+                      form.initialProbeOnRegister &&
+                      !form.registerProbeProfileIds.length
+                    }
+                  />
+                </Field>
+
+                <div className='mt-4 grid divide-y overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
+                  <FixedProbeSetting
+                    icon={MessageSquareText}
+                    label='执行方式'
+                    value='完整对话'
+                  />
+                  <FixedProbeSetting
+                    icon={Layers3}
+                    label='执行轮数'
+                    value='每个方案 3 轮'
+                  />
+                  <FixedProbeSetting
+                    icon={ShieldCheck}
+                    label='出口策略'
+                    value='账号当前绑定出口'
+                  />
+                </div>
+              </IntegrationPanel>
+            </div>
+          </section>
+
+          <section className='rounded-xl border bg-card p-4 shadow-sm md:p-5'>
+            <div className='mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+              <div className='flex items-center gap-3'>
+                <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground'>
+                  <ServerCog className='size-4' />
+                </div>
+                <div>
+                  <h2 className='text-sm font-semibold'>启动级参数</h2>
+                  <p className='mt-1 text-xs text-muted-foreground'>
+                    由容器或环境变量提供，只读展示当前进程实际值。
+                  </p>
+                </div>
               </div>
-            </CardHeader>
-            <CardContent className='p-4 md:p-5'>
-              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-                <BootstrapSetting
-                  label='监听地址'
-                  value={settingsValue.bootstrap.host}
-                />
-                <BootstrapSetting
-                  label='监听端口'
-                  value={String(settingsValue.bootstrap.port)}
-                />
-                <BootstrapSetting
-                  label='数据库路径'
-                  value={settingsValue.bootstrap.databasePath}
-                  mono
-                />
-                <BootstrapSetting
-                  label='CORS Origins'
-                  value={settingsValue.bootstrap.corsOrigins.join(', ') || '—'}
-                  mono
-                />
-              </div>
-            </CardContent>
-          </Card>
+              <Badge variant='warning'>修改后重启生效</Badge>
+            </div>
+            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+              <BootstrapSetting
+                label='监听地址'
+                value={settingsValue.bootstrap.host}
+              />
+              <BootstrapSetting
+                label='监听端口'
+                value={String(settingsValue.bootstrap.port)}
+              />
+              <BootstrapSetting
+                label='数据库路径'
+                value={settingsValue.bootstrap.databasePath}
+                mono
+              />
+              <BootstrapSetting
+                label='CORS Origins'
+                value={settingsValue.bootstrap.corsOrigins.join(', ') || '—'}
+                mono
+              />
+            </div>
+          </section>
         </TabsContent>
       </Tabs>
     </Page>
@@ -1238,6 +1336,8 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     grok2apiHttpImpersonate: settings.grok2apiHttpImpersonate,
     grokRegisterWebhookToken: settings.grokRegisterWebhookToken,
     initialProbeOnRegister: settings.initialProbeOnRegister,
+    registerProbeStabilizationSeconds:
+      settings.registerProbeStabilizationSeconds ?? 15,
     registerProbeProfileIds: settings.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: REGISTER_PROBE_ROUNDS,
@@ -1295,6 +1395,8 @@ function buildSettingsPayload(
     grok2apiAdminUsername: form.grok2apiAdminUsername.trim(),
     grok2apiHttpImpersonate: form.grok2apiHttpImpersonate.trim(),
     initialProbeOnRegister: form.initialProbeOnRegister,
+    registerProbeStabilizationSeconds:
+      form.registerProbeStabilizationSeconds,
     registerProbeProfileIds: form.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: REGISTER_PROBE_ROUNDS,
@@ -1425,6 +1527,13 @@ function validateSettings(form: SettingsForm) {
   if (form.initialProbeOnRegister && !form.registerProbeProfileIds.length) {
     throw new Error('注册后探针至少选择一个探针方案')
   }
+  if (
+    !Number.isFinite(form.registerProbeStabilizationSeconds) ||
+    form.registerProbeStabilizationSeconds < 0 ||
+    form.registerProbeStabilizationSeconds > 300
+  ) {
+    throw new Error('新账号稳定等待需在 0–300 秒之间')
+  }
 }
 
 function SettingsCard({
@@ -1494,7 +1603,7 @@ function IntegrationFlow({
   ]
 
   return (
-    <div className='border-b bg-muted/[0.08] px-5 py-4 md:px-6'>
+    <div className='border-b bg-muted/[0.08] px-4 py-4 md:px-5'>
       <div className='mb-3 flex items-center justify-between gap-3'>
         <div className='text-[11px] font-semibold tracking-[0.16em] text-muted-foreground uppercase'>
           事件链路
@@ -1546,6 +1655,45 @@ function IntegrationFlow({
   )
 }
 
+function WebhookContractDialog() {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type='button'
+          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-background p-3.5 text-start shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+          aria-label='查看 grok-register 请求协议'
+        >
+          <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+            <SquareCode className='size-4' />
+          </div>
+          <div className='min-w-0 flex-1'>
+            <div className='text-sm font-medium'>查看请求协议</div>
+            <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+              POST JSON · 请求体示例与可选字段
+            </div>
+          </div>
+          <ArrowRight className='size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
+        </button>
+      </DialogTrigger>
+      <DialogContent
+        size='wide'
+        className='gap-0 overflow-hidden p-0 sm:p-0'
+      >
+        <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
+          <DialogTitle>grok-register 请求协议</DialogTitle>
+          <DialogDescription>
+            POST JSON；必填字段只有 email，探针策略由本页面统一维护。
+          </DialogDescription>
+        </DialogHeader>
+        <div className='min-h-0 overflow-y-auto'>
+          <WebhookContract />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function WebhookContract() {
   const copyBody = (body: string, label: string) =>
     void copyText(body)
@@ -1591,22 +1739,19 @@ function WebhookContract() {
   ]
 
   return (
-    <div className='mt-5 overflow-hidden rounded-xl border'>
-      <div className='flex flex-col gap-2 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
-        <div>
-          <div className='text-sm font-medium'>请求协议</div>
-          <p className='mt-0.5 text-xs leading-5 text-muted-foreground'>
-            POST JSON；必填字段只有 email，探针策略由本页面统一维护。
-          </p>
-        </div>
+    <section className='bg-background'>
+      <div className='flex flex-col gap-2 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6'>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          调用方使用相同令牌请求 Webhook；示例内容可分别复制。
+        </p>
         <div className='flex flex-wrap gap-2 text-xs'>
           <Badge variant='outline'>POST</Badge>
           <Badge variant='outline'>Content-Type: application/json</Badge>
-          <Badge variant='outline'>x-monitor-token: 联动令牌</Badge>
+          <Badge variant='outline'>x-grokiq-token: 联动令牌</Badge>
         </div>
       </div>
 
-      <div className='grid gap-0 lg:grid-cols-2 lg:divide-x'>
+      <div className='grid gap-0 divide-y'>
         <WebhookBodyExample
           title='最小请求体'
           description='适合简单调用方，监控端自动生成事件 ID。'
@@ -1623,7 +1768,7 @@ function WebhookContract() {
         />
       </div>
 
-      <div className='border-t px-4 py-3'>
+      <div className='border-t px-4 py-3 sm:px-6'>
         <div className='mb-2 text-xs font-medium'>可选字段</div>
         <div className='grid gap-x-5 gap-y-2 md:grid-cols-2'>
           {optionalFields.map((field) => (
@@ -1648,7 +1793,7 @@ function WebhookContract() {
           表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
         </p>
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -1695,36 +1840,31 @@ function WebhookBodyExample({
   )
 }
 
-function IntegrationSection({
+function IntegrationPanel({
   icon: Icon,
-  eyebrow,
   title,
   description,
-  className,
   children,
 }: {
   icon: typeof Network
-  eyebrow: string
   title: string
   description: string
-  className?: string
   children: React.ReactNode
 }) {
   return (
-    <section className={cn('px-5 py-5 md:px-6 md:py-6', className)}>
-      <div className='grid gap-5 xl:grid-cols-[15rem_minmax(0,1fr)] xl:gap-8'>
-        <div>
-          <div className='flex items-center gap-2 text-[11px] font-semibold tracking-[0.14em] text-primary uppercase'>
-            <Icon className='size-3.5' />
-            {eyebrow}
-          </div>
-          <h3 className='mt-2 text-sm font-semibold'>{title}</h3>
-          <p className='mt-1.5 text-xs leading-5 text-muted-foreground'>
+    <section className='rounded-xl border bg-background p-4 md:p-5'>
+      <div className='mb-4 flex items-start gap-3 border-b pb-4'>
+        <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-primary'>
+          <Icon className='size-4' />
+        </div>
+        <div className='min-w-0'>
+          <h3 className='text-sm font-semibold'>{title}</h3>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
             {description}
           </p>
         </div>
-        <div className='min-w-0'>{children}</div>
       </div>
+      <div className='min-w-0'>{children}</div>
     </section>
   )
 }
@@ -1925,7 +2065,7 @@ function RiskFactorRow({
       </div>
       <div>
         <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
-          权重
+          {automaticCap ? '满占比得分' : '每次加分'}
         </div>
         <Input
           type='number'
@@ -1933,17 +2073,17 @@ function RiskFactorRow({
           min={0}
           max={100}
           step={0.1}
-          aria-label={`${title}权重`}
+          aria-label={`${title}${automaticCap ? '满占比得分' : '每次加分'}`}
           onChange={(event) => onWeightChange(Number(event.target.value))}
         />
       </div>
       <div>
         <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
-          封顶
+          最多计分
         </div>
         {automaticCap ? (
           <div className='flex h-9 items-center rounded-md border bg-muted/35 px-3 text-xs text-muted-foreground'>
-            随权重
+            同左侧
           </div>
         ) : (
           <Input
@@ -1952,7 +2092,7 @@ function RiskFactorRow({
             min={0}
             max={100}
             step={0.1}
-            aria-label={`${title}封顶`}
+            aria-label={`${title}最多计分`}
             onChange={(event) => onCapChange?.(Number(event.target.value))}
           />
         )}
@@ -2009,6 +2149,18 @@ function RiskScoreField({
 
 function formatPercent(value: number) {
   return `${formatNumber(value * 100)}%`
+}
+
+function formatDurationHours(value: number) {
+  const hours = Math.max(0, Number(value) || 0)
+  if (hours % 168 === 0) return `${formatNumber(hours / 168)} 周`
+  if (hours % 24 === 0) return `${formatNumber(hours / 24)} 天`
+  return `${formatNumber(hours)} 小时`
+}
+
+function formatFactorLimit(weight: number, cap: number) {
+  if (weight <= 0 || cap <= 0) return '0'
+  return formatNumber(Math.ceil(cap / weight))
 }
 
 function formatNumber(value: number) {

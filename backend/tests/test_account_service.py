@@ -173,14 +173,14 @@ class LockedProbeSettings:
 
 @pytest.mark.asyncio
 async def test_select_account_ids_applies_filters_and_excludes_auth_failures(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     accounts = AccountRepository(database)
     probes = ProbeRepository(database)
     accounts.set_manual_status(account_id=1, status="suspect", note="")
     accounts.set_manual_status(account_id=3, status="suspect", note="")
     service = AccountService(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         client=AccountListClient(),  # type: ignore[arg-type]
         accounts=accounts,
         probes=probes,
@@ -203,10 +203,10 @@ async def test_select_account_ids_applies_filters_and_excludes_auth_failures(tmp
 
 @pytest.mark.asyncio
 async def test_account_options_include_egress_binding(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     service = AccountService(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         client=AccountListClient(),  # type: ignore[arg-type]
         accounts=AccountRepository(database),
         probes=ProbeRepository(database),
@@ -221,11 +221,11 @@ async def test_account_options_include_egress_binding(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_webhook_account_auto_binding_uses_least_loaded_healthy_node(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     client = EgressClient()
     service = AccountService(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         client=client,  # type: ignore[arg-type]
         accounts=AccountRepository(database),
         probes=ProbeRepository(database),
@@ -244,11 +244,11 @@ async def test_webhook_account_auto_binding_uses_least_loaded_healthy_node(tmp_p
 
 @pytest.mark.asyncio
 async def test_batch_egress_binding_skips_probe_locked_accounts(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     client = EgressClient()
     service = AccountService(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         client=client,  # type: ignore[arg-type]
         accounts=AccountRepository(database),
         probes=LockedProbeSettings(),  # type: ignore[arg-type]
@@ -274,7 +274,7 @@ async def test_batch_egress_binding_skips_probe_locked_accounts(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_quarantine_recovery_uses_lowest_priority_and_exposes_guard_filter(tmp_path: Path):
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     accounts = AccountRepository(database)
     probes = ProbeRepository(database)
@@ -288,7 +288,7 @@ async def test_quarantine_recovery_uses_lowest_priority_and_exposes_guard_filter
         disabled_by_monitor=True,
     )
     service = AccountService(
-        settings=Settings(database_path=tmp_path / "monitor.db"),
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
         client=client,  # type: ignore[arg-type]
         accounts=accounts,
         probes=probes,

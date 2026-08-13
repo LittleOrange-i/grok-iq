@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { getCookie, removeCookie, setCookie } from '@/lib/cookies'
 
-const ACCESS_TOKEN_COOKIE = 'gam-admin-access-token'
+const ACCESS_TOKEN_COOKIE = 'grokiq-admin-access-token'
 const DEFAULT_SESSION_SECONDS = 7 * 24 * 60 * 60
 
 export interface AuthUser {

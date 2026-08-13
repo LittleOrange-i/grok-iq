@@ -1,42 +1,43 @@
 services:
-  backend:
-    image: ${GAM_BACKEND_IMAGE:-ghcr.io/kaibush/grok-account-monitor-backend:latest}
+  grokiq-backend:
+    image: ${GROKIQ_BACKEND_IMAGE:-ghcr.io/kaibush/grok-iq-backend:latest}
     build:
       context: ./backend
     init: true
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      GAM_HOST: 0.0.0.0
-      GAM_PORT: 8090
-      GAM_DATABASE_PATH: /app/data/monitor.db
-      GAM_RUNTIME_SECRET_KEY: ${GAM_RUNTIME_SECRET_KEY:-}
-      GAM_JWT_SECRET_KEY: ${GAM_JWT_SECRET_KEY:-}
-      GAM_JWT_TTL_SECONDS: ${GAM_JWT_TTL_SECONDS:-604800}
-      GAM_GROK2API_BASE_URL: ${GAM_GROK2API_BASE_URL:-http://host.docker.internal:8000}
-      GAM_GROK2API_ADMIN_USERNAME: ${GAM_GROK2API_ADMIN_USERNAME:-}
-      GAM_GROK2API_ADMIN_PASSWORD: ${GAM_GROK2API_ADMIN_PASSWORD:-}
-      GAM_GROK_REGISTER_WEBHOOK_TOKEN: ${GAM_GROK_REGISTER_WEBHOOK_TOKEN:-}
-      GAM_INITIAL_PROBE_ON_REGISTER: ${GAM_INITIAL_PROBE_ON_REGISTER:-false}
-      GAM_REGISTER_PROBE_PROFILE_IDS: '${GAM_REGISTER_PROBE_PROFILE_IDS:-["quality-marker"]}'
-      GAM_REGISTER_PROBE_EXECUTION_MODE: ${GAM_REGISTER_PROBE_EXECUTION_MODE:-chat}
-      GAM_REGISTER_PROBE_ROUNDS: ${GAM_REGISTER_PROBE_ROUNDS:-3}
-      GAM_REGISTER_PROBE_PROXY_TARGETS: '${GAM_REGISTER_PROBE_PROXY_TARGETS:-[{"kind":"direct","id":null}]}'
-      GAM_WECHAT_NOTIFICATION_ENABLED: ${GAM_WECHAT_NOTIFICATION_ENABLED:-false}
-      GAM_WECHAT_APP_ID: ${GAM_WECHAT_APP_ID:-}
-      GAM_WECHAT_APP_SECRET: ${GAM_WECHAT_APP_SECRET:-}
-      GAM_WECHAT_OPENID: ${GAM_WECHAT_OPENID:-}
-      GAM_WECHAT_TEMPLATE_ID: ${GAM_WECHAT_TEMPLATE_ID:-}
-      GAM_CORS_ORIGINS: ${GAM_CORS_ORIGINS:-https://monitor.lvyrix.com,http://localhost:8091,http://127.0.0.1:8091}
+      GROKIQ_HOST: 0.0.0.0
+      GROKIQ_PORT: 8090
+      GROKIQ_DATABASE_PATH: /app/data/grokiq.db
+      GROKIQ_RUNTIME_SECRET_KEY: ${GROKIQ_RUNTIME_SECRET_KEY:-}
+      GROKIQ_JWT_SECRET_KEY: ${GROKIQ_JWT_SECRET_KEY:-}
+      GROKIQ_JWT_TTL_SECONDS: ${GROKIQ_JWT_TTL_SECONDS:-604800}
+      GROKIQ_GROK2API_BASE_URL: ${GROKIQ_GROK2API_BASE_URL:-http://host.docker.internal:8000}
+      GROKIQ_GROK2API_ADMIN_USERNAME: ${GROKIQ_GROK2API_ADMIN_USERNAME:-}
+      GROKIQ_GROK2API_ADMIN_PASSWORD: ${GROKIQ_GROK2API_ADMIN_PASSWORD:-}
+      GROKIQ_GROK_REGISTER_WEBHOOK_TOKEN: ${GROKIQ_GROK_REGISTER_WEBHOOK_TOKEN:-}
+      GROKIQ_INITIAL_PROBE_ON_REGISTER: ${GROKIQ_INITIAL_PROBE_ON_REGISTER:-false}
+      GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS: ${GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS:-15}
+      GROKIQ_REGISTER_PROBE_PROFILE_IDS: '${GROKIQ_REGISTER_PROBE_PROFILE_IDS:-["quality-marker"]}'
+      GROKIQ_REGISTER_PROBE_EXECUTION_MODE: ${GROKIQ_REGISTER_PROBE_EXECUTION_MODE:-chat}
+      GROKIQ_REGISTER_PROBE_ROUNDS: ${GROKIQ_REGISTER_PROBE_ROUNDS:-3}
+      GROKIQ_REGISTER_PROBE_PROXY_TARGETS: '${GROKIQ_REGISTER_PROBE_PROXY_TARGETS:-[{"kind":"direct","id":null}]}'
+      GROKIQ_WECHAT_NOTIFICATION_ENABLED: ${GROKIQ_WECHAT_NOTIFICATION_ENABLED:-false}
+      GROKIQ_WECHAT_APP_ID: ${GROKIQ_WECHAT_APP_ID:-}
+      GROKIQ_WECHAT_APP_SECRET: ${GROKIQ_WECHAT_APP_SECRET:-}
+      GROKIQ_WECHAT_OPENID: ${GROKIQ_WECHAT_OPENID:-}
+      GROKIQ_WECHAT_TEMPLATE_ID: ${GROKIQ_WECHAT_TEMPLATE_ID:-}
+      GROKIQ_CORS_ORIGINS: ${GROKIQ_CORS_ORIGINS:-https://monitor.lvyrix.com,http://localhost:8091,http://127.0.0.1:8091}
     volumes:
-      - monitor-data:/app/data
+      - grokiq-data:/app/data
     ports:
-      - 127.0.0.1:${GAM_API_PORT:-8090}:8090
+      - 127.0.0.1:${GROKIQ_API_PORT:-8090}:8090
     extra_hosts:
       - host.docker.internal:host-gateway
 
-  frontend:
-    image: ${GAM_FRONTEND_IMAGE:-ghcr.io/kaibush/grok-account-monitor-frontend:latest}
+  grokiq-frontend:
+    image: ${GROKIQ_FRONTEND_IMAGE:-ghcr.io/kaibush/grok-iq-frontend:latest}
     build:
       context: ./frontend
       args:
@@ -44,10 +45,10 @@ services:
     init: true
     restart: unless-stopped
     depends_on:
-      backend:
+      grokiq-backend:
         condition: service_healthy
     ports:
-      - 127.0.0.1:${GAM_WEB_PORT:-8091}:80
+      - 127.0.0.1:${GROKIQ_WEB_PORT:-8091}:80
 
 volumes:
-  monitor-data:
+  grokiq-data:

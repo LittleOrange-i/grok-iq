@@ -20,8 +20,8 @@ from app.persistence.auth_repository import AuthRepository
 
 PASSWORD_ITERATIONS = 310_000
 JWT_ALGORITHM = "HS256"
-JWT_ISSUER = "grok-account-monitor"
-JWT_AUDIENCE = "grok-account-monitor-web"
+JWT_ISSUER = "grok-iq"
+JWT_AUDIENCE = "grok-iq-web"
 
 
 class AuthenticationError(ValueError):
@@ -209,7 +209,7 @@ class AuthService:
         configured = settings.jwt_secret_key.strip()
         if configured:
             if len(configured.encode("utf-8")) < 32:
-                raise ValueError("GAM_JWT_SECRET_KEY 至少需要 32 字节")
+                raise ValueError("GROKIQ_JWT_SECRET_KEY 至少需要 32 字节")
             return configured
         path = settings.database_path.resolve().with_suffix(".jwt.key")
         path.parent.mkdir(parents=True, exist_ok=True)

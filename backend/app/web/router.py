@@ -14,6 +14,7 @@ from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
+from app.services.sso_report_service import SsoReportService
 from app.services.wechat_notification import WeChatAccountNotificationService
 
 from .auth import build_admin_auth_dependency
@@ -25,6 +26,7 @@ from .routes.health import build_health_router
 from .routes.integrations import build_integrations_router
 from .routes.probes import build_probes_router
 from .routes.settings import build_settings_router
+from .routes.sso_reports import build_sso_reports_router
 
 
 def build_router(
@@ -40,6 +42,7 @@ def build_router(
     runtime_settings_service: RuntimeSettingsService,
     auth_service: AuthService,
     chat_service: ChatService,
+    sso_reports: SsoReportService,
     register_integration: RegisterIntegrationService,
     wechat_notifications: WeChatAccountNotificationService,
 ) -> APIRouter:
@@ -84,6 +87,7 @@ def build_router(
         )
     )
     protected.include_router(build_chat_router(chat_service))
+    protected.include_router(build_sso_reports_router(sso_reports))
 
     router.include_router(protected)
     return router

@@ -16,7 +16,7 @@ from app.services.scheduler import SchedulerService
 
 
 def build_repository(tmp_path: Path) -> ProbeRepository:
-    database = Database(tmp_path / "monitor.db")
+    database = Database(tmp_path / "grokiq.db")
     database.initialize()
     repository = ProbeRepository(database)
     repository.seed_defaults()
@@ -49,7 +49,7 @@ async def test_quarantine_recovery_runs_when_user_plans_are_disabled(tmp_path: P
     repository = build_repository(tmp_path)
     create_plan(repository, account_scope="fixed")
     settings = Settings(
-        database_path=tmp_path / "monitor.db",
+        database_path=tmp_path / "grokiq.db",
         scheduler_enabled=False,
     )
     scheduler = SchedulerService(
@@ -75,7 +75,7 @@ async def test_quarantine_recovery_can_be_disabled_independently(tmp_path: Path)
     repository = build_repository(tmp_path)
     plan_id = create_plan(repository, account_scope="fixed")
     settings = Settings(
-        database_path=tmp_path / "monitor.db",
+        database_path=tmp_path / "grokiq.db",
         scheduler_enabled=True,
         quarantine_recovery_enabled=False,
     )
@@ -133,7 +133,7 @@ async def test_all_enabled_scope_resolves_live_accounts_at_trigger_time(tmp_path
     plan_id = create_plan(repository, account_scope="all_enabled")
     manager = ProbeManager(
         settings=Settings(
-            database_path=tmp_path / "monitor.db",
+            database_path=tmp_path / "grokiq.db",
             scheduled_probe_register_cooldown_minutes=0,
         ),
         repository=repository,

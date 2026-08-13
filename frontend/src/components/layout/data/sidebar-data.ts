@@ -3,9 +3,10 @@ import {
   BookOpenCheck,
   CalendarClock,
   Cpu,
-  Network,
   LayoutDashboard,
+  Network,
   MessageSquareText,
+  ScanSearch,
   Settings2,
   ShieldCheck,
   TestTube2,
@@ -14,9 +15,9 @@ import {
 import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
-  user: { name: 'Monitor', email: 'API-only integration', avatar: '' },
+  user: { name: 'GrokIQ', email: 'API-only integration', avatar: '' },
   teams: [
-    { name: 'Grok Monitor', logo: ShieldCheck, plan: 'Account intelligence' },
+    { name: 'GrokIQ', logo: ShieldCheck, plan: 'Account intelligence' },
   ],
   navGroups: [
     {
@@ -39,6 +40,7 @@ export const sidebarData: SidebarData = {
       title: '工作台',
       items: [
         { title: '聊天广场', url: '/playground', icon: MessageSquareText },
+        { title: 'SSO 检测', url: '/sso-reports', icon: ScanSearch },
       ],
     },
     {

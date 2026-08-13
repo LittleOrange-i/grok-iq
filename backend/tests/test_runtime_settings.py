@@ -19,7 +19,7 @@ from app.web.schemas import RuntimeSettingsInput
 
 
 def build_service(tmp_path: Path) -> tuple[Database, Settings, RuntimeSettingsService]:
-    settings = Settings(database_path=tmp_path / "monitor.db")
+    settings = Settings(database_path=tmp_path / "grokiq.db")
     database = Database(settings.database_path)
     database.initialize()
     repository = SettingsRepository(database, settings)
@@ -30,7 +30,7 @@ def test_default_database_path_is_independent_of_working_directory():
     settings = Settings(_env_file=None)
 
     assert settings.database_path == DEFAULT_DATABASE_PATH
-    assert settings.database_path == Path(__file__).resolve().parents[1] / "data" / "monitor.db"
+    assert settings.database_path == Path(__file__).resolve().parents[1] / "data" / "grokiq.db"
 
 
 def test_runtime_settings_are_encrypted_masked_and_reloadable(tmp_path: Path):
@@ -57,7 +57,7 @@ def test_runtime_settings_are_encrypted_masked_and_reloadable(tmp_path: Path):
         assert stored is not None
         assert "secret-password" not in json.dumps(stored.value)
 
-    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
     reloaded = RuntimeSettingsService(reloaded_settings, SettingsRepository(database, reloaded_settings))
     reloaded.load()
     assert reloaded_settings.grok2api_admin_password == "secret-password"
@@ -98,13 +98,31 @@ def test_quarantine_recovery_setting_is_persisted_and_exposed(tmp_path: Path):
     assert settings.quarantine_recovery_enabled is False
     assert service.public_view()["quarantineRecoveryEnabled"] is False
 
-    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
     reloaded = RuntimeSettingsService(
         reloaded_settings,
         SettingsRepository(database, reloaded_settings),
     )
     reloaded.load()
     assert reloaded_settings.quarantine_recovery_enabled is False
+
+
+def test_register_stabilization_setting_is_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update({"register_probe_stabilization_seconds": 8})
+
+    assert changed == ["register_probe_stabilization_seconds"]
+    assert settings.register_probe_stabilization_seconds == 8
+    assert service.public_view()["registerProbeStabilizationSeconds"] == 8
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded_settings.register_probe_stabilization_seconds == 8
 
 
 def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
@@ -142,7 +160,7 @@ def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
         assert stored is not None
         assert stored.value == 35
 
-    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
     reloaded = RuntimeSettingsService(
         reloaded_settings, SettingsRepository(database, reloaded_settings)
     )
@@ -263,7 +281,7 @@ def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Pa
         {"kind": "current", "id": None}
     ]
 
-    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
     reloaded = RuntimeSettingsService(
         reloaded_settings, SettingsRepository(database, reloaded_settings)
     )

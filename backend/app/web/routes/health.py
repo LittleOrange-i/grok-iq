@@ -34,7 +34,7 @@ def build_health_router(
             return basic
 
         # Health is deliberately best-effort: an unavailable upstream must not
-        # hide the monitor's own queue and scheduler health.
+        # hide GrokIQ's own queue and scheduler health.
         try:
             summary = await client.admin_request(
                 "GET", "/api/admin/v1/accounts/summary"

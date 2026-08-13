@@ -95,7 +95,6 @@ import {
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  extractHtmlPreviews,
   HtmlPreviewButton,
   MarkdownView,
 } from '@/components/formatted-content'
@@ -140,11 +139,11 @@ type PlaygroundSettings = {
   extraBody: string
 }
 
-const DB_NAME = 'gam-playground'
+const DB_NAME = 'grokiq-playground'
 const STORE = 'state'
 const CONVERSATIONS_KEY = 'conversations-v1'
-const SETTINGS_KEY = 'gam-playground-settings'
-const ACTIVE_KEY = 'gam-playground-active'
+const SETTINGS_KEY = 'grokiq-playground-settings'
+const ACTIVE_KEY = 'grokiq-playground-active'
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 48
 
 const defaultSettings: PlaygroundSettings = {
@@ -887,7 +886,7 @@ function ConversationNavigation({
 
   return (
     <div className='flex h-full min-h-0 flex-col'>
-      <div className='flex h-16 shrink-0 items-center justify-between gap-2 ps-3 pe-14 lg:pe-3'>
+      <div className='flex h-16 shrink-0 items-center justify-between gap-2 ps-3 pe-14'>
         <div className='min-w-0'>
           <div className='flex items-center gap-2'>
             <MessageSquareText className='size-4 text-primary' />
@@ -1403,8 +1402,6 @@ function ChatBubble({
   const content = user ? message.content : (variant?.content ?? '')
   const reasoning = user ? '' : (variant?.reasoning ?? '')
   const status = user ? 'done' : variant?.status
-  const completedHtml =
-    !user && status !== 'streaming' && extractHtmlPreviews(content).length > 0
   return (
     <article className={cn('flex w-full gap-3 sm:gap-4', user && 'justify-end')}>
       <div
@@ -1447,11 +1444,6 @@ function ChatBubble({
               <MarkdownView
                 content={content}
                 className='max-w-full [overflow-wrap:anywhere] [&_code]:break-all [&_pre]:max-w-full [&_pre_code]:break-normal [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto'
-                codeBlockClassName={
-                  completedHtml
-                    ? 'border-0 bg-transparent p-0 text-foreground shadow-none dark:bg-transparent dark:text-foreground'
-                    : undefined
-                }
               />
             )
           ) : (
