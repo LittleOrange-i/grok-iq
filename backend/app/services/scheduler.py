@@ -67,19 +67,20 @@ class SchedulerService:
             for plan in self.repository.list_plans():
                 if plan["enabled"]:
                     self._add_plan_job(plan)
-        self.scheduler.add_job(
-            self._run_recovery,
-            CronTrigger.from_crontab(
-                self.settings.recovery_cron,
-                timezone=ZoneInfo(self.settings.scheduler_timezone),
-            ),
-            id="system:quarantine-recovery",
-            name="隔离恢复检查",
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-            misfire_grace_time=self.settings.scheduler_misfire_grace_seconds,
-        )
+        if self.settings.quarantine_recovery_enabled:
+            self.scheduler.add_job(
+                self._run_recovery,
+                CronTrigger.from_crontab(
+                    self.settings.recovery_cron,
+                    timezone=ZoneInfo(self.settings.scheduler_timezone),
+                ),
+                id="system:quarantine-recovery",
+                name="隔离恢复检查",
+                replace_existing=True,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=self.settings.scheduler_misfire_grace_seconds,
+            )
 
     def _add_plan_job(self, plan: dict[str, Any]) -> None:
         trigger = CronTrigger.from_crontab(
@@ -199,7 +200,7 @@ class SchedulerService:
         return {
             "enabled": self.settings.scheduler_enabled,
             "plansEnabled": self.settings.scheduler_enabled,
-            "systemRecoveryEnabled": True,
+            "systemRecoveryEnabled": self.settings.quarantine_recovery_enabled,
             "running": self.scheduler.running,
             "plans": plans,
             "systemJobs": [value for key, value in jobs.items() if key.startswith("system:")],

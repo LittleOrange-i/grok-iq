@@ -1917,12 +1917,21 @@ class ProbeRepository:
                 )
                 or 0
             )
+            oldest_queued_at = session.scalar(
+                select(func.min(ProbeRun.queued_at)).where(ProbeRun.status == "queued")
+            )
+            oldest_queue_wait_seconds = 0
+            if oldest_queued_at is not None:
+                oldest_queue_wait_seconds = max(
+                    0, int((utc_now() - oldest_queued_at).total_seconds())
+                )
             return {
                 "queued": queued,
                 "running": running,
                 "eligible": max(0, queued - blocked_same_account - blocked_restore),
                 "blockedSameAccount": blocked_same_account,
                 "blockedRestore": blocked_restore,
+                "oldestQueueWaitSeconds": oldest_queue_wait_seconds,
             }
 
     # Scheduler execution history ----------------------------------------------

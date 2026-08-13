@@ -5,11 +5,15 @@ import logging
 import math
 import os
 import socket
+import threading
+from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+import psutil
 
 from app.analyzer import SampleMetrics, Thresholds, classify_sample
 from app.core.clock import app_isoformat, utc_now
@@ -93,9 +97,15 @@ class ProbeManager:
         self.notifications = notifications
         self.log_path = log_path or (settings.database_path.resolve().parent / "logs" / PROBE_LOG_FILE_NAME)
         self._process_started_at = utc_now()
+        self._process = psutil.Process()
+        self._process.cpu_percent(None)
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._worker_runtime: dict[int, WorkerRuntime] = {}
         self._active_calls: dict[str, asyncio.Task[Any]] = {}
+        self._event_loop_monitor: asyncio.Task[None] | None = None
+        self._event_loop_lag_ms = 0.0
+        self._recent_completions: deque[tuple[datetime, bool, float]] = deque()
+        self._recent_completions_lock = threading.Lock()
         self._wake = asyncio.Event()
         self._stopping = False
         self._started = False
@@ -116,6 +126,9 @@ class ProbeManager:
         self._workers = {}
         for index in range(1, self._desired_worker_concurrency + 1):
             self._spawn_worker(index)
+        self._event_loop_monitor = asyncio.create_task(
+            self._monitor_event_loop(), name="probe-event-loop-monitor"
+        )
         logger.info(
             "worker pool started pid=%s concurrency=%s",
             os.getpid(),
@@ -127,9 +140,14 @@ class ProbeManager:
         self._stopping = True
         for task in list(self._active_calls.values()):
             task.cancel()
+        if self._event_loop_monitor is not None:
+            self._event_loop_monitor.cancel()
         self._wake.set()
         if self._workers:
             await asyncio.gather(*self._workers.values(), return_exceptions=True)
+        if self._event_loop_monitor is not None:
+            await asyncio.gather(self._event_loop_monitor, return_exceptions=True)
+            self._event_loop_monitor = None
         self._workers.clear()
         self._started = False
         logger.info("worker pool stopped pid=%s", os.getpid())
@@ -568,6 +586,7 @@ class ProbeManager:
     def status(self) -> dict[str, Any]:
         queue = self.repository.worker_queue_stats()
         now = utc_now()
+        activity = self._activity_stats(now, queue["oldestQueueWaitSeconds"])
         workers: list[dict[str, Any]] = []
         for index in sorted(set(self._worker_runtime) | set(self._workers)):
             runtime = self._worker_runtime.get(index)
@@ -608,6 +627,18 @@ class ProbeManager:
                                 if runtime.current_run_started_at
                                 else None
                             ),
+                            "elapsedSeconds": (
+                                max(
+                                    0,
+                                    int(
+                                        (
+                                            now - runtime.current_run_started_at
+                                        ).total_seconds()
+                                    ),
+                                )
+                                if runtime.current_run_started_at
+                                else 0
+                            ),
                         }
                         if runtime.current_run_id
                         else None
@@ -617,6 +648,7 @@ class ProbeManager:
 
         live_workers = sum(bool(task and not task.done()) for task in self._workers.values())
         busy_workers = sum(bool(item["currentRun"]) for item in workers)
+        resources = self._process_resources()
         return {
             "process": {
                 "pid": os.getpid(),
@@ -624,6 +656,7 @@ class ProbeManager:
                 "startedAt": app_isoformat(self._process_started_at),
                 "uptimeSeconds": max(0, int((now - self._process_started_at).total_seconds())),
                 "model": "single_process_asyncio",
+                "resources": resources,
             },
             "started": self._started,
             "stopping": self._stopping,
@@ -633,6 +666,10 @@ class ProbeManager:
             "busyWorkers": busy_workers,
             "idleWorkers": max(0, live_workers - busy_workers),
             "queue": queue,
+            "activity": {
+                **activity,
+                "activeCalls": len(self._active_calls),
+            },
             "workers": workers,
             "policy": {
                 "sameAccountSerial": True,
@@ -647,6 +684,61 @@ class ProbeManager:
                 "sizeBytes": probe_log_size(self.log_path),
             },
         }
+
+    def _process_resources(self) -> dict[str, int | float | None]:
+        try:
+            memory = self._process.memory_info()
+            open_files = (
+                self._process.num_fds()
+                if hasattr(self._process, "num_fds")
+                else len(self._process.open_files())
+            )
+            return {
+                "cpuPercent": self._process.cpu_percent(None),
+                "rssBytes": memory.rss,
+                "threads": self._process.num_threads(),
+                "openFiles": open_files,
+                "eventLoopLagMs": round(self._event_loop_lag_ms, 1),
+            }
+        except (psutil.Error, OSError):
+            logger.debug("process resource sampling failed", exc_info=True)
+            return {
+                "cpuPercent": None,
+                "rssBytes": None,
+                "threads": None,
+                "openFiles": None,
+                "eventLoopLagMs": round(self._event_loop_lag_ms, 1),
+            }
+
+    def _activity_stats(
+        self, now: datetime, oldest_queue_wait_seconds: int
+    ) -> dict[str, int | float]:
+        window_seconds = 60
+        cutoff = now - timedelta(seconds=window_seconds)
+        with self._recent_completions_lock:
+            while self._recent_completions and self._recent_completions[0][0] < cutoff:
+                self._recent_completions.popleft()
+            completed = len(self._recent_completions)
+            failed = sum(item[1] for item in self._recent_completions)
+            total_duration = sum(item[2] for item in self._recent_completions)
+        return {
+            "windowSeconds": window_seconds,
+            "completed": completed,
+            "failed": failed,
+            "failureRate": failed / completed if completed else 0,
+            "averageDurationSeconds": total_duration / completed if completed else 0,
+            "oldestQueueWaitSeconds": oldest_queue_wait_seconds,
+        }
+
+    async def _monitor_event_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        interval = 1.0
+        expected = loop.time() + interval
+        while True:
+            await asyncio.sleep(interval)
+            observed = loop.time()
+            self._event_loop_lag_ms = max(0.0, (observed - expected) * 1_000)
+            expected = observed + interval
 
     def logs(self, limit: int) -> dict[str, Any]:
         return {
@@ -802,11 +894,24 @@ class ProbeManager:
                 finally:
                     if finished is not None:
                         runtime.completed_runs += 1
-                        if str(finished.get("status")) in {
+                        failed = str(finished.get("status")) in {
                             "failed",
                             "completed_with_errors",
-                        }:
+                        }
+                        if failed:
                             runtime.failed_runs += 1
+                        duration = (
+                            max(
+                                0.0,
+                                (utc_now() - runtime.current_run_started_at).total_seconds(),
+                            )
+                            if runtime.current_run_started_at
+                            else 0.0
+                        )
+                        with self._recent_completions_lock:
+                            self._recent_completions.append(
+                                (utc_now(), failed, duration)
+                            )
                     self._clear_worker_run(runtime)
                     self._set_worker_status(
                         runtime,

@@ -349,6 +349,7 @@ export type ProbeWorkerCurrentRun = {
   round?: number | null
   targetKey: string
   startedAt?: string | null
+  elapsedSeconds: number
 }
 
 export type ProbeWorker = {
@@ -373,6 +374,13 @@ export type ProbeWorkersResponse = {
     startedAt: string
     uptimeSeconds: number
     model: string
+    resources: {
+      cpuPercent: number | null
+      rssBytes: number | null
+      threads: number | null
+      openFiles: number | null
+      eventLoopLagMs: number | null
+    }
   }
   started: boolean
   stopping: boolean
@@ -387,6 +395,15 @@ export type ProbeWorkersResponse = {
     eligible: number
     blockedSameAccount: number
     blockedRestore: number
+  }
+  activity: {
+    windowSeconds: number
+    completed: number
+    failed: number
+    failureRate: number
+    averageDurationSeconds: number
+    oldestQueueWaitSeconds: number
+    activeCalls: number
   }
   workers: ProbeWorker[]
   policy: {
@@ -460,6 +477,7 @@ export type RuntimeSettings = {
   wechatOpenid: string
   wechatTemplateId: string
   schedulerEnabled: boolean
+  quarantineRecoveryEnabled: boolean
   schedulerTimezone: string
   schedulerMisfireGraceSeconds: number
   recoveryCron: string
@@ -531,6 +549,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'wechatOpenid'
     | 'wechatTemplateId'
     | 'schedulerEnabled'
+    | 'quarantineRecoveryEnabled'
     | 'schedulerTimezone'
     | 'schedulerMisfireGraceSeconds'
     | 'recoveryCron'
@@ -601,6 +620,7 @@ type RuntimeSettingsWire = Omit<
   | 'wechatAppSecretConfigured'
   | 'wechatOpenid'
   | 'wechatTemplateId'
+  | 'quarantineRecoveryEnabled'
   | 'scheduledProbeRegisterCooldownMinutes'
 > & {
   degradationTps?: number
@@ -628,6 +648,7 @@ type RuntimeSettingsWire = Omit<
   wechatAppSecretConfigured?: boolean
   wechatOpenid?: string
   wechatTemplateId?: string
+  quarantineRecoveryEnabled?: boolean
   scheduledProbeRegisterCooldownMinutes?: number
 }
 
@@ -644,6 +665,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     ],
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
+    quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
     scheduledProbeRegisterCooldownMinutes:
       value.scheduledProbeRegisterCooldownMinutes ?? 360,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,

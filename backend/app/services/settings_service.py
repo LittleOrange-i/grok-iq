@@ -192,6 +192,7 @@ class RuntimeSettingsService:
             "wechatOpenid": s.wechat_openid,
             "wechatTemplateId": s.wechat_template_id,
             "schedulerEnabled": s.scheduler_enabled,
+            "quarantineRecoveryEnabled": s.quarantine_recovery_enabled,
             "schedulerTimezone": s.scheduler_timezone,
             "schedulerMisfireGraceSeconds": s.scheduler_misfire_grace_seconds,
             "recoveryCron": s.recovery_cron,

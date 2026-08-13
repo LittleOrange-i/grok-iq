@@ -89,6 +89,24 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
         )
 
 
+def test_quarantine_recovery_setting_is_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update({"quarantine_recovery_enabled": False})
+
+    assert changed == ["quarantine_recovery_enabled"]
+    assert settings.quarantine_recovery_enabled is False
+    assert service.public_view()["quarantineRecoveryEnabled"] is False
+
+    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded_settings.quarantine_recovery_enabled is False
+
+
 def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
 

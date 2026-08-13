@@ -246,6 +246,9 @@ class RuntimeSettingsInput(BaseModel):
         default=None, alias="wechatTemplateId", max_length=256
     )
     scheduler_enabled: bool | None = Field(default=None, alias="schedulerEnabled")
+    quarantine_recovery_enabled: bool | None = Field(
+        default=None, alias="quarantineRecoveryEnabled"
+    )
     scheduler_timezone: str | None = Field(default=None, alias="schedulerTimezone")
     scheduler_misfire_grace_seconds: int | None = Field(
         default=None, alias="schedulerMisfireGraceSeconds", ge=1, le=86_400

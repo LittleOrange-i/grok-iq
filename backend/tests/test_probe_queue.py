@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import pytest
 from sqlalchemy import delete, inspect
 
 from app.analyzer import Thresholds
+from app.core.clock import utc_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import ChatProbeResult, IntegrationError
 from app.persistence.account_repository import (
@@ -15,7 +17,7 @@ from app.persistence.account_repository import (
     AccountRepository,
 )
 from app.persistence.database import Database
-from app.persistence.models import AppSetting, MetadataRow, ProbeDurationEstimate
+from app.persistence.models import AppSetting, MetadataRow, ProbeDurationEstimate, ProbeRun
 from app.persistence.probe_repository import (
     PROBE_DURATION_ESTIMATE_BACKFILL_KEY,
     SAFE_CURRENT_EGRESS_MIGRATION_KEY,
@@ -53,6 +55,18 @@ def create_run(
         priority=100,
         queue_limit=20,
     )
+
+
+def test_worker_queue_stats_include_oldest_wait(repository: ProbeRepository):
+    run_id = create_run(repository)
+    with repository.database.transaction() as session:
+        run = session.get(ProbeRun, run_id)
+        assert run is not None
+        run.queued_at = utc_now() - timedelta(seconds=75)
+
+    stats = repository.worker_queue_stats()
+
+    assert stats["oldestQueueWaitSeconds"] >= 74
 
 
 async def wait_for_terminal_run(
@@ -658,6 +672,38 @@ class DisabledFakeGrokClient(FakeGrokClient):
     def __init__(self):
         super().__init__()
         self.account_enabled = False
+
+
+def test_worker_activity_stats_use_rolling_process_window(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    manager = ProbeManager(
+        settings=Settings(database_path=tmp_path / "monitor.db"),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=FakeGrokClient(),  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    now = utc_now()
+    manager._recent_completions.extend(  # noqa: SLF001
+        [
+            (now - timedelta(seconds=70), False, 20),
+            (now - timedelta(seconds=20), False, 10),
+            (now - timedelta(seconds=5), True, 6),
+        ]
+    )
+
+    stats = manager._activity_stats(now, 75)  # noqa: SLF001
+
+    assert stats == {
+        "windowSeconds": 60,
+        "completed": 2,
+        "failed": 1,
+        "failureRate": 0.5,
+        "averageDurationSeconds": 8,
+        "oldestQueueWaitSeconds": 75,
+    }
 
 
 @pytest.mark.asyncio

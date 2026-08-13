@@ -25,7 +25,7 @@ export const sidebarData: SidebarData = {
         { title: '监控概览', url: '/', icon: LayoutDashboard },
         { title: '账号探针', url: '/accounts', icon: UsersRound },
         { title: '任务中心', url: '/runs', icon: Activity },
-        { title: 'Worker 运行状态', url: '/workers', icon: Cpu },
+        { title: 'Worker', url: '/workers', icon: Cpu },
       ],
     },
     {

@@ -65,6 +65,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { InfoTooltip } from '@/components/info-tooltip'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { AccountMultiSelect } from '@/features/monitor/components/account-multi-select'
@@ -75,6 +76,7 @@ type CronView = 'plans' | 'system' | 'history'
 type SchedulerSettingsForm = Pick<
   RuntimeSettings,
   | 'schedulerEnabled'
+  | 'quarantineRecoveryEnabled'
   | 'schedulerTimezone'
   | 'schedulerMisfireGraceSeconds'
   | 'recoveryCron'
@@ -562,7 +564,9 @@ export function PlansPage() {
               scheduler.data?.plansEnabled ?? scheduler.data?.enabled ?? false
             }
             systemRecoveryEnabled={
-              scheduler.data?.systemRecoveryEnabled !== false
+              scheduler.data?.systemRecoveryEnabled ??
+              settings.data?.quarantineRecoveryEnabled ??
+              false
             }
             jobs={systemJobs}
             disabled={saveSchedulerMutation.isPending}
@@ -738,10 +742,13 @@ function SystemCronPanel({
       <section className='overflow-hidden rounded-lg border'>
         <div className='flex flex-wrap items-start justify-between gap-3 border-b bg-muted/20 px-4 py-3'>
           <div>
-            <h2 className='text-sm font-semibold'>Scheduler 运行状态</h2>
-            <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-              系统恢复常驻运行；计划开关仅控制用户创建的周期巡检。
-            </p>
+            <div className='flex items-center gap-1.5'>
+              <h2 className='text-sm font-semibold'>Scheduler 运行状态</h2>
+              <InfoTooltip
+                label='Scheduler 运行状态'
+                content='周期计划与隔离恢复独立启停，共用当前调度器。'
+              />
+            </div>
           </div>
           <Badge variant={running ? 'success' : 'destructive'}>
             {running ? '运行中' : '未运行'}
@@ -752,7 +759,7 @@ function SystemCronPanel({
           <Info label='默认时区' value={form.schedulerTimezone || '—'} />
           <Info
             label='隔离恢复'
-            value={systemRecoveryEnabled ? '常驻' : '未启用'}
+            value={systemRecoveryEnabled ? '启用' : '暂停'}
           />
         </div>
         <div className='divide-y border-t'>
@@ -775,7 +782,9 @@ function SystemCronPanel({
             ))
           ) : (
             <div className='px-4 py-3 text-sm text-muted-foreground'>
-              当前未注册系统 Cron Job，请刷新状态或检查调度器运行情况。
+              {systemRecoveryEnabled
+                ? '隔离恢复检查尚未注册，请刷新状态或检查调度器运行情况。'
+                : '隔离恢复检查已暂停，当前没有系统 Cron Job。'}
             </div>
           )}
         </div>
@@ -783,26 +792,48 @@ function SystemCronPanel({
 
       <section className='rounded-lg border p-4'>
         <div className='mb-4'>
-          <h2 className='text-sm font-semibold'>系统 Cron 设置</h2>
-          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-            系统 Cron
-            只恢复到期的暂时停用账号，不会恢复账号列表中的人工批量停用。
-          </p>
+          <div className='flex items-center gap-1.5'>
+            <h2 className='text-sm font-semibold'>系统 Cron 设置</h2>
+            <InfoTooltip
+              label='系统 Cron 设置'
+              content='隔离恢复仅处理到期的临时隔离账号，不会启用人工停用的账号。'
+            />
+          </div>
         </div>
         <div className='space-y-4'>
-          <div className='flex items-center justify-between gap-4 rounded-lg border px-3 py-3'>
-            <div>
-              <div className='text-sm font-medium'>启用周期探针计划</div>
-              <div className='mt-1 text-xs leading-5 text-muted-foreground'>
-                关闭后仅暂停用户计划；隔离恢复和手动探针不受影响
+          <div className='grid overflow-hidden rounded-lg border lg:grid-cols-2 lg:divide-x'>
+            <div className='flex items-center justify-between gap-4 px-3 py-3'>
+              <div className='flex items-center gap-1.5'>
+                <div className='text-sm font-medium'>周期计划</div>
+                <InfoTooltip
+                  label='周期计划'
+                  content='全局控制用户 Cron 计划。关闭后单个计划保留启用状态，但不会定时触发；手动运行不受影响。'
+                />
               </div>
+              <Switch
+                checked={form.schedulerEnabled}
+                disabled={disabled}
+                onCheckedChange={(value) => set('schedulerEnabled', value)}
+                aria-label='启用周期探针计划'
+              />
             </div>
-            <Switch
-              checked={form.schedulerEnabled}
-              disabled={disabled}
-              onCheckedChange={(value) => set('schedulerEnabled', value)}
-              aria-label='启用周期探针计划'
-            />
+            <div className='flex items-center justify-between gap-4 border-t px-3 py-3 lg:border-t-0'>
+              <div className='flex items-center gap-1.5'>
+                <div className='text-sm font-medium'>隔离恢复</div>
+                <InfoTooltip
+                  label='隔离恢复'
+                  content='自动启用隔离期已结束的账号，是临时隔离的恢复保护。关闭后，到期账号不会自动启用。'
+                />
+              </div>
+              <Switch
+                checked={form.quarantineRecoveryEnabled}
+                disabled={disabled}
+                onCheckedChange={(value) =>
+                  set('quarantineRecoveryEnabled', value)
+                }
+                aria-label='启用隔离恢复检查'
+              />
+            </div>
           </div>
           <div className='grid gap-4 sm:grid-cols-2'>
             <Field label='默认时区'>
@@ -1636,6 +1667,7 @@ function toSchedulerSettingsForm(
 ): SchedulerSettingsForm {
   return {
     schedulerEnabled: settings.schedulerEnabled,
+    quarantineRecoveryEnabled: settings.quarantineRecoveryEnabled,
     schedulerTimezone: settings.schedulerTimezone,
     schedulerMisfireGraceSeconds: settings.schedulerMisfireGraceSeconds,
     recoveryCron: settings.recoveryCron,

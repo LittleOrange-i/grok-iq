@@ -67,9 +67,10 @@ class Settings(BaseSettings):
     wechat_openid: str = ""
     wechat_template_id: str = ""
 
-    # The scheduler process always runs monitor-owned quarantine recovery.
-    # This switch gates only the user-created plans with their own Cron values.
+    # User-created probe plans and monitor-owned quarantine recovery are
+    # independently configurable while sharing the same scheduler process.
     scheduler_enabled: bool = True
+    quarantine_recovery_enabled: bool = True
     scheduler_timezone: str = "UTC"
     scheduler_misfire_grace_seconds: int = Field(default=300, ge=1, le=86_400)
     recovery_cron: str = "*/5 * * * *"
@@ -137,6 +138,7 @@ class Settings(BaseSettings):
         "wechat_openid",
         "wechat_template_id",
         "scheduler_enabled",
+        "quarantine_recovery_enabled",
         "scheduler_timezone",
         "scheduler_misfire_grace_seconds",
         "recovery_cron",

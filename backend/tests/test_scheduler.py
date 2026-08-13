@@ -70,6 +70,33 @@ async def test_quarantine_recovery_runs_when_user_plans_are_disabled(tmp_path: P
         await scheduler.stop()
 
 
+@pytest.mark.asyncio
+async def test_quarantine_recovery_can_be_disabled_independently(tmp_path: Path):
+    repository = build_repository(tmp_path)
+    plan_id = create_plan(repository, account_scope="fixed")
+    settings = Settings(
+        database_path=tmp_path / "monitor.db",
+        scheduler_enabled=True,
+        quarantine_recovery_enabled=False,
+    )
+    scheduler = SchedulerService(
+        settings=settings,
+        repository=repository,
+        probes=AsyncMock(),  # type: ignore[arg-type]
+        recovery_callback=AsyncMock(return_value={"restored": 0, "guarded": 0}),
+    )
+
+    await scheduler.start()
+    try:
+        job_ids = {job.id for job in scheduler.scheduler.get_jobs()}
+        assert job_ids == {f"plan:{plan_id}"}
+        assert scheduler.status()["plansEnabled"] is True
+        assert scheduler.status()["systemRecoveryEnabled"] is False
+        assert scheduler.status()["systemJobs"] == []
+    finally:
+        await scheduler.stop()
+
+
 class DynamicAccountClient:
     async def list_all_accounts(self) -> list[dict[str, Any]]:
         return [

@@ -53,7 +53,7 @@ def build_health_router(
             "scheduler": {
                 "enabled": settings.scheduler_enabled,
                 "plansEnabled": settings.scheduler_enabled,
-                "systemRecoveryEnabled": True,
+                "systemRecoveryEnabled": settings.quarantine_recovery_enabled,
                 "running": scheduler.scheduler.running,
             },
             "integration": {

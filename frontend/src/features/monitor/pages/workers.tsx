@@ -1,7 +1,17 @@
-import { type ComponentType, type ReactNode, useMemo, useState } from 'react'
+import {
+  type ComponentType,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
+  Activity,
+  ArrowDownToLine,
   Ban,
   CircleCheck,
   CircleX,
@@ -10,6 +20,7 @@ import {
   ExternalLink,
   History,
   ListChecks,
+  MemoryStick,
   RefreshCw,
   Server,
   Square,
@@ -72,12 +83,7 @@ export function WorkersPage() {
   const workerQuery = useQuery({
     queryKey: ['probe-workers'],
     queryFn: api.probeWorkers,
-    refetchInterval: (query) => {
-      const data = query.state.data
-      return data && (data.busyWorkers > 0 || data.queue.queued > 0)
-        ? 1_500
-        : false
-    },
+    refetchInterval: 2_000,
     refetchIntervalInBackground: false,
   })
   const workerLogs = useQuery({
@@ -192,6 +198,60 @@ function WorkerDashboard({
           label='进程运行时间'
           value={formatUptime(data.process.uptimeSeconds)}
           detail={formatDate(data.process.startedAt)}
+        />
+      </div>
+
+      <div className='grid gap-4 xl:grid-cols-2'>
+        <LiveMetricsCard
+          icon={MemoryStick}
+          title='进程资源'
+          description='当前监控后端进程占用，不代表整台主机资源。'
+          items={[
+            {
+              label: 'CPU',
+              value: formatPercentValue(data.process.resources.cpuPercent),
+            },
+            {
+              label: '内存',
+              value: formatOptionalBytes(data.process.resources.rssBytes),
+            },
+            {
+              label: '线程',
+              value: formatOptionalNumber(data.process.resources.threads),
+            },
+            {
+              label: '文件句柄',
+              value: formatOptionalNumber(data.process.resources.openFiles),
+            },
+            {
+              label: '事件循环延迟',
+              value: formatMilliseconds(data.process.resources.eventLoopLagMs),
+              warning: (data.process.resources.eventLoopLagMs ?? 0) >= 100,
+            },
+          ]}
+        />
+        <LiveMetricsCard
+          icon={Activity}
+          title='实时运行'
+          description={`最近 ${data.activity.windowSeconds} 秒完成情况与当前队列压力。`}
+          items={[
+            { label: '活跃请求', value: data.activity.activeCalls },
+            { label: '完成任务', value: data.activity.completed },
+            {
+              label: '失败率',
+              value: `${(data.activity.failureRate * 100).toFixed(1)}%`,
+              warning: data.activity.failureRate > 0,
+            },
+            {
+              label: '平均耗时',
+              value: formatDuration(data.activity.averageDurationSeconds),
+            },
+            {
+              label: '最长排队',
+              value: formatDuration(data.activity.oldestQueueWaitSeconds),
+              warning: data.activity.oldestQueueWaitSeconds >= 60,
+            },
+          ]}
         />
       </div>
 
@@ -354,6 +414,49 @@ function OverviewCard({
   )
 }
 
+function LiveMetricsCard({
+  icon: Icon,
+  title,
+  description,
+  items,
+}: {
+  icon: ComponentType<{ className?: string }>
+  title: string
+  description: string
+  items: { label: string; value: ReactNode; warning?: boolean }[]
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2'>
+          <Icon className='size-4 text-primary' />
+          {title}
+          <InfoTooltip label={title} content={description} />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className='grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-5'>
+          {items.map((item) => (
+            <div key={item.label} className='min-w-0 bg-background px-3 py-3'>
+              <div className='truncate text-[11px] text-muted-foreground'>
+                {item.label}
+              </div>
+              <div
+                className={cn(
+                  'mt-1 truncate text-sm font-semibold tabular-nums',
+                  item.warning && 'text-amber-600 dark:text-amber-400'
+                )}
+              >
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function WorkerCard({
   worker,
   egressNodeNames,
@@ -445,6 +548,10 @@ function WorkerCard({
               value={worker.currentRun.targetKey}
               egressNodeNames={egressNodeNames}
             />
+            <span>·</span>
+            <span className='tabular-nums'>
+              已运行 {formatDuration(worker.currentRun.elapsedSeconds)}
+            </span>
           </div>
           <div
             className='mt-2 truncate font-mono text-[11px] text-muted-foreground'
@@ -546,8 +653,45 @@ function WorkerLogsDialog({
   error: unknown
   onRefresh: () => void
 }) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const followingRef = useRef(true)
+  const [following, setFollowing] = useState(true)
+  const logContent = data?.items.join('\n') ?? ''
+
+  const updateFollowing = useCallback((value: boolean) => {
+    followingRef.current = value
+    setFollowing(value)
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (container) container.scrollTop = container.scrollHeight
+    updateFollowing(true)
+  }, [updateFollowing])
+
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    const atBottom = distanceFromBottom <= 24
+    if (atBottom !== followingRef.current) updateFollowing(atBottom)
+  }, [updateFollowing])
+
+  useEffect(() => {
+    if (!open || !followingRef.current) return
+    const frame = window.requestAnimationFrame(scrollToBottom)
+    return () => window.cancelAnimationFrame(frame)
+  }, [logContent, open, scrollToBottom])
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) updateFollowing(true)
+        onOpenChange(nextOpen)
+      }}
+    >
       <DialogContent
         size='wide'
         className='h-[min(52rem,calc(100dvh-2rem))] overflow-hidden'
@@ -573,6 +717,13 @@ function WorkerLogsDialog({
           ))}
           <ActionToolbar label='Worker 日志操作' className='ms-auto'>
             <ToolbarAction
+              label='滚动到底并恢复自动滚动'
+              disabled={!logContent}
+              onClick={scrollToBottom}
+            >
+              <ArrowDownToLine />
+            </ToolbarAction>
+            <ToolbarAction
               label='刷新执行日志'
               pending={fetching}
               onClick={onRefresh}
@@ -581,7 +732,11 @@ function WorkerLogsDialog({
             </ToolbarAction>
           </ActionToolbar>
         </div>
-        <div className='min-h-0 flex-1 overflow-auto overscroll-contain rounded-lg border bg-background'>
+        <div
+          ref={scrollContainerRef}
+          className='min-h-0 flex-1 overflow-auto overscroll-contain rounded-lg border bg-background'
+          onScroll={handleScroll}
+        >
           {loading ? (
             <LoadingState label='正在读取 Worker 日志' />
           ) : error ? (
@@ -590,7 +745,7 @@ function WorkerLogsDialog({
             </div>
           ) : data?.items.length ? (
             <SourceCodeView
-              content={data.items.join('\n')}
+              content={logContent}
               className='min-h-full bg-background text-foreground'
             />
           ) : (
@@ -600,10 +755,17 @@ function WorkerLogsDialog({
             />
           )}
         </div>
-        <div className='shrink-0 text-xs text-muted-foreground'>
-          {data
-            ? `${data.fileName} · ${formatBytes(data.sizeBytes)} · 其余较早日志不加载到页面`
-            : '其余较早日志保留在轮转文件中，不加载到页面。'}
+        <div className='flex shrink-0 items-center justify-between gap-3 text-xs text-muted-foreground'>
+          <span className='min-w-0 truncate'>
+            {data
+              ? `${data.fileName} · ${formatBytes(data.sizeBytes)} · 其余较早日志不加载到页面`
+              : '其余较早日志保留在轮转文件中，不加载到页面。'}
+          </span>
+          {logContent && (
+            <Badge variant={following ? 'success' : 'secondary'}>
+              {following ? '自动滚动' : '已暂停'}
+            </Badge>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -621,6 +783,36 @@ function formatUptime(seconds: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时`
   return `${Math.floor(seconds / 86400)} 天`
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '0 秒'
+  if (seconds < 10) return `${seconds.toFixed(1)} 秒`
+  if (seconds < 60) return `${Math.round(seconds)} 秒`
+  if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60)
+    const remainder = Math.round(seconds % 60)
+    return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分钟`
+  }
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`
+}
+
+function formatOptionalNumber(value: number | null): string {
+  return value == null ? '—' : String(value)
+}
+
+function formatOptionalBytes(value: number | null): string {
+  return value == null ? '—' : formatBytes(value)
+}
+
+function formatPercentValue(value: number | null): string {
+  return value == null ? '—' : `${value.toFixed(1)}%`
+}
+
+function formatMilliseconds(value: number | null): string {
+  return value == null ? '—' : `${value.toFixed(1)} ms`
 }
 
 function formatBytes(bytes: number): string {
