@@ -4,11 +4,13 @@ import {
   Activity,
   ArrowRight,
   BellRing,
+  Calculator,
   CheckCircle2,
   Copy,
   Database,
   Eye,
   EyeOff,
+  Info,
   Inbox,
   KeyRound,
   Layers3,
@@ -87,6 +89,21 @@ type SettingsForm = {
   degradationTps: number
   strongDegradationTps: number
   consecutiveAnomalies: number
+  cumulativeAnomalyRate: number
+  highRiskHardCount: number
+  riskAnomalyRateWeight: number
+  riskHardWeight: number
+  riskHardCap: number
+  riskFastWeight: number
+  riskFastCap: number
+  riskMarkerMissWeight: number
+  riskMarkerMissCap: number
+  riskStreakWeight: number
+  riskStreakCap: number
+  riskScoreCap: number
+  riskWatchFloor: number
+  riskSuspectFloor: number
+  riskHighFloor: number
   bufferFirstTokenShare: number
   minGenerationMs: number
   minimumOutputTokens: number
@@ -525,86 +542,305 @@ export function SettingsPage() {
           </SettingsCard>
         </TabsContent>
 
-        <TabsContent value='risk' className='grid gap-4 xl:grid-cols-2'>
+        <TabsContent value='risk' className='space-y-4'>
+          <div className='grid overflow-hidden rounded-xl border bg-card sm:grid-cols-4'>
+            <RiskFlowStep
+              step='01'
+              title='识别单次样本'
+              description='TPS、缓冲与标记'
+            />
+            <RiskFlowStep
+              step='02'
+              title='判断账号状态'
+              description='次数、占比与强信号'
+              divided
+            />
+            <RiskFlowStep
+              step='03'
+              title='累计风险分'
+              description='权重、封顶与保底分'
+              divided
+            />
+            <RiskFlowStep
+              step='04'
+              title='执行自动处置'
+              description='按需停用高风险账号'
+              divided
+            />
+          </div>
+
+          <div className='grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]'>
+            <SettingsCard
+              icon={Activity}
+              title='1. 单次样本怎么判'
+              description='先把每轮请求归类为正常、异常或强异常；这里只决定样本类型，还不会直接改变账号状态。'
+              descriptionAsHint
+            >
+              <div className='space-y-5'>
+                <RiskFieldGroup
+                  title='采样范围'
+                  hint='控制使用多长时间内、达到多大输出量的样本。'
+                >
+                  <NumberField
+                    label='分析窗口（小时）'
+                    value={form.analysisWindowHours}
+                    min={1}
+                    max={8760}
+                    onChange={(value) => set('analysisWindowHours', value)}
+                  />
+                  <NumberField
+                    label='最低输出 Token'
+                    value={form.minimumOutputTokens}
+                    min={1}
+                    max={4096}
+                    onChange={(value) => set('minimumOutputTokens', value)}
+                  />
+                </RiskFieldGroup>
+
+                <RiskFieldGroup
+                  title='TPS 分界'
+                  hint='达到第一档记异常，达到第二档记强异常。'
+                  divided
+                >
+                  <NumberField
+                    label='异常 TPS 下限'
+                    value={form.degradationTps}
+                    min={0.1}
+                    step={0.1}
+                    onChange={(value) => set('degradationTps', value)}
+                  />
+                  <NumberField
+                    label='强异常 TPS 下限'
+                    value={form.strongDegradationTps}
+                    min={0.1}
+                    step={0.1}
+                    onChange={(value) => set('strongDegradationTps', value)}
+                  />
+                </RiskFieldGroup>
+
+                <RiskFieldGroup
+                  title='缓冲特征'
+                  hint='用于识别等待较久后集中吐出内容的样本。'
+                  divided
+                >
+                  <NumberField
+                    label='首 Token 占比'
+                    value={form.bufferFirstTokenShare}
+                    min={0.5}
+                    max={0.99}
+                    step={0.01}
+                    suffix='%'
+                    displayMultiplier={100}
+                    onChange={(value) => set('bufferFirstTokenShare', value)}
+                  />
+                  <NumberField
+                    label='最短生成窗口（ms）'
+                    value={form.minGenerationMs}
+                    min={1}
+                    max={60000}
+                    onChange={(value) => set('minGenerationMs', value)}
+                  />
+                </RiskFieldGroup>
+              </div>
+            </SettingsCard>
+
+            <SettingsCard
+              icon={ShieldCheck}
+              title='2. 账号状态怎么升'
+              description='只聚合账号当前固定出口的日常探针；人工诊断样本保留记录，但不参与状态和风险分。'
+              descriptionAsHint
+            >
+              <div className='space-y-5'>
+                <div className='grid gap-4'>
+                  <NumberField
+                    label='重复异常次数'
+                    hint='连续条件和累计条件共用这个最少次数'
+                    value={form.consecutiveAnomalies}
+                    min={2}
+                    max={20}
+                    onChange={(value) => set('consecutiveAnomalies', value)}
+                  />
+                  <NumberField
+                    label='累计异常占比'
+                    hint='累计异常达到重复次数后，还要满足该占比'
+                    value={form.cumulativeAnomalyRate}
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    suffix='%'
+                    displayMultiplier={100}
+                    onChange={(value) => set('cumulativeAnomalyRate', value)}
+                  />
+                  <NumberField
+                    label='高风险最少强信号数'
+                    hint='先满足重复异常，再检查强信号数量'
+                    value={form.highRiskHardCount}
+                    min={1}
+                    max={100}
+                    onChange={(value) => set('highRiskHardCount', value)}
+                  />
+                </div>
+
+                <div className='overflow-hidden rounded-lg border bg-muted/20'>
+                  <RiskStatusRule
+                    status='观察'
+                    description='窗口内出现异常，但还没有满足重复条件'
+                    tone='warning'
+                  />
+                  <RiskStatusRule
+                    status='疑似'
+                    description={`连续 ${form.consecutiveAnomalies} 次，或累计至少 ${form.consecutiveAnomalies} 次且占比达到 ${formatPercent(form.cumulativeAnomalyRate)}`}
+                    tone='danger'
+                    divided
+                  />
+                  <RiskStatusRule
+                    status='高风险'
+                    description={`已经进入疑似，并且强信号达到 ${form.highRiskHardCount} 次`}
+                    tone='danger'
+                    divided
+                  />
+                </div>
+              </div>
+            </SettingsCard>
+          </div>
+
           <SettingsCard
-            icon={Activity}
-            title='降智信号判定'
-            description='结合 TPS、首 Token 占比、生成窗口、输出量和自动校验标记，判断每轮是否记录降智信号。'
+            icon={Calculator}
+            title='3. 风险分怎么加'
+            description='状态由上面的规则决定，分数用于排序和展示。权重设为 0 即关闭该计分项。'
+            descriptionAsHint
           >
-            <div className='grid gap-4 sm:grid-cols-2'>
-              <NumberField
-                label='分析窗口（小时）'
-                value={form.analysisWindowHours}
-                min={1}
-                max={8760}
-                onChange={(value) => set('analysisWindowHours', value)}
+            <div className='overflow-hidden rounded-xl border'>
+              <div className='hidden grid-cols-[minmax(0,1fr)_9rem_9rem] gap-4 border-b bg-muted/35 px-4 py-2.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase md:grid'>
+                <span>计分因子</span>
+                <span>权重</span>
+                <span>封顶</span>
+              </div>
+              <RiskFactorRow
+                title='异常信号率'
+                description='异常样本数 ÷ 可测样本数；满占比得分等于权重'
+                weight={form.riskAnomalyRateWeight}
+                automaticCap
+                onWeightChange={(value) => set('riskAnomalyRateWeight', value)}
               />
-              <NumberField
-                label='最低输出 Token'
-                value={form.minimumOutputTokens}
-                min={1}
-                max={4096}
-                onChange={(value) => set('minimumOutputTokens', value)}
+              <RiskFactorRow
+                title='强信号'
+                description='buffered_hard、fast_risk 和 marker_miss'
+                weight={form.riskHardWeight}
+                cap={form.riskHardCap}
+                onWeightChange={(value) => set('riskHardWeight', value)}
+                onCapChange={(value) => set('riskHardCap', value)}
               />
-              <NumberField
-                label='降智信号 TPS 下限'
-                hint='某轮达到或超过该值，即记录 1 次疑似降智'
-                value={form.degradationTps}
-                min={0.1}
-                step={0.1}
-                onChange={(value) => set('degradationTps', value)}
+              <RiskFactorRow
+                title='持续高速'
+                description='对 fast_risk 样本额外加分'
+                weight={form.riskFastWeight}
+                cap={form.riskFastCap}
+                onWeightChange={(value) => set('riskFastWeight', value)}
+                onCapChange={(value) => set('riskFastCap', value)}
               />
-              <NumberField
-                label='强降智信号 TPS 下限'
-                hint='某轮达到或超过该值，即记录 1 次强降智信号'
-                value={form.strongDegradationTps}
-                min={0.1}
-                step={0.1}
-                onChange={(value) => set('strongDegradationTps', value)}
+              <RiskFactorRow
+                title='标记缺失'
+                description='对 marker_miss 样本额外加分'
+                weight={form.riskMarkerMissWeight}
+                cap={form.riskMarkerMissCap}
+                onWeightChange={(value) => set('riskMarkerMissWeight', value)}
+                onCapChange={(value) => set('riskMarkerMissCap', value)}
               />
-              <NumberField
-                label='首 Token 占比'
-                value={form.bufferFirstTokenShare}
-                min={0.5}
-                max={0.99}
-                step={0.01}
-                onChange={(value) => set('bufferFirstTokenShare', value)}
+              <RiskFactorRow
+                title='连续信号'
+                description='按窗口内最大连续异常次数加分'
+                weight={form.riskStreakWeight}
+                cap={form.riskStreakCap}
+                onWeightChange={(value) => set('riskStreakWeight', value)}
+                onCapChange={(value) => set('riskStreakCap', value)}
               />
-              <NumberField
-                label='最短生成窗口（ms）'
-                value={form.minGenerationMs}
-                min={1}
-                max={60000}
-                onChange={(value) => set('minGenerationMs', value)}
-              />
+            </div>
+
+            <div className='mt-5'>
+              <div className='mb-3'>
+                <div className='flex items-center gap-1.5 text-sm font-medium'>
+                  分数边界
+                  <HintIcon
+                    label='分数边界'
+                    text='状态保底分按从低到高排列，并且不能超过总分上限。'
+                  />
+                </div>
+              </div>
+              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                <RiskScoreField
+                  label='观察保底'
+                  hint='账号处于观察状态时，即使原始加权分更低，也至少显示该分数。'
+                  tone='warning'
+                  value={form.riskWatchFloor}
+                  onChange={(value) => set('riskWatchFloor', value)}
+                />
+                <RiskScoreField
+                  label='疑似保底'
+                  hint='账号满足重复异常条件后，风险分至少显示该分数。'
+                  tone='danger'
+                  value={form.riskSuspectFloor}
+                  onChange={(value) => set('riskSuspectFloor', value)}
+                />
+                <RiskScoreField
+                  label='高风险保底'
+                  hint='账号满足重复异常和强信号条件后，风险分至少显示该分数。'
+                  tone='danger'
+                  value={form.riskHighFloor}
+                  onChange={(value) => set('riskHighFloor', value)}
+                />
+                <RiskScoreField
+                  label='总分上限'
+                  hint='所有计分因子相加并应用保底分后，最终风险分不会超过该值。'
+                  tone='default'
+                  value={form.riskScoreCap}
+                  min={0.1}
+                  onChange={(value) => set('riskScoreCap', value)}
+                />
+              </div>
+            </div>
+
+            <div className='mt-5 flex flex-col gap-3 rounded-lg border bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
+              <div className='flex items-center gap-1.5 text-sm font-medium'>
+                当前分数区间
+                <HintIcon
+                  label='应用方式'
+                  text='保存后立即热应用，并使用新公式重算已有账号。'
+                />
+              </div>
+              <div className='flex flex-wrap gap-2'>
+                <Badge variant='warning'>
+                  观察 {formatNumber(form.riskWatchFloor)}
+                </Badge>
+                <Badge variant='destructive'>
+                  疑似 {formatNumber(form.riskSuspectFloor)}
+                </Badge>
+                <Badge variant='destructive'>
+                  高风险 {formatNumber(form.riskHighFloor)}
+                </Badge>
+                <Badge variant='outline'>
+                  上限 {formatNumber(form.riskScoreCap)}
+                </Badge>
+              </div>
             </div>
           </SettingsCard>
 
           <SettingsCard
-            icon={ShieldCheck}
-            title='固定出口风险与自动隔离'
-            description='只使用账号当前固定出口的日常探针计算风险；人工诊断出口不计分，也不会触发自动隔离。'
+            icon={Power}
+            title='4. 高风险后怎么处理'
+            description='自动隔离只响应当前固定出口形成的高风险状态；关闭后仍会正常记录和展示风险。'
+            descriptionAsHint
           >
-            <div className='grid gap-4 sm:grid-cols-2'>
-              <NumberField
-                label='重复降智信号次数'
-                hint='连续达到该次数，或累计达到且占可测样本至少 50%，进入疑似降智'
-                value={form.consecutiveAnomalies}
-                min={2}
-                max={20}
-                onChange={(value) => set('consecutiveAnomalies', value)}
+            <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem] lg:items-start'>
+              <SwitchRow
+                label='自动暂时停用高风险账号'
+                description={`重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 暂时停用账号`}
+                checked={form.autoQuarantine}
+                onCheckedChange={(value) => set('autoQuarantine', value)}
               />
-              <div className='sm:col-span-2'>
-                <SwitchRow
-                  label='自动暂时停用高风险账号'
-                  description='固定出口重复异常且强降智信号达到 2 次后，通过 grok2api 管理 API 传播停用状态'
-                  checked={form.autoQuarantine}
-                  onCheckedChange={(value) => set('autoQuarantine', value)}
-                />
-              </div>
               <NumberField
                 label='停用时长（分钟）'
-                hint='自动隔离和账号详情中的“暂时停用”共用；到期后自动启用并降至最低优先级'
+                hint='到期后自动启用并降至最低优先级'
                 value={form.quarantineMinutes}
                 min={1}
                 max={10080}
@@ -874,7 +1110,8 @@ export function SettingsPage() {
                             注册后创建探针
                           </div>
                           <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                            匹配账号后先等待 15 秒模型权限传播，再补齐稳定出口并自动加入持久队列。
+                            匹配账号后先等待 15
+                            秒模型权限传播，再补齐稳定出口并自动加入持久队列。
                           </p>
                         </div>
                       </div>
@@ -1032,6 +1269,21 @@ function toSettingsForm(settings: EditableRuntimeSettings): SettingsForm {
     degradationTps: settings.degradationTps,
     strongDegradationTps: settings.strongDegradationTps,
     consecutiveAnomalies: settings.consecutiveAnomalies,
+    cumulativeAnomalyRate: settings.cumulativeAnomalyRate,
+    highRiskHardCount: settings.highRiskHardCount,
+    riskAnomalyRateWeight: settings.riskAnomalyRateWeight,
+    riskHardWeight: settings.riskHardWeight,
+    riskHardCap: settings.riskHardCap,
+    riskFastWeight: settings.riskFastWeight,
+    riskFastCap: settings.riskFastCap,
+    riskMarkerMissWeight: settings.riskMarkerMissWeight,
+    riskMarkerMissCap: settings.riskMarkerMissCap,
+    riskStreakWeight: settings.riskStreakWeight,
+    riskStreakCap: settings.riskStreakCap,
+    riskScoreCap: settings.riskScoreCap,
+    riskWatchFloor: settings.riskWatchFloor,
+    riskSuspectFloor: settings.riskSuspectFloor,
+    riskHighFloor: settings.riskHighFloor,
     bufferFirstTokenShare: settings.bufferFirstTokenShare,
     minGenerationMs: settings.minGenerationMs,
     minimumOutputTokens: settings.minimumOutputTokens,
@@ -1071,6 +1323,21 @@ function buildSettingsPayload(
     degradationTps: form.degradationTps,
     strongDegradationTps: form.strongDegradationTps,
     consecutiveAnomalies: form.consecutiveAnomalies,
+    cumulativeAnomalyRate: form.cumulativeAnomalyRate,
+    highRiskHardCount: form.highRiskHardCount,
+    riskAnomalyRateWeight: form.riskAnomalyRateWeight,
+    riskHardWeight: form.riskHardWeight,
+    riskHardCap: form.riskHardCap,
+    riskFastWeight: form.riskFastWeight,
+    riskFastCap: form.riskFastCap,
+    riskMarkerMissWeight: form.riskMarkerMissWeight,
+    riskMarkerMissCap: form.riskMarkerMissCap,
+    riskStreakWeight: form.riskStreakWeight,
+    riskStreakCap: form.riskStreakCap,
+    riskScoreCap: form.riskScoreCap,
+    riskWatchFloor: form.riskWatchFloor,
+    riskSuspectFloor: form.riskSuspectFloor,
+    riskHighFloor: form.riskHighFloor,
     bufferFirstTokenShare: form.bufferFirstTokenShare,
     minGenerationMs: form.minGenerationMs,
     minimumOutputTokens: form.minimumOutputTokens,
@@ -1125,6 +1392,24 @@ function validateSettings(form: SettingsForm) {
   if (form.degradationTps >= form.strongDegradationTps) {
     throw new Error('降智信号 TPS 下限必须小于强降智信号 TPS 下限')
   }
+  if (!(
+    form.riskWatchFloor <= form.riskSuspectFloor &&
+    form.riskSuspectFloor <= form.riskHighFloor &&
+    form.riskHighFloor <= form.riskScoreCap
+  )) {
+    throw new Error('风险状态保底分必须满足观察 ≤ 疑似 ≤ 高风险 ≤ 总分上限')
+  }
+  const scoreFactors = [
+    ['强信号', form.riskHardWeight, form.riskHardCap],
+    ['持续高速', form.riskFastWeight, form.riskFastCap],
+    ['标记缺失', form.riskMarkerMissWeight, form.riskMarkerMissCap],
+    ['连续信号', form.riskStreakWeight, form.riskStreakCap],
+  ] as const
+  for (const [label, weight, cap] of scoreFactors) {
+    if (weight > 0 && cap <= 0) {
+      throw new Error(`${label}权重大于 0 时封顶分必须大于 0`)
+    }
+  }
   if (
     form.probeTransientRetryBaseSeconds > form.probeTransientRetryMaxSeconds
   ) {
@@ -1153,23 +1438,26 @@ function SettingsCard({
   icon: Icon,
   title,
   description,
+  descriptionAsHint = false,
   className,
   children,
 }: {
   icon: typeof Network
   title: string
   description: string
+  descriptionAsHint?: boolean
   className?: string
   children: React.ReactNode
 }) {
   return (
     <Card className={className}>
-      <CardHeader>
+      <CardHeader className={descriptionAsHint ? 'pb-0' : undefined}>
         <CardTitle className='flex items-center gap-2 text-base'>
           <Icon className='size-4 text-primary' />
           {title}
+          {descriptionAsHint && <HintIcon label={title} text={description} />}
         </CardTitle>
-        <CardDescription>{description}</CardDescription>
+        {!descriptionAsHint && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent>{children}</CardContent>
     </Card>
@@ -1508,12 +1796,29 @@ function Field({
 }) {
   return (
     <div className={`space-y-2 ${className}`}>
-      <div>
+      <div className='flex min-h-5 items-center gap-1.5'>
         <Label>{label}</Label>
-        {hint && <p className='mt-1 text-xs text-muted-foreground'>{hint}</p>}
+        {hint && <HintIcon label={label} text={hint} />}
       </div>
       {children}
     </div>
+  )
+}
+
+function HintIcon({ label, text }: { label: string; text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type='button'
+          className='inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          aria-label={`${label}说明`}
+        >
+          <Info className='size-3.5' />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className='max-w-72 leading-5'>{text}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -1526,6 +1831,8 @@ function NumberField({
   step = 1,
   disabled = false,
   hint,
+  suffix,
+  displayMultiplier = 1,
 }: {
   label: string
   value: number
@@ -1535,20 +1842,230 @@ function NumberField({
   step?: number
   disabled?: boolean
   hint?: string
+  suffix?: string
+  displayMultiplier?: number
 }) {
   return (
     <Field label={label} hint={hint}>
-      <Input
-        type='number'
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
+      <div className='relative'>
+        <Input
+          type='number'
+          value={value * displayMultiplier}
+          min={min === undefined ? undefined : min * displayMultiplier}
+          max={max === undefined ? undefined : max * displayMultiplier}
+          step={step * displayMultiplier}
+          disabled={disabled}
+          className={suffix ? 'pr-9' : undefined}
+          onChange={(event) =>
+            onChange(Number(event.target.value) / displayMultiplier)
+          }
+        />
+        {suffix && (
+          <span className='pointer-events-none absolute inset-y-0 end-3 flex items-center text-xs text-muted-foreground'>
+            {suffix}
+          </span>
+        )}
+      </div>
     </Field>
   )
+}
+
+function RiskFlowStep({
+  step,
+  title,
+  description,
+  divided = false,
+}: {
+  step: string
+  title: string
+  description: string
+  divided?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex min-w-0 items-center gap-3 px-4 py-3.5',
+        divided && 'border-t sm:border-t-0 sm:border-l'
+      )}
+    >
+      <span className='font-mono text-xs font-semibold text-primary'>
+        {step}
+      </span>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <div className='truncate text-sm font-medium'>{title}</div>
+        <HintIcon label={title} text={description} />
+      </div>
+    </div>
+  )
+}
+
+function RiskFieldGroup({
+  title,
+  hint,
+  divided = false,
+  children,
+}: {
+  title: string
+  hint: string
+  divided?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <section className={cn(divided && 'border-t pt-5')}>
+      <div className='mb-3 flex items-center gap-1.5'>
+        <h3 className='text-xs font-semibold tracking-wide text-muted-foreground uppercase'>
+          {title}
+        </h3>
+        <HintIcon label={title} text={hint} />
+      </div>
+      <div className='grid gap-4 sm:grid-cols-2'>{children}</div>
+    </section>
+  )
+}
+
+function RiskStatusRule({
+  status,
+  description,
+  tone,
+  divided = false,
+}: {
+  status: string
+  description: string
+  tone: 'warning' | 'danger'
+  divided?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5',
+        divided && 'border-t'
+      )}
+    >
+      <Badge variant={tone === 'warning' ? 'warning' : 'destructive'}>
+        {status}
+      </Badge>
+      <span className='text-xs leading-5 text-muted-foreground'>
+        {description}
+      </span>
+    </div>
+  )
+}
+
+function RiskFactorRow({
+  title,
+  description,
+  weight,
+  cap,
+  onWeightChange,
+  onCapChange,
+  automaticCap = false,
+}: {
+  title: string
+  description: string
+  weight: number
+  cap?: number
+  onWeightChange: (value: number) => void
+  onCapChange?: (value: number) => void
+  automaticCap?: boolean
+}) {
+  return (
+    <div className='grid gap-3 border-b px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_9rem_9rem] md:items-center md:gap-4'>
+      <div className='flex min-w-0 items-center gap-1.5'>
+        <span className='text-sm font-medium'>{title}</span>
+        <HintIcon label={title} text={description} />
+      </div>
+      <div>
+        <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
+          权重
+        </div>
+        <Input
+          type='number'
+          value={weight}
+          min={0}
+          max={100}
+          step={0.1}
+          aria-label={`${title}权重`}
+          onChange={(event) => onWeightChange(Number(event.target.value))}
+        />
+      </div>
+      <div>
+        <div className='mb-1.5 text-[11px] text-muted-foreground md:hidden'>
+          封顶
+        </div>
+        {automaticCap ? (
+          <div className='flex h-9 items-center rounded-md border bg-muted/35 px-3 text-xs text-muted-foreground'>
+            随权重
+          </div>
+        ) : (
+          <Input
+            type='number'
+            value={cap}
+            min={0}
+            max={100}
+            step={0.1}
+            aria-label={`${title}封顶`}
+            onChange={(event) => onCapChange?.(Number(event.target.value))}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RiskScoreField({
+  label,
+  hint,
+  tone,
+  value,
+  min = 0,
+  onChange,
+}: {
+  label: string
+  hint: string
+  tone: 'default' | 'warning' | 'danger'
+  value: number
+  min?: number
+  onChange: (value: number) => void
+}) {
+  return (
+    <div className='overflow-hidden rounded-lg border'>
+      <div
+        className={cn(
+          'px-3 py-2 text-xs font-medium',
+          tone === 'warning' &&
+            'bg-amber-500/10 text-amber-700 dark:text-amber-300',
+          tone === 'danger' && 'bg-destructive/10 text-destructive',
+          tone === 'default' && 'bg-muted/45 text-foreground'
+        )}
+      >
+        <span className='flex items-center gap-1.5'>
+          {label}
+          <HintIcon label={label} text={hint} />
+        </span>
+      </div>
+      <div className='p-2'>
+        <Input
+          type='number'
+          value={value}
+          min={min}
+          max={100}
+          step={0.1}
+          aria-label={label}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </div>
+    </div>
+  )
+}
+
+function formatPercent(value: number) {
+  return `${formatNumber(value * 100)}%`
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('zh-CN', {
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function SecretField({
@@ -1661,10 +2178,10 @@ function SwitchRow({
   return (
     <div className='flex items-center justify-between gap-4 rounded-lg border p-3'>
       <div>
-        <div className='text-sm font-medium'>{label}</div>
-        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-          {description}
-        </p>
+        <div className='flex items-center gap-1.5 text-sm font-medium'>
+          {label}
+          <HintIcon label={label} text={description} />
+        </div>
       </div>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </div>

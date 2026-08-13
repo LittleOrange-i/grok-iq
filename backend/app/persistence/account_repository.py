@@ -79,6 +79,18 @@ class AccountRepository:
                 session.delete(legacy_cross_egress)
         return len(account_ids)
 
+    def recalculate_all(self, thresholds: Thresholds, window_hours: int) -> int:
+        with self.database.session() as session:
+            account_ids = set(
+                session.scalars(select(AccountAssessment.account_id)).all()
+            )
+            account_ids.update(
+                session.scalars(select(ProbeSample.account_id).distinct()).all()
+            )
+        for account_id in account_ids:
+            self.recalculate(account_id, thresholds, window_hours)
+        return len(account_ids)
+
     def risky_account_ids(self) -> set[int]:
         with self.database.session() as session:
             return set(
@@ -132,7 +144,10 @@ class AccountRepository:
                 # Registration risk is independent evidence supplied by the
                 # linked registration service and must survive probe scoring.
                 status = "high_risk"
-                score = max(score, 85.0)
+                score = min(
+                    thresholds.risk_score_cap,
+                    max(score, thresholds.risk_high_floor, 85.0),
+                )
                 reasons = list(
                     dict.fromkeys(
                         [
@@ -210,6 +225,8 @@ class AccountRepository:
         account_id: int,
         bfs: int | str | None,
         registration_id: str,
+        risk_score_cap: float = 100,
+        risk_high_floor: float = 75,
     ) -> dict[str, Any]:
         with self.database.transaction() as session:
             assessment = session.get(AccountAssessment, account_id)
@@ -218,7 +235,14 @@ class AccountRepository:
                 session.add(assessment)
             reason = f"grok-register 报告 bot_risk/bfs={bfs}"
             assessment.monitor_status = "high_risk"
-            assessment.risk_score = max(float(assessment.risk_score or 0), 85.0)
+            assessment.risk_score = min(
+                risk_score_cap,
+                max(
+                    float(assessment.risk_score or 0),
+                    risk_high_floor,
+                    85.0,
+                ),
+            )
             assessment.risk_reasons = list(dict.fromkeys([*(assessment.risk_reasons or []), reason]))
             assessment.manual_note = f"registration:{registration_id}"
             assessment.updated_at = utc_now()

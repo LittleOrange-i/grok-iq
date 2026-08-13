@@ -97,6 +97,21 @@ class Settings(BaseSettings):
     degradation_tps: float = Field(default=150, gt=0)
     strong_degradation_tps: float = Field(default=500, gt=0)
     consecutive_anomalies: int = Field(default=3, ge=2, le=20)
+    cumulative_anomaly_rate: float = Field(default=0.5, ge=0.01, le=1)
+    high_risk_hard_count: int = Field(default=2, ge=1, le=100)
+    risk_anomaly_rate_weight: float = Field(default=30, ge=0, le=100)
+    risk_hard_weight: float = Field(default=6, ge=0, le=100)
+    risk_hard_cap: float = Field(default=24, ge=0, le=100)
+    risk_fast_weight: float = Field(default=12, ge=0, le=100)
+    risk_fast_cap: float = Field(default=30, ge=0, le=100)
+    risk_marker_miss_weight: float = Field(default=16, ge=0, le=100)
+    risk_marker_miss_cap: float = Field(default=32, ge=0, le=100)
+    risk_streak_weight: float = Field(default=3, ge=0, le=100)
+    risk_streak_cap: float = Field(default=15, ge=0, le=100)
+    risk_score_cap: float = Field(default=100, gt=0, le=100)
+    risk_watch_floor: float = Field(default=15, ge=0, le=100)
+    risk_suspect_floor: float = Field(default=50, ge=0, le=100)
+    risk_high_floor: float = Field(default=75, ge=0, le=100)
     buffer_first_token_share: float = Field(default=0.85, ge=0.5, le=0.99)
     min_generation_ms: int = Field(default=250, ge=1, le=60_000)
     minimum_output_tokens: int = Field(default=32, ge=1, le=4096)
@@ -139,6 +154,21 @@ class Settings(BaseSettings):
         "degradation_tps",
         "strong_degradation_tps",
         "consecutive_anomalies",
+        "cumulative_anomaly_rate",
+        "high_risk_hard_count",
+        "risk_anomaly_rate_weight",
+        "risk_hard_weight",
+        "risk_hard_cap",
+        "risk_fast_weight",
+        "risk_fast_cap",
+        "risk_marker_miss_weight",
+        "risk_marker_miss_cap",
+        "risk_streak_weight",
+        "risk_streak_cap",
+        "risk_score_cap",
+        "risk_watch_floor",
+        "risk_suspect_floor",
+        "risk_high_floor",
         "buffer_first_token_share",
         "min_generation_ms",
         "minimum_output_tokens",

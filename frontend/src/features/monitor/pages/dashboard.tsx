@@ -90,7 +90,7 @@ export function DashboardPage() {
     <Page>
       <PageHeader
         title='监控概览'
-        description='直接读取 grok2api 当前账号状态，本地聚合多轮、多出口探针结果。'
+        description='直接读取 grok2api 当前账号状态，本地聚合当前固定出口的多轮探针结果。'
         actions={
           <ActionToolbar label='监控概览操作'>
             <ToolbarAction

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi.routing import APIRoute
 from sqlalchemy import select
 
 from app.core.config import DEFAULT_DATABASE_PATH, Settings
@@ -11,6 +14,7 @@ from app.persistence.database import Database
 from app.persistence.models import AppSetting
 from app.persistence.settings_repository import SettingsRepository
 from app.services.settings_service import RuntimeSettingsService
+from app.web.routes.settings import build_settings_router
 from app.web.schemas import RuntimeSettingsInput
 
 
@@ -83,6 +87,111 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
                 "probe_transient_retry_max_seconds": 10,
             }
         )
+
+
+def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    service.update(
+        {
+            "cumulative_anomaly_rate": 0.7,
+            "high_risk_hard_count": 4,
+            "risk_anomaly_rate_weight": 35,
+            "risk_fast_weight": 8,
+            "risk_fast_cap": 16,
+            "risk_score_cap": 90,
+            "risk_watch_floor": 10,
+            "risk_suspect_floor": 45,
+            "risk_high_floor": 70,
+        }
+    )
+
+    public = service.public_view()
+    assert public["cumulativeAnomalyRate"] == 0.7
+    assert public["highRiskHardCount"] == 4
+    assert public["riskAnomalyRateWeight"] == 35
+    assert public["riskFastWeight"] == 8
+    assert public["riskFastCap"] == 16
+    assert public["riskScoreCap"] == 90
+    assert public["riskWatchFloor"] == 10
+    assert public["riskSuspectFloor"] == 45
+    assert public["riskHighFloor"] == 70
+
+    with database.session() as session:
+        stored = session.scalar(
+            select(AppSetting).where(AppSetting.key == "risk_anomaly_rate_weight")
+        )
+        assert stored is not None
+        assert stored.value == 35
+
+    reloaded_settings = Settings(database_path=tmp_path / "monitor.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.cumulative_anomaly_rate == 0.7
+    assert reloaded_settings.high_risk_hard_count == 4
+    assert reloaded_settings.risk_score_cap == 90
+
+
+def test_runtime_settings_reject_invalid_risk_formula(tmp_path: Path):
+    _, _, service = build_service(tmp_path)
+
+    with pytest.raises(ValueError, match="观察 ≤ 疑似 ≤ 高风险"):
+        service.update(
+            {
+                "risk_watch_floor": 60,
+                "risk_suspect_floor": 50,
+            }
+        )
+
+    with pytest.raises(ValueError, match="持续高速权重"):
+        service.update(
+            {
+                "risk_fast_weight": 5,
+                "risk_fast_cap": 0,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_saving_risk_formula_recalculates_existing_accounts():
+    settings = Settings(_env_file=None)
+    runtime = MagicMock()
+    runtime.update.return_value = ["risk_fast_weight"]
+    runtime.public_view.return_value = {"riskFastWeight": 20}
+    probes = SimpleNamespace(
+        thresholds=object(),
+        reconfigure=AsyncMock(),
+    )
+    accounts = MagicMock()
+    scheduler = SimpleNamespace(reconfigure=AsyncMock())
+    router = build_settings_router(
+        settings=settings,
+        client=MagicMock(),
+        accounts=accounts,
+        runtime_settings=runtime,
+        probes=probes,  # type: ignore[arg-type]
+        scheduler=scheduler,  # type: ignore[arg-type]
+        wechat=MagicMock(),
+    )
+    route = next(
+        route
+        for route in router.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/settings"
+        and "PUT" in route.methods
+    )
+
+    result = await route.endpoint(RuntimeSettingsInput(riskFastWeight=20))
+
+    probes.reconfigure.assert_awaited_once()
+    accounts.recalculate_all.assert_called_once_with(
+        probes.thresholds,
+        settings.analysis_window_hours,
+    )
+    scheduler.reconfigure.assert_awaited_once()
+    assert result["riskFastWeight"] == 20
 
 
 def test_registration_strategy_migrates_to_fixed_current_egress_policy(tmp_path: Path):

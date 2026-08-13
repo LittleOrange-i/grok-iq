@@ -110,6 +110,8 @@ class RegisterIntegrationService:
                     account_id=account_id,
                     bfs=event.get("bfs"),
                     registration_id=str(event.get("registration_id") or ""),
+                    risk_score_cap=self.settings.risk_score_cap,
+                    risk_high_floor=self.settings.risk_high_floor,
                 )
                 if self.notifications is not None:
                     try:

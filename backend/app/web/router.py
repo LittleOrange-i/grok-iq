@@ -76,6 +76,7 @@ def build_router(
         build_settings_router(
             settings=settings,
             client=client,
+            accounts=account_repository,
             runtime_settings=runtime_settings_service,
             probes=probe_manager,
             scheduler=scheduler,

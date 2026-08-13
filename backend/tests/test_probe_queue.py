@@ -188,6 +188,76 @@ def test_fixed_egress_formula_migration_recalculates_existing_assessments_once(
         assert session.get(AppSetting, "cross_egress_min") is None
 
 
+def test_recalculate_all_uses_new_formula_for_existing_samples(tmp_path: Path):
+    database = Database(tmp_path / "monitor.db")
+    database.initialize()
+    probes = ProbeRepository(database)
+    probes.seed_defaults()
+    run_id = probes.create_run(
+        account_id=10,
+        account_name="account-10",
+        account_email="",
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[
+            {"kind": "current", "id": None, "name": "账号当前出口"}
+        ],
+        trigger="manual",
+        priority=100,
+        queue_limit=20,
+    )
+    probes.add_sample(
+        run_id,
+        {
+            "round_number": 1,
+            "target_key": "current",
+            "target_kind": "current",
+            "egress_node_id": 7,
+            "egress_name": "test",
+            "status": "done",
+            "status_code": 200,
+            "output_tokens": 100,
+            "reasoning_tokens": 0,
+            "visible_tokens": 100,
+            "chunk_count": 2,
+            "first_token_ms": 1000,
+            "duration_ms": 1100,
+            "generation_ms": 100,
+            "first_token_share": 0.9,
+            "tps": 1000,
+            "expected_matched": True,
+            "classification": "fast_risk",
+            "severity": 4,
+            "error": "",
+        },
+    )
+    probes.finish_run(run_id)
+    accounts = AccountRepository(database)
+
+    assert accounts.recalculate_all(
+        Thresholds(risk_watch_floor=5, risk_fast_weight=1, risk_fast_cap=1),
+        168,
+    ) == 1
+    first = accounts.get_assessment(10)
+    assert first is not None
+    assert first["risk_score"] == 40
+
+    assert accounts.recalculate_all(
+        Thresholds(
+            risk_anomaly_rate_weight=0,
+            risk_hard_weight=0,
+            risk_fast_weight=0,
+            risk_marker_miss_weight=0,
+            risk_streak_weight=0,
+            risk_watch_floor=5,
+        ),
+        168,
+    ) == 1
+    second = accounts.get_assessment(10)
+    assert second is not None
+    assert second["risk_score"] == 5
+
+
 def test_probe_recalculation_preserves_registration_risk(tmp_path: Path):
     database = Database(tmp_path / "monitor.db")
     database.initialize()
@@ -203,6 +273,14 @@ def test_probe_recalculation_preserves_registration_risk(tmp_path: Path):
     assert result["monitor_status"] == "high_risk"
     assert result["risk_score"] >= 85
     assert any("grok-register" in reason for reason in result["risk_reasons"])
+
+    capped = accounts.recalculate(
+        10,
+        Thresholds(risk_score_cap=70, risk_high_floor=70),
+        168,
+    )
+    assert capped["monitor_status"] == "high_risk"
+    assert capped["risk_score"] == 70
 
 
 def test_same_account_runs_are_claimed_serially(repository: ProbeRepository):

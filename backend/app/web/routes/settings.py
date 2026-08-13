@@ -6,6 +6,7 @@ from fastapi import APIRouter, Response
 
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
+from app.persistence.account_repository import AccountRepository
 from app.services.probe_manager import ProbeManager
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
@@ -19,6 +20,7 @@ def build_settings_router(
     *,
     settings: Settings,
     client: Grok2APIClient,
+    accounts: AccountRepository,
     runtime_settings: RuntimeSettingsService,
     probes: ProbeManager,
     scheduler: SchedulerService,
@@ -48,6 +50,35 @@ def build_settings_router(
         if any(key.startswith("wechat_") for key in changed):
             wechat.reset_credentials()
         await probes.reconfigure()
+        risk_fields = {
+            "analysis_window_hours",
+            "degradation_tps",
+            "strong_degradation_tps",
+            "consecutive_anomalies",
+            "cumulative_anomaly_rate",
+            "high_risk_hard_count",
+            "risk_anomaly_rate_weight",
+            "risk_hard_weight",
+            "risk_hard_cap",
+            "risk_fast_weight",
+            "risk_fast_cap",
+            "risk_marker_miss_weight",
+            "risk_marker_miss_cap",
+            "risk_streak_weight",
+            "risk_streak_cap",
+            "risk_score_cap",
+            "risk_watch_floor",
+            "risk_suspect_floor",
+            "risk_high_floor",
+            "buffer_first_token_share",
+            "min_generation_ms",
+            "minimum_output_tokens",
+        }
+        if risk_fields.intersection(changed):
+            accounts.recalculate_all(
+                probes.thresholds,
+                settings.analysis_window_hours,
+            )
         await scheduler.reconfigure()
         return {**runtime_settings.public_view(), "changed": changed}
 

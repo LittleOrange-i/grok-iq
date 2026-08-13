@@ -477,6 +477,21 @@ export type RuntimeSettings = {
   degradationTps: number
   strongDegradationTps: number
   consecutiveAnomalies: number
+  cumulativeAnomalyRate: number
+  highRiskHardCount: number
+  riskAnomalyRateWeight: number
+  riskHardWeight: number
+  riskHardCap: number
+  riskFastWeight: number
+  riskFastCap: number
+  riskMarkerMissWeight: number
+  riskMarkerMissCap: number
+  riskStreakWeight: number
+  riskStreakCap: number
+  riskScoreCap: number
+  riskWatchFloor: number
+  riskSuspectFloor: number
+  riskHighFloor: number
   bufferFirstTokenShare: number
   minGenerationMs: number
   minimumOutputTokens: number
@@ -533,6 +548,21 @@ export type RuntimeSettingsUpdate = Partial<
     | 'degradationTps'
     | 'strongDegradationTps'
     | 'consecutiveAnomalies'
+    | 'cumulativeAnomalyRate'
+    | 'highRiskHardCount'
+    | 'riskAnomalyRateWeight'
+    | 'riskHardWeight'
+    | 'riskHardCap'
+    | 'riskFastWeight'
+    | 'riskFastCap'
+    | 'riskMarkerMissWeight'
+    | 'riskMarkerMissCap'
+    | 'riskStreakWeight'
+    | 'riskStreakCap'
+    | 'riskScoreCap'
+    | 'riskWatchFloor'
+    | 'riskSuspectFloor'
+    | 'riskHighFloor'
     | 'bufferFirstTokenShare'
     | 'minGenerationMs'
     | 'minimumOutputTokens'
@@ -550,6 +580,21 @@ type RuntimeSettingsWire = Omit<
   RuntimeSettings,
   | 'degradationTps'
   | 'strongDegradationTps'
+  | 'cumulativeAnomalyRate'
+  | 'highRiskHardCount'
+  | 'riskAnomalyRateWeight'
+  | 'riskHardWeight'
+  | 'riskHardCap'
+  | 'riskFastWeight'
+  | 'riskFastCap'
+  | 'riskMarkerMissWeight'
+  | 'riskMarkerMissCap'
+  | 'riskStreakWeight'
+  | 'riskStreakCap'
+  | 'riskScoreCap'
+  | 'riskWatchFloor'
+  | 'riskSuspectFloor'
+  | 'riskHighFloor'
   | 'probeCurrentEgressIntervalSeconds'
   | 'wechatNotificationEnabled'
   | 'wechatAppId'
@@ -560,6 +605,21 @@ type RuntimeSettingsWire = Omit<
 > & {
   degradationTps?: number
   strongDegradationTps?: number
+  cumulativeAnomalyRate?: number
+  highRiskHardCount?: number
+  riskAnomalyRateWeight?: number
+  riskHardWeight?: number
+  riskHardCap?: number
+  riskFastWeight?: number
+  riskFastCap?: number
+  riskMarkerMissWeight?: number
+  riskMarkerMissCap?: number
+  riskStreakWeight?: number
+  riskStreakCap?: number
+  riskScoreCap?: number
+  riskWatchFloor?: number
+  riskSuspectFloor?: number
+  riskHighFloor?: number
   softTps?: number
   hardTps?: number
   probeCurrentEgressIntervalSeconds?: number
@@ -593,6 +653,21 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     wechatTemplateId: value.wechatTemplateId ?? '',
     degradationTps: value.degradationTps ?? value.softTps ?? 150,
     strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 500,
+    cumulativeAnomalyRate: value.cumulativeAnomalyRate ?? 0.5,
+    highRiskHardCount: value.highRiskHardCount ?? 2,
+    riskAnomalyRateWeight: value.riskAnomalyRateWeight ?? 30,
+    riskHardWeight: value.riskHardWeight ?? 6,
+    riskHardCap: value.riskHardCap ?? 24,
+    riskFastWeight: value.riskFastWeight ?? 12,
+    riskFastCap: value.riskFastCap ?? 30,
+    riskMarkerMissWeight: value.riskMarkerMissWeight ?? 16,
+    riskMarkerMissCap: value.riskMarkerMissCap ?? 32,
+    riskStreakWeight: value.riskStreakWeight ?? 3,
+    riskStreakCap: value.riskStreakCap ?? 15,
+    riskScoreCap: value.riskScoreCap ?? 100,
+    riskWatchFloor: value.riskWatchFloor ?? 15,
+    riskSuspectFloor: value.riskSuspectFloor ?? 50,
+    riskHighFloor: value.riskHighFloor ?? 75,
   }
 }
 

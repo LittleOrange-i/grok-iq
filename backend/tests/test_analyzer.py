@@ -106,3 +106,67 @@ def test_cumulative_majority_of_soft_signals_becomes_suspect():
     assert status == "suspect"
     assert score >= 50
     assert any("达到 50%" in reason for reason in reasons)
+
+
+def test_custom_score_factors_change_risk_score():
+    _, default_score, _ = risk_status(
+        anomaly_count=1,
+        hard_count=1,
+        fast_count=1,
+        marker_miss_count=0,
+        anomaly_streak=1,
+        sample_count=4,
+        thresholds=Thresholds(),
+    )
+    status, custom_score, _ = risk_status(
+        anomaly_count=1,
+        hard_count=1,
+        fast_count=1,
+        marker_miss_count=0,
+        anomaly_streak=1,
+        sample_count=4,
+        thresholds=Thresholds(
+            risk_anomaly_rate_weight=40,
+            risk_hard_weight=10,
+            risk_hard_cap=10,
+            risk_fast_weight=20,
+            risk_fast_cap=20,
+            risk_streak_weight=5,
+            risk_streak_cap=5,
+        ),
+    )
+
+    assert status == "watch"
+    assert default_score == 28.5
+    assert custom_score == 45
+
+
+def test_custom_cumulative_rate_and_hard_count_change_status():
+    suspect, _, reasons = risk_status(
+        anomaly_count=3,
+        hard_count=2,
+        fast_count=0,
+        marker_miss_count=0,
+        anomaly_streak=1,
+        sample_count=5,
+        thresholds=Thresholds(
+            cumulative_anomaly_rate=0.8,
+            high_risk_hard_count=3,
+        ),
+    )
+    high_risk, _, _ = risk_status(
+        anomaly_count=3,
+        hard_count=2,
+        fast_count=0,
+        marker_miss_count=0,
+        anomaly_streak=1,
+        sample_count=5,
+        thresholds=Thresholds(
+            cumulative_anomaly_rate=0.6,
+            high_risk_hard_count=2,
+        ),
+    )
+
+    assert suspect == "watch"
+    assert not any("达到 80%" in reason for reason in reasons)
+    assert high_risk == "high_risk"

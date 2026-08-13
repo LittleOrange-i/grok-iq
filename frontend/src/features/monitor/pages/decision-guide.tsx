@@ -44,6 +44,21 @@ type Thresholds = Pick<
   | 'degradationTps'
   | 'strongDegradationTps'
   | 'consecutiveAnomalies'
+  | 'cumulativeAnomalyRate'
+  | 'highRiskHardCount'
+  | 'riskAnomalyRateWeight'
+  | 'riskHardWeight'
+  | 'riskHardCap'
+  | 'riskFastWeight'
+  | 'riskFastCap'
+  | 'riskMarkerMissWeight'
+  | 'riskMarkerMissCap'
+  | 'riskStreakWeight'
+  | 'riskStreakCap'
+  | 'riskScoreCap'
+  | 'riskWatchFloor'
+  | 'riskSuspectFloor'
+  | 'riskHighFloor'
   | 'bufferFirstTokenShare'
   | 'minGenerationMs'
   | 'minimumOutputTokens'
@@ -65,6 +80,21 @@ const defaultThresholds: Thresholds = {
   degradationTps: 150,
   strongDegradationTps: 500,
   consecutiveAnomalies: 3,
+  cumulativeAnomalyRate: 0.5,
+  highRiskHardCount: 2,
+  riskAnomalyRateWeight: 30,
+  riskHardWeight: 6,
+  riskHardCap: 24,
+  riskFastWeight: 12,
+  riskFastCap: 30,
+  riskMarkerMissWeight: 16,
+  riskMarkerMissCap: 32,
+  riskStreakWeight: 3,
+  riskStreakCap: 15,
+  riskScoreCap: 100,
+  riskWatchFloor: 15,
+  riskSuspectFloor: 50,
+  riskHighFloor: 75,
   bufferFirstTokenShare: 0.85,
   minGenerationMs: 250,
   minimumOutputTokens: 32,
@@ -205,9 +235,14 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
       value: `${thresholds.consecutiveAnomalies} 次`,
     },
     {
+      icon: Calculator,
+      label: '累计异常占比',
+      value: formatPercent(thresholds.cumulativeAnomalyRate),
+    },
+    {
       icon: ShieldAlert,
       label: '高风险强信号',
-      value: '至少 2 次',
+      value: `至少 ${thresholds.highRiskHardCount} 次`,
     },
     {
       icon: Timer,
@@ -224,7 +259,7 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
           数值来自系统设置；服务未连接时展示后端默认值。
         </CardDescription>
       </CardHeader>
-      <CardContent className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
+      <CardContent className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6'>
         {values.map(({ icon: Icon, label, value }) => (
           <div key={label} className='rounded-lg border bg-muted/20 p-3'>
             <div className='flex items-center gap-2 text-xs text-muted-foreground'>
@@ -242,7 +277,8 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
 }
 
 function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
-  const repeated = `固定出口连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 50% 以上`
+  const anomalyRate = formatPercent(thresholds.cumulativeAnomalyRate)
+  const repeated = `固定出口连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 ${anomalyRate} 以上`
 
   return (
     <section className='space-y-3'>
@@ -267,7 +303,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           summary='已经记录到降智信号，但次数尚未达到疑似降智条件。'
           conditions={[
             '降智信号数大于 0',
-            `未连续达到 ${thresholds.consecutiveAnomalies} 次，且累计信号未同时满足次数和 50% 占比`,
+            `未连续达到 ${thresholds.consecutiveAnomalies} 次，且累计信号未同时满足次数和 ${anomalyRate} 占比`,
           ]}
           tone='warning'
         />
@@ -276,15 +312,21 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           title='疑似降智'
           badge={<StatusBadge value='suspect' />}
           summary='固定出口降智信号已经重复出现，但强证据还不足。'
-          conditions={[repeated, '强降智信号少于 2 次']}
+          conditions={[
+            repeated,
+            `强降智信号少于 ${thresholds.highRiskHardCount} 次`,
+          ]}
           tone='danger'
         />
         <RuleCard
           icon={Zap}
           title='高风险'
           badge={<StatusBadge value='high_risk' />}
-          summary='固定出口重复异常，并且已经出现至少 2 次强降智信号。'
-          conditions={[repeated, '强降智信号至少 2 次']}
+          summary={`固定出口重复异常，并且已经出现至少 ${thresholds.highRiskHardCount} 次强降智信号。`}
+          conditions={[
+            repeated,
+            `强降智信号至少 ${thresholds.highRiskHardCount} 次`,
+          ]}
           tone='danger'
         />
         <RuleCard
@@ -318,11 +360,31 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
 
 function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
   const rows = [
-    ['信号率', '降智信号数 ÷ 可测样本数 × 30', '最高 30'],
-    ['强信号', '强降智信号数 × 6', '最高 24'],
-    ['持续高速', 'fast_risk 数 × 12', '最高 30'],
-    ['标记缺失', 'marker_miss 数 × 16', '最高 32'],
-    ['连续信号', '最大连续降智信号数 × 3', '最高 15'],
+    [
+      '信号率',
+      `降智信号数 ÷ 可测样本数 × ${formatNumber(thresholds.riskAnomalyRateWeight)}`,
+      `满占比 ${formatNumber(thresholds.riskAnomalyRateWeight)}`,
+    ],
+    [
+      '强信号',
+      `强降智信号数 × ${formatNumber(thresholds.riskHardWeight)}`,
+      `最高 ${formatNumber(thresholds.riskHardCap)}`,
+    ],
+    [
+      '持续高速',
+      `fast_risk 数 × ${formatNumber(thresholds.riskFastWeight)}`,
+      `最高 ${formatNumber(thresholds.riskFastCap)}`,
+    ],
+    [
+      '标记缺失',
+      `marker_miss 数 × ${formatNumber(thresholds.riskMarkerMissWeight)}`,
+      `最高 ${formatNumber(thresholds.riskMarkerMissCap)}`,
+    ],
+    [
+      '连续信号',
+      `最大连续降智信号数 × ${formatNumber(thresholds.riskStreakWeight)}`,
+      `最高 ${formatNumber(thresholds.riskStreakCap)}`,
+    ],
   ]
 
   return (
@@ -333,8 +395,10 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
           风险分公式
         </CardTitle>
         <CardDescription>
-          各项相加后封顶 100 分；“观察”最低显示 15 分，“疑似降智”最低显示 50
-          分，“高风险”最低显示 75 分。诊断出口样本不参与计算。
+          各项相加后封顶 {formatNumber(thresholds.riskScoreCap)} 分；“观察”最低显示{' '}
+          {formatNumber(thresholds.riskWatchFloor)} 分，“疑似降智”最低显示{' '}
+          {formatNumber(thresholds.riskSuspectFloor)} 分，“高风险”最低显示{' '}
+          {formatNumber(thresholds.riskHighFloor)} 分。公式因子来自系统设置，诊断出口样本不参与计算。
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -869,5 +933,11 @@ function ConditionLine({
 }
 
 function formatPercent(value: number) {
-  return `${Math.round(value * 100)}%`
+  return `${formatNumber(value * 100)}%`
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('zh-CN', {
+    maximumFractionDigits: 2,
+  }).format(value)
 }

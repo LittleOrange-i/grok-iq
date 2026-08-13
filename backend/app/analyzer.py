@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-CUMULATIVE_ANOMALY_RATE = 0.5
-
 
 @dataclass(slots=True, frozen=True)
 class Thresholds:
@@ -14,6 +12,21 @@ class Thresholds:
     buffer_first_token_share: float = 0.85
     min_generation_ms: int = 250
     consecutive_anomalies: int = 3
+    cumulative_anomaly_rate: float = 0.5
+    high_risk_hard_count: int = 2
+    risk_anomaly_rate_weight: float = 30
+    risk_hard_weight: float = 6
+    risk_hard_cap: float = 24
+    risk_fast_weight: float = 12
+    risk_fast_cap: float = 30
+    risk_marker_miss_weight: float = 16
+    risk_marker_miss_cap: float = 32
+    risk_streak_weight: float = 3
+    risk_streak_cap: float = 15
+    risk_score_cap: float = 100
+    risk_watch_floor: float = 15
+    risk_suspect_floor: float = 50
+    risk_high_floor: float = 75
 
 
 @dataclass(slots=True, frozen=True)
@@ -95,15 +108,16 @@ def risk_status(
     consecutive = anomaly_streak >= thresholds.consecutive_anomalies
     cumulative = (
         anomaly_count >= thresholds.consecutive_anomalies
-        and anomaly_rate >= CUMULATIVE_ANOMALY_RATE
+        and anomaly_rate >= thresholds.cumulative_anomaly_rate
     )
     repeated = consecutive or cumulative
-    strong_repeated = repeated and hard_count >= 2
+    strong_repeated = repeated and hard_count >= thresholds.high_risk_hard_count
     if consecutive:
         reasons.append(f"固定出口连续降智信号达到 {thresholds.consecutive_anomalies} 次")
     elif cumulative:
         reasons.append(
-            f"固定出口降智信号占比 {anomaly_count}/{sample_count}，达到 50%"
+            f"固定出口降智信号占比 {anomaly_count}/{sample_count}，达到 "
+            f"{thresholds.cumulative_anomaly_rate:.0%}"
         )
     if fast_count:
         reasons.append(f"持续生成型高速样本 {fast_count} 次")
@@ -113,18 +127,24 @@ def risk_status(
         reasons.append(f"强降智信号 {hard_count} 次")
 
     score = min(
-        100.0,
-        anomaly_rate * 30
-        + min(hard_count * 6, 24)
-        + min(fast_count * 12, 30)
-        + min(marker_miss_count * 16, 32)
-        + min(anomaly_streak * 3, 15),
+        thresholds.risk_score_cap,
+        anomaly_rate * thresholds.risk_anomaly_rate_weight
+        + min(hard_count * thresholds.risk_hard_weight, thresholds.risk_hard_cap)
+        + min(fast_count * thresholds.risk_fast_weight, thresholds.risk_fast_cap)
+        + min(
+            marker_miss_count * thresholds.risk_marker_miss_weight,
+            thresholds.risk_marker_miss_cap,
+        )
+        + min(
+            anomaly_streak * thresholds.risk_streak_weight,
+            thresholds.risk_streak_cap,
+        ),
     )
 
     if strong_repeated:
-        return "high_risk", round(max(score, 75.0), 1), reasons
+        return "high_risk", round(max(score, thresholds.risk_high_floor), 1), reasons
     if repeated:
-        return "suspect", round(max(score, 50.0), 1), reasons
+        return "suspect", round(max(score, thresholds.risk_suspect_floor), 1), reasons
     if anomaly_count:
-        return "watch", round(max(score, 15.0), 1), reasons
+        return "watch", round(max(score, thresholds.risk_watch_floor), 1), reasons
     return "healthy", round(score, 1), reasons

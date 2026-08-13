@@ -144,6 +144,21 @@ class ProbeManager:
             buffer_first_token_share=self.settings.buffer_first_token_share,
             min_generation_ms=self.settings.min_generation_ms,
             consecutive_anomalies=self.settings.consecutive_anomalies,
+            cumulative_anomaly_rate=self.settings.cumulative_anomaly_rate,
+            high_risk_hard_count=self.settings.high_risk_hard_count,
+            risk_anomaly_rate_weight=self.settings.risk_anomaly_rate_weight,
+            risk_hard_weight=self.settings.risk_hard_weight,
+            risk_hard_cap=self.settings.risk_hard_cap,
+            risk_fast_weight=self.settings.risk_fast_weight,
+            risk_fast_cap=self.settings.risk_fast_cap,
+            risk_marker_miss_weight=self.settings.risk_marker_miss_weight,
+            risk_marker_miss_cap=self.settings.risk_marker_miss_cap,
+            risk_streak_weight=self.settings.risk_streak_weight,
+            risk_streak_cap=self.settings.risk_streak_cap,
+            risk_score_cap=self.settings.risk_score_cap,
+            risk_watch_floor=self.settings.risk_watch_floor,
+            risk_suspect_floor=self.settings.risk_suspect_floor,
+            risk_high_floor=self.settings.risk_high_floor,
         )
         self._desired_worker_concurrency = self.settings.probe_worker_concurrency
         if not self._started:

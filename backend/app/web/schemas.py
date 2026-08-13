@@ -283,6 +283,35 @@ class RuntimeSettingsInput(BaseModel):
     degradation_tps: float | None = Field(default=None, alias="degradationTps", gt=0)
     strong_degradation_tps: float | None = Field(default=None, alias="strongDegradationTps", gt=0)
     consecutive_anomalies: int | None = Field(default=None, alias="consecutiveAnomalies", ge=2, le=20)
+    cumulative_anomaly_rate: float | None = Field(
+        default=None, alias="cumulativeAnomalyRate", ge=0.01, le=1
+    )
+    high_risk_hard_count: int | None = Field(
+        default=None, alias="highRiskHardCount", ge=1, le=100
+    )
+    risk_anomaly_rate_weight: float | None = Field(
+        default=None, alias="riskAnomalyRateWeight", ge=0, le=100
+    )
+    risk_hard_weight: float | None = Field(default=None, alias="riskHardWeight", ge=0, le=100)
+    risk_hard_cap: float | None = Field(default=None, alias="riskHardCap", ge=0, le=100)
+    risk_fast_weight: float | None = Field(default=None, alias="riskFastWeight", ge=0, le=100)
+    risk_fast_cap: float | None = Field(default=None, alias="riskFastCap", ge=0, le=100)
+    risk_marker_miss_weight: float | None = Field(
+        default=None, alias="riskMarkerMissWeight", ge=0, le=100
+    )
+    risk_marker_miss_cap: float | None = Field(
+        default=None, alias="riskMarkerMissCap", ge=0, le=100
+    )
+    risk_streak_weight: float | None = Field(
+        default=None, alias="riskStreakWeight", ge=0, le=100
+    )
+    risk_streak_cap: float | None = Field(default=None, alias="riskStreakCap", ge=0, le=100)
+    risk_score_cap: float | None = Field(default=None, alias="riskScoreCap", gt=0, le=100)
+    risk_watch_floor: float | None = Field(default=None, alias="riskWatchFloor", ge=0, le=100)
+    risk_suspect_floor: float | None = Field(
+        default=None, alias="riskSuspectFloor", ge=0, le=100
+    )
+    risk_high_floor: float | None = Field(default=None, alias="riskHighFloor", ge=0, le=100)
     buffer_first_token_share: float | None = Field(
         default=None, alias="bufferFirstTokenShare", ge=0.5, le=0.99
     )

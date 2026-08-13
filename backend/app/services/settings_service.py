@@ -79,6 +79,25 @@ class RuntimeSettingsService:
         candidate = Settings.model_validate(values | fixed_register_probe_strategy())
         if candidate.degradation_tps >= candidate.strong_degradation_tps:
             raise ValueError("降智信号 TPS 下限必须小于强降智信号 TPS 下限")
+        if not (
+            candidate.risk_watch_floor
+            <= candidate.risk_suspect_floor
+            <= candidate.risk_high_floor
+            <= candidate.risk_score_cap
+        ):
+            raise ValueError("风险状态保底分必须满足观察 ≤ 疑似 ≤ 高风险 ≤ 总分上限")
+        for label, weight, cap in (
+            ("强信号", candidate.risk_hard_weight, candidate.risk_hard_cap),
+            ("持续高速", candidate.risk_fast_weight, candidate.risk_fast_cap),
+            (
+                "标记缺失",
+                candidate.risk_marker_miss_weight,
+                candidate.risk_marker_miss_cap,
+            ),
+            ("连续信号", candidate.risk_streak_weight, candidate.risk_streak_cap),
+        ):
+            if weight > 0 and cap <= 0:
+                raise ValueError(f"{label}权重大于 0 时封顶分必须大于 0")
         if candidate.probe_transient_retry_base_seconds > candidate.probe_transient_retry_max_seconds:
             raise ValueError("探针重试基础等待不能大于最大等待")
         parsed = urlsplit(candidate.grok2api_base_url)
@@ -192,6 +211,21 @@ class RuntimeSettingsService:
             "degradationTps": s.degradation_tps,
             "strongDegradationTps": s.strong_degradation_tps,
             "consecutiveAnomalies": s.consecutive_anomalies,
+            "cumulativeAnomalyRate": s.cumulative_anomaly_rate,
+            "highRiskHardCount": s.high_risk_hard_count,
+            "riskAnomalyRateWeight": s.risk_anomaly_rate_weight,
+            "riskHardWeight": s.risk_hard_weight,
+            "riskHardCap": s.risk_hard_cap,
+            "riskFastWeight": s.risk_fast_weight,
+            "riskFastCap": s.risk_fast_cap,
+            "riskMarkerMissWeight": s.risk_marker_miss_weight,
+            "riskMarkerMissCap": s.risk_marker_miss_cap,
+            "riskStreakWeight": s.risk_streak_weight,
+            "riskStreakCap": s.risk_streak_cap,
+            "riskScoreCap": s.risk_score_cap,
+            "riskWatchFloor": s.risk_watch_floor,
+            "riskSuspectFloor": s.risk_suspect_floor,
+            "riskHighFloor": s.risk_high_floor,
             "bufferFirstTokenShare": s.buffer_first_token_share,
             "minGenerationMs": s.min_generation_ms,
             "minimumOutputTokens": s.minimum_output_tokens,

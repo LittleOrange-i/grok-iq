@@ -276,8 +276,13 @@ export function PlaygroundPage() {
       current.map((item) => (item.id === active.id ? updater(item) : item))
     )
   }
-  const handleProviderChange = (providerId: string) => {
-    const provider = enabledProviders.find((item) => item.id === providerId)
+  const handleProviderChange = (
+    providerId: string,
+    providerOverride?: ChatProvider
+  ) => {
+    const provider =
+      providerOverride ??
+      enabledProviders.find((item) => item.id === providerId)
     const model = provider?.models[0] || ''
     setSettings((current) => ({ ...current, providerId, model }))
     if (active)
@@ -1171,11 +1176,18 @@ function SettingsDialog({
   providers: ChatProvider[]
   providersLoading: boolean
   selectedProviderId: string
-  onProviderChange: (providerId: string) => void
+  onProviderChange: (
+    providerId: string,
+    providerOverride?: ChatProvider
+  ) => void
   selectedModel: string
   modelNames: string[]
   onModelChange: (model: string) => void
 }) {
+  const selectedProvider = providers.find(
+    (provider) => provider.id === selectedProviderId
+  )
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size='wide' className='overflow-hidden'>
@@ -1246,6 +1258,12 @@ function SettingsDialog({
                   </SelectContent>
                 </Select>
               </Field>
+              {selectedProvider && (
+                <ProviderRequestPreview
+                  provider={selectedProvider}
+                  model={selectedModel}
+                />
+              )}
               <Field label='系统提示' className='sm:col-span-2'>
                 <Textarea
                   value={settings.systemPrompt}
@@ -1313,11 +1331,17 @@ function ProviderSettingsPanel({
 }: {
   providers: ChatProvider[]
   selectedProviderId: string
-  onProviderChange: (providerId: string) => void
+  onProviderChange: (
+    providerId: string,
+    providerOverride?: ChatProvider
+  ) => void
 }) {
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<string | 'new' | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [previewProviderId, setPreviewProviderId] = useState<string | null>(
+    null
+  )
   const [draft, setDraft] = useState<ProviderDraft>(() => emptyProviderDraft())
   const [apiKeyVisible, setApiKeyVisible] = useState(false)
   const [revealingApiKey, setRevealingApiKey] = useState(false)
@@ -1325,6 +1349,25 @@ function ProviderSettingsPanel({
     editingId && editingId !== 'new'
       ? providers.find((provider) => provider.id === editingId)
       : undefined
+  const previewProvider =
+    providers.find((provider) => provider.id === previewProviderId) ??
+    providers.find((provider) => provider.id === selectedProviderId) ??
+    providers[0]
+
+  const updateProviderCache = (provider: ChatProvider) => {
+    queryClient.setQueryData<ChatProvider[]>(['chat-providers'], (current) =>
+      sortChatProviders(
+        [
+          ...(current ?? []).filter((item) => item.id !== provider.id),
+          provider,
+        ].map((item) =>
+          provider.isDefault && item.id !== provider.id
+            ? { ...item, isDefault: false }
+            : item
+        )
+      )
+    )
+  }
 
   const refreshProviderQueries = (providerId?: string) => {
     void queryClient.invalidateQueries({ queryKey: ['chat-providers'] })
@@ -1354,12 +1397,14 @@ function ProviderSettingsPanel({
     },
     onSuccess: (provider) => {
       const wasNew = editingId === 'new'
+      updateProviderCache(provider)
       refreshProviderQueries(provider.id)
+      setPreviewProviderId(provider.id)
       if (
         provider.enabled &&
         (wasNew || provider.isDefault || provider.id === selectedProviderId)
       )
-        onProviderChange(provider.id)
+        onProviderChange(provider.id, provider)
       setEditingId(null)
       setDraft(emptyProviderDraft())
       setApiKeyVisible(false)
@@ -1371,7 +1416,9 @@ function ProviderSettingsPanel({
   const syncModels = useMutation({
     mutationFn: api.syncChatProviderModels,
     onSuccess: (provider) => {
+      updateProviderCache(provider)
       refreshProviderQueries(provider.id)
+      setPreviewProviderId(provider.id)
       toast.success(`已同步 ${provider.models.length} 个模型`)
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1380,9 +1427,14 @@ function ProviderSettingsPanel({
   const deleteProvider = useMutation({
     mutationFn: api.deleteChatProvider,
     onSuccess: (_value, providerId) => {
+      queryClient.setQueryData<ChatProvider[]>(
+        ['chat-providers'],
+        (current) => current?.filter((provider) => provider.id !== providerId)
+      )
       refreshProviderQueries(providerId)
       setDeleteId(null)
       if (editingId === providerId) setEditingId(null)
+      if (previewProviderId === providerId) setPreviewProviderId(null)
       toast.success('模型提供商已删除')
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1397,6 +1449,7 @@ function ProviderSettingsPanel({
   const startEdit = (provider: ChatProvider) => {
     setEditingId(provider.id)
     setDeleteId(null)
+    setPreviewProviderId(provider.id)
     setDraft(providerDraft(provider))
     setApiKeyVisible(false)
   }
@@ -1464,9 +1517,17 @@ function ProviderSettingsPanel({
               <div className='flex min-w-0 items-start gap-2'>
                 <button
                   type='button'
-                  className='min-w-0 flex-1 text-left disabled:cursor-not-allowed'
-                  disabled={!provider.enabled}
-                  onClick={() => onProviderChange(provider.id)}
+                  className='min-w-0 flex-1 text-left'
+                  onClick={() => {
+                    setPreviewProviderId(provider.id)
+                    if (provider.enabled)
+                      onProviderChange(provider.id, provider)
+                  }}
+                  title={
+                    provider.enabled
+                      ? '预览并设为当前提供商'
+                      : '预览已停用的提供商'
+                  }
                 >
                   <div className='flex flex-wrap items-center gap-1.5'>
                     <span className='truncate text-sm font-medium'>
@@ -1719,6 +1780,17 @@ function ProviderSettingsPanel({
               </Button>
             </div>
           </div>
+        ) : previewProvider ? (
+          <ProviderPreview
+            provider={previewProvider}
+            selected={selectedProviderId === previewProvider.id}
+            onEdit={() => startEdit(previewProvider)}
+            onUse={
+              previewProvider.enabled
+                ? () => onProviderChange(previewProvider.id, previewProvider)
+                : undefined
+            }
+          />
         ) : (
           <div className='flex min-h-72 flex-col items-center justify-center rounded-lg border border-dashed p-8 text-center'>
             <ServerCog className='size-8 text-muted-foreground' />
@@ -1771,6 +1843,159 @@ function parseModelNames(value: string): string[] {
         .filter(Boolean)
     )
   )
+}
+
+function sortChatProviders(providers: ChatProvider[]): ChatProvider[] {
+  return [...providers].sort((left, right) => {
+    if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1
+    return left.createdAt.localeCompare(right.createdAt)
+  })
+}
+
+function ProviderRequestPreview({
+  provider,
+  model,
+}: {
+  provider: ChatProvider
+  model: string
+}) {
+  return (
+    <div className='rounded-lg border bg-muted/20 p-3 sm:col-span-2'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <span className='text-sm font-medium'>当前请求预览</span>
+        {provider.isDefault && <Badge variant='info'>默认</Badge>}
+        <Badge variant={provider.apiKeyConfigured ? 'success' : 'secondary'}>
+          API Key {provider.apiKeyConfigured ? '已配置' : '未配置'}
+        </Badge>
+      </div>
+      <dl className='mt-3 grid gap-2 text-xs sm:grid-cols-[7rem_minmax(0,1fr)]'>
+        <dt className='text-muted-foreground'>提供商</dt>
+        <dd className='font-medium'>{provider.name}</dd>
+        <dt className='text-muted-foreground'>接口</dt>
+        <dd className='break-all font-mono'>
+          {chatCompletionUrl(provider.baseUrl)}
+        </dd>
+        <dt className='text-muted-foreground'>模型</dt>
+        <dd className='break-all font-mono'>{model || '尚未选择'}</dd>
+      </dl>
+    </div>
+  )
+}
+
+function ProviderPreview({
+  provider,
+  selected,
+  onEdit,
+  onUse,
+}: {
+  provider: ChatProvider
+  selected: boolean
+  onEdit: () => void
+  onUse?: () => void
+}) {
+  return (
+    <div className='space-y-5'>
+      <div className='flex flex-wrap items-start justify-between gap-3'>
+        <div className='min-w-0'>
+          <div className='flex flex-wrap items-center gap-2'>
+            <CloudCog className='size-4 text-primary' />
+            <h3 className='text-sm font-semibold'>{provider.name}</h3>
+            {provider.isDefault && <Badge variant='info'>默认</Badge>}
+            {!provider.enabled && <Badge variant='secondary'>停用</Badge>}
+            {selected && <Badge variant='success'>当前请求</Badge>}
+          </div>
+          <p className='mt-1 text-xs text-muted-foreground'>
+            保存后的模型提供商配置预览
+          </p>
+        </div>
+        <div className='flex gap-2'>
+          {onUse && !selected && (
+            <Button type='button' size='sm' variant='outline' onClick={onUse}>
+              设为当前
+            </Button>
+          )}
+          <Button type='button' size='sm' onClick={onEdit}>
+            <Pencil />
+            编辑
+          </Button>
+        </div>
+      </div>
+
+      <div className='grid gap-3 sm:grid-cols-2'>
+        <PreviewValue label='Base URL' value={provider.baseUrl} mono />
+        <PreviewValue
+          label='Chat Completions'
+          value={chatCompletionUrl(provider.baseUrl)}
+          mono
+        />
+        <PreviewValue
+          label='API Key'
+          value={provider.apiKeyConfigured ? '已配置并加密保存' : '未配置'}
+        />
+        <PreviewValue
+          label='可用状态'
+          value={provider.enabled ? '已启用' : '已停用'}
+        />
+      </div>
+
+      <div>
+        <div className='mb-2 flex items-center justify-between gap-2'>
+          <span className='text-sm font-medium'>模型列表</span>
+          <Badge variant='outline'>{provider.models.length} 个</Badge>
+        </div>
+        {provider.models.length ? (
+          <div className='flex max-h-52 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/10 p-3'>
+            {provider.models.map((model) => (
+              <Badge
+                key={model}
+                variant='secondary'
+                className='max-w-full font-mono font-normal'
+              >
+                <span className='truncate'>{model}</span>
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <div className='rounded-lg border border-dashed p-4 text-xs leading-5 text-muted-foreground'>
+            未保存模型列表。请求设置选择该提供商时会尝试实时读取
+            <span className='mx-1 font-mono'>/v1/models</span>
+            ；也可点击左侧同步按钮后再预览。
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PreviewValue({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className='min-w-0 rounded-lg border bg-muted/10 p-3'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div
+        className={cn(
+          'mt-1 break-all text-sm',
+          mono && 'font-mono text-xs leading-5'
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function chatCompletionUrl(baseUrl: string): string {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  return base.endsWith('/v1')
+    ? `${base}/chat/completions`
+    : `${base}/v1/chat/completions`
 }
 
 function Field({
