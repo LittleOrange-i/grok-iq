@@ -64,9 +64,18 @@ def build_chat_router(service: ChatService) -> APIRouter:
         )
 
         async def iterator() -> AsyncIterator[bytes]:
+            buffer = bytearray()
             try:
                 async for chunk in stream.response.aiter_content():
-                    yield chunk
+                    buffer.extend(chunk)
+                    while True:
+                        boundary = _sse_event_boundary(buffer)
+                        if boundary is None:
+                            break
+                        yield bytes(buffer[:boundary])
+                        del buffer[:boundary]
+                if buffer:
+                    yield bytes(buffer)
             finally:
                 await stream.session.close()
 
@@ -82,3 +91,12 @@ def build_chat_router(service: ChatService) -> APIRouter:
         )
 
     return router
+
+
+def _sse_event_boundary(buffer: bytearray) -> int | None:
+    boundaries = [
+        index + len(separator)
+        for separator in (b"\n\n", b"\r\n\r\n", b"\r\r")
+        if (index := buffer.find(separator)) >= 0
+    ]
+    return min(boundaries, default=None)

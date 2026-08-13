@@ -133,6 +133,7 @@ class ChatService:
                 headers=headers,
                 data=body,
                 stream=True,
+                accept_encoding="identity",
                 timeout=300,
             )
         except Exception as exc:

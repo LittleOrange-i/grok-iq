@@ -10,19 +10,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
   BrainCircuit,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   CloudCog,
   Copy,
   Eraser,
+  Eye,
   Image as ImageIcon,
   KeyRound,
   Loader2,
   ListChecks,
   MessageSquarePlus,
   MessageSquareText,
+  PanelLeftOpen,
   PanelRightOpen,
   Pencil,
   Plus,
@@ -30,6 +32,7 @@ import {
   Send,
   ServerCog,
   Settings2,
+  Search,
   Star,
   Square,
   Trash2,
@@ -68,6 +71,13 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/password-input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -75,7 +85,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import {
   extractHtmlPreviews,
@@ -84,7 +101,6 @@ import {
 } from '@/components/formatted-content'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { SelectionToolbar } from '@/components/selection-toolbar'
 
 type Role = 'user' | 'assistant'
 type Variant = {
@@ -161,6 +177,9 @@ export function PlaygroundPage() {
   const [streaming, setStreaming] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
+  const [requestSettingsOpen, setRequestSettingsOpen] = useState(false)
+  const [conversationSearch, setConversationSearch] = useState('')
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false)
   const [selectedConversationIds, setSelectedConversationIds] = useState<
     string[]
   >([])
@@ -183,6 +202,16 @@ export function PlaygroundPage() {
   const selectedConversations = conversations.filter((conversation) =>
     selectedConversationIds.includes(conversation.id)
   )
+  const visibleConversations = useMemo(() => {
+    const query = conversationSearch.trim().toLocaleLowerCase()
+    if (!query) return conversations
+    return conversations.filter((conversation) =>
+      [conversation.title, conversation.model]
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(query)
+    )
+  }, [conversationSearch, conversations])
   const allConversationsSelected =
     conversations.length > 0 &&
     selectedConversations.length === conversations.length
@@ -215,6 +244,10 @@ export function PlaygroundPage() {
         )
       ),
     [active?.model, activeProvider?.models, models.data, settings.model]
+  )
+  const extraBodyValid = useMemo(
+    () => isJsonObject(settings.extraBody),
+    [settings.extraBody]
   )
 
   useEffect(() => {
@@ -266,11 +299,23 @@ export function PlaygroundPage() {
 
   const followLatestMessage = () => {
     stickToBottomRef.current = true
+    setShowJumpToLatest(false)
   }
   const handleMessagesScroll = () => {
     const element = scrollRef.current
     if (!element) return
-    stickToBottomRef.current = isScrolledToBottom(element)
+    const atBottom = isScrolledToBottom(element)
+    stickToBottomRef.current = atBottom
+    setShowJumpToLatest(!atBottom)
+  }
+  const jumpToLatestMessage = () => {
+    followLatestMessage()
+    const element = scrollRef.current
+    if (!element) return
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: 'smooth',
+    })
   }
 
   const updateActive = (updater: (value: Conversation) => Conversation) => {
@@ -329,8 +374,6 @@ export function PlaygroundPage() {
       setActiveId(values[0].id)
     }
   }
-  const deleteConversation = (id: string) => deleteConversations([id])
-
   const streamResponse = async (
     conversation: Conversation,
     assistantId: string,
@@ -389,13 +432,7 @@ export function PlaygroundPage() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      let pending: CompletionStreamDelta = { content: '', reasoning: '' }
-      let raf = 0
-      const flush = () => {
-        raf = 0
-        if (!pending.content && !pending.reasoning) return
-        const delta = pending
-        pending = { content: '', reasoning: '' }
+      const appendDelta = (delta: CompletionStreamDelta) => {
         setConversations((current) =>
           current.map((item) =>
             item.id === conversation.id
@@ -405,8 +442,6 @@ export function PlaygroundPage() {
         )
       }
       const complete = () => {
-        if (raf) cancelAnimationFrame(raf)
-        flush()
         markVariant(
           conversation.id,
           assistantId,
@@ -415,17 +450,18 @@ export function PlaygroundPage() {
           setConversations
         )
       }
-      const consumeEvent = (event: string) => {
+      const consumeEvent = async (event: string) => {
         const parsed = parseCompletionStreamEvent(event)
         if (!parsed) return false
         if (parsed.done) {
           complete()
           return true
         }
-        pending.content += parsed.delta.content
-        pending.reasoning += parsed.delta.reasoning
-        if ((parsed.delta.content || parsed.delta.reasoning) && !raf) {
-          raf = requestAnimationFrame(flush)
+        if (parsed.delta.content || parsed.delta.reasoning) {
+          appendDelta(parsed.delta)
+          if (document.visibilityState === 'visible') {
+            await nextRenderFrame()
+          }
         }
         return false
       }
@@ -437,12 +473,12 @@ export function PlaygroundPage() {
         const events = buffer.split('\n\n')
         buffer = events.pop() ?? ''
         for (const event of events) {
-          if (consumeEvent(event)) return
+          if (await consumeEvent(event)) return
         }
       }
       buffer += decoder.decode()
       buffer = buffer.replace(/\r\n/g, '\n')
-      if (buffer.trim() && consumeEvent(buffer)) return
+      if (buffer.trim() && (await consumeEvent(buffer))) return
       complete()
     } catch (error) {
       const aborted =
@@ -469,6 +505,10 @@ export function PlaygroundPage() {
   const submit = async (value: string, clear = true) => {
     const content = value.trim()
     if (!content || !active || streaming) return
+    if (!extraBodyValid) {
+      toast.error('附加参数必须是有效的 JSON 对象')
+      return
+    }
     const providerId = activeProviderId
     if (!providerId) {
       setSettingsOpen(true)
@@ -569,348 +609,218 @@ export function PlaygroundPage() {
     void submit(input)
   }
 
+  const clearActiveConversation = () =>
+    updateActive((value) => ({
+      ...value,
+      title: '新的对话',
+      messages: [],
+      expectedImageUrl: undefined,
+    }))
+
+  const conversationNavigation = (
+    <ConversationNavigation
+      conversations={conversations}
+      visibleConversations={visibleConversations}
+      activeId={active?.id}
+      selectedIds={selectedConversationIds}
+      search={conversationSearch}
+      streaming={streaming}
+      allSelected={allConversationsSelected}
+      onSearchChange={setConversationSearch}
+      onSelect={(id) => {
+        selectConversation(id)
+        setMobileHistoryOpen(false)
+      }}
+      onSelectionChange={setSelectedConversationIds}
+      onSelectAll={() =>
+        setSelectedConversationIds(
+          allConversationsSelected
+            ? []
+            : conversations.map((conversation) => conversation.id)
+        )
+      }
+      onNew={() => {
+        newConversation()
+        setMobileHistoryOpen(false)
+      }}
+      onBulkDelete={() => setBulkDeleteConversationsOpen(true)}
+    />
+  )
+
+  const requestConfiguration = (
+    <RequestConfiguration
+      settings={settings}
+      setSettings={setSettings}
+      providers={providers.data ?? []}
+      providersLoading={providers.isLoading}
+      selectedProvider={activeProvider}
+      selectedProviderId={activeProviderId}
+      selectedModel={active?.model || settings.model}
+      modelNames={modelNames}
+      modelsLoading={models.isLoading}
+      onProviderChange={handleProviderChange}
+      onModelChange={handleModelChange}
+      onManageProviders={() => {
+        setRequestSettingsOpen(false)
+        window.requestAnimationFrame(() => setSettingsOpen(true))
+      }}
+    />
+  )
+
   return (
-    <div className='grid h-full min-h-0 grid-cols-1 bg-background lg:grid-cols-[18rem_minmax(0,1fr)]'>
-      <aside className='hidden min-h-0 flex-col border-r bg-muted/20 lg:flex'>
-        <div className='flex items-center justify-between gap-2 p-4'>
-          <div>
-            <h1 className='text-base font-semibold'>聊天广场</h1>
-            <p className='text-xs text-muted-foreground'>
-              历史仅保存在当前浏览器
+    <div className='grid h-full min-h-0 grid-cols-1 bg-background lg:grid-cols-[17rem_minmax(0,1fr)]'>
+      <aside className='hidden min-h-0 bg-muted/20 lg:block'>
+        {conversationNavigation}
+      </aside>
+
+      <section className='flex min-h-0 min-w-0 flex-col'>
+        <header className='flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4'>
+          <ToolbarAction
+            label='打开本地会话'
+            className='lg:hidden'
+            onClick={() => setMobileHistoryOpen(true)}
+          >
+            <PanelLeftOpen />
+          </ToolbarAction>
+          <div className='min-w-0 flex-1'>
+            <div className='flex min-w-0 items-center gap-2'>
+              <h1 className='truncate text-sm font-semibold'>
+                {active?.title || '新的对话'}
+              </h1>
+              {active?.expectedImageUrl && (
+                <Badge variant='info' className='hidden sm:inline-flex'>
+                  <ImageIcon className='size-3' />
+                  预期图
+                </Badge>
+              )}
+            </div>
+            <p className='truncate text-[11px] text-muted-foreground'>
+              {activeProvider?.name || '未选择提供商'} ·{' '}
+              {active?.model || settings.model || '未选择模型'} ·{' '}
+              {active?.messages.length ?? 0} 条消息
             </p>
           </div>
-          <ActionToolbar label='聊天会话操作'>
+          <ActionToolbar label='当前会话操作'>
             <ToolbarAction
-              label={
-                allConversationsSelected ? '取消全选会话' : '全选全部会话'
-              }
-              active={allConversationsSelected}
-              disabled={streaming || conversations.length === 0}
-              onClick={() =>
-                setSelectedConversationIds(
-                  allConversationsSelected
-                    ? []
-                    : conversations.map((conversation) => conversation.id)
-                )
-              }
+              label='打开请求配置'
+              onClick={() => setRequestSettingsOpen(true)}
             >
-              <ListChecks />
+              <PanelRightOpen />
             </ToolbarAction>
             <ToolbarAction
               label='新建会话'
               disabled={streaming}
               onClick={newConversation}
             >
-              <MessageSquarePlus />
-            </ToolbarAction>
-          </ActionToolbar>
-        </div>
-        <SelectionToolbar
-          selectedCount={selectedConversationIds.length}
-          entityLabel='会话'
-          disabled={streaming}
-          className='mx-2 mb-2'
-          onClear={() => setSelectedConversationIds([])}
-        >
-          <ToolbarAction
-            label={`删除 ${selectedConversationIds.length} 个会话`}
-            destructive
-            disabled={streaming}
-            onClick={() => setBulkDeleteConversationsOpen(true)}
-          >
-            <Trash2 />
-          </ToolbarAction>
-        </SelectionToolbar>
-        <ScrollArea className='min-h-0 flex-1'>
-          <div className='space-y-1 p-2'>
-            {conversations.map((item) => (
-              <div
-                key={item.id}
-                className={cn(
-                  'group flex items-center rounded-lg',
-                  item.id === active?.id && 'bg-accent'
-                )}
-              >
-                <Checkbox
-                  checked={selectedConversationIds.includes(item.id)}
-                  disabled={streaming}
-                  onCheckedChange={(value) =>
-                    setSelectedConversationIds((current) =>
-                      value === true
-                        ? current.includes(item.id)
-                          ? current
-                          : [...current, item.id]
-                        : current.filter((id) => id !== item.id)
-                    )
-                  }
-                  aria-label={`选择会话 ${item.title}`}
-                  className='ms-2 shrink-0'
-                />
-                <button
-                  className='min-w-0 flex-1 px-3 py-2 text-left'
-                  onClick={() => selectConversation(item.id)}
-                >
-                  <div className='truncate text-sm font-medium'>
-                    {item.title}
-                  </div>
-                  <div className='mt-1 truncate font-mono text-xs text-muted-foreground'>
-                    {item.model || '未选择模型'}
-                  </div>
-                </button>
-                <ToolbarAction
-                  label={`删除会话 ${item.title}`}
-                  destructive
-                  disabled={streaming}
-                  className='me-1 size-7 opacity-0 group-hover:opacity-100'
-                  onClick={() => deleteConversation(item.id)}
-                >
-                  <Trash2 className='size-3.5' />
-                </ToolbarAction>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-      </aside>
-      <section className='flex min-h-0 min-w-0 flex-col'>
-        <div className='flex items-center gap-3 border-b px-4 py-3'>
-          <Button
-            type='button'
-            size='icon'
-            variant='ghost'
-            className='shrink-0 lg:hidden'
-            aria-label='切换本地会话'
-            aria-expanded={mobileHistoryOpen}
-            onClick={() => setMobileHistoryOpen((open) => !open)}
-          >
-            <ChevronsUpDown />
-          </Button>
-          <div className='min-w-0'>
-            <div className='flex items-center gap-2'>
-              <h2 className='truncate font-semibold'>
-                {active?.title || '新的对话'}
-              </h2>
-              <Badge variant='secondary'>local</Badge>
-              {active?.expectedImageUrl && (
-                <Badge variant='info'>
-                  <ImageIcon className='size-3' />
-                  预期图
-                </Badge>
-              )}
-            </div>
-            <p className='mt-0.5 text-xs text-muted-foreground'>
-              {activeProvider?.name || '未选择提供商'} ·{' '}
-              {active?.model || settings.model || '未选择模型'} ·{' '}
-              {active?.messages.length ?? 0} 条消息
-            </p>
-          </div>
-          <ActionToolbar label='当前会话操作' className='ms-auto'>
-            <ToolbarAction label='新建会话' onClick={newConversation}>
               <Plus />
             </ToolbarAction>
             <ToolbarAction
               label='清空当前会话'
               disabled={streaming || !active?.messages.length}
-              onClick={() =>
-                updateActive((value) => ({
-                  ...value,
-                  title: '新的对话',
-                  messages: [],
-                  expectedImageUrl: undefined,
-                }))
-              }
+              onClick={clearActiveConversation}
             >
               <Eraser />
             </ToolbarAction>
           </ActionToolbar>
-        </div>
-        {mobileHistoryOpen && (
-          <div className='border-b bg-muted/15 p-2 lg:hidden'>
-            <div className='mb-2 flex items-center justify-between gap-2 px-1'>
-              <div className='flex min-w-0 items-center gap-2'>
-                <span className='text-xs font-medium'>本地会话</span>
-                <Badge variant='secondary' className='tabular-nums'>
-                  {conversations.length}
-                </Badge>
+        </header>
+
+        <div className='relative min-h-0 flex-1'>
+          <div
+            ref={scrollRef}
+            onScroll={handleMessagesScroll}
+            className='absolute inset-0 overflow-y-auto overscroll-contain'
+          >
+            {!active?.messages.length ? (
+              <EmptyPlayground
+                profiles={profiles.data ?? []}
+                onPick={pickProfile}
+              />
+            ) : (
+              <div className='mx-auto flex w-full max-w-6xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8'>
+                {active.messages.map((message) => (
+                  <ChatBubble
+                    key={message.id}
+                    message={message}
+                    disabled={streaming}
+                    expectedImageUrl={active.expectedImageUrl}
+                    onRegenerate={() => void regenerate(message)}
+                    onDelete={() =>
+                      updateActive((value) => ({
+                        ...value,
+                        messages: value.messages.filter(
+                          (item) => item.id !== message.id
+                        ),
+                        updatedAt: Date.now(),
+                      }))
+                    }
+                    onSelectVariant={(index) =>
+                      updateActive((value) => ({
+                        ...value,
+                        messages: value.messages.map((item) =>
+                          item.id === message.id
+                            ? selectVariant(item, index)
+                            : item
+                        ),
+                        updatedAt: Date.now(),
+                      }))
+                    }
+                  />
+                ))}
               </div>
-              <div className='text-[11px] text-muted-foreground'>
-                仅当前浏览器
-              </div>
-            </div>
-            <div className='max-h-52 space-y-1 overflow-y-auto overscroll-contain'>
-              {conversations.map((item) => (
-                <button
-                  key={item.id}
-                  type='button'
-                  className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent',
-                    item.id === active?.id && 'bg-accent'
-                  )}
-                  onClick={() => {
-                    selectConversation(item.id)
-                    setMobileHistoryOpen(false)
-                  }}
-                >
-                  <MessageSquareText className='size-4 shrink-0 text-muted-foreground' />
-                  <span className='min-w-0 flex-1'>
-                    <span className='block truncate text-sm font-medium'>
-                      {item.title}
-                    </span>
-                    <span className='mt-0.5 block truncate font-mono text-[11px] text-muted-foreground'>
-                      {item.model || '未选择模型'}
-                    </span>
-                  </span>
-                  {item.id === active?.id && (
-                    <Star className='size-3.5 shrink-0 fill-current text-primary' />
-                  )}
-                </button>
-              ))}
-            </div>
+            )}
           </div>
-        )}
-        <div
-          ref={scrollRef}
-          onScroll={handleMessagesScroll}
-          className='min-h-0 flex-1 overflow-y-auto'
-        >
-          {!active?.messages.length ? (
-            <EmptyPlayground
-              profiles={profiles.data ?? []}
-              onPick={pickProfile}
-            />
-          ) : (
-            <div className='mx-auto flex w-full max-w-5xl flex-col gap-5 px-4 py-6'>
-              {active.messages.map((message) => (
-                <ChatBubble
-                  key={message.id}
-                  message={message}
-                  disabled={streaming}
-                  expectedImageUrl={active.expectedImageUrl}
-                  onRegenerate={() => void regenerate(message)}
-                  onDelete={() =>
-                    updateActive((value) => ({
-                      ...value,
-                      messages: value.messages.filter(
-                        (item) => item.id !== message.id
-                      ),
-                      updatedAt: Date.now(),
-                    }))
-                  }
-                  onSelectVariant={(index) =>
-                    updateActive((value) => ({
-                      ...value,
-                      messages: value.messages.map((item) =>
-                        item.id === message.id
-                          ? selectVariant(item, index)
-                          : item
-                      ),
-                      updatedAt: Date.now(),
-                    }))
-                  }
-                />
-              ))}
-            </div>
+          {showJumpToLatest && (
+            <Button
+              type='button'
+              size='sm'
+              variant='secondary'
+              className='absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md'
+              onClick={jumpToLatestMessage}
+            >
+              <ChevronDown />
+              回到底部
+            </Button>
           )}
         </div>
-        <form
+
+        <Composer
+          input={input}
+          streaming={streaming}
+          providerName={activeProvider?.name}
+          model={active?.model || settings.model}
+          requestValid={extraBodyValid}
+          onInputChange={setInput}
           onSubmit={handleSubmit}
-          className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
-        >
-          <div className='mx-auto w-full max-w-5xl rounded-xl border bg-card'>
-            <Textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (
-                  event.key === 'Enter' &&
-                  !event.shiftKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
-                  event.preventDefault()
-                  handleSubmit()
-                }
-              }}
-              placeholder='输入内容，Shift + Enter 换行'
-              disabled={streaming}
-              className='max-h-40 min-h-24 resize-none border-0 shadow-none focus-visible:ring-0'
-            />
-            <div className='flex flex-wrap items-center gap-2 px-3 pb-3'>
-              <Button
-                type='button'
-                size='sm'
-                variant='outline'
-                onClick={() => setSettingsOpen(true)}
-              >
-                <PanelRightOpen />
-                请求参数
-              </Button>
-              <Select
-                value={activeProviderId}
-                onValueChange={handleProviderChange}
-              >
-                <SelectTrigger className='max-w-52'>
-                  <SelectValue placeholder='选择提供商' />
-                </SelectTrigger>
-                <SelectContent>
-                  {enabledProviders.map((provider) => (
-                    <SelectItem key={provider.id} value={provider.id}>
-                      {provider.name}
-                      {provider.isDefault ? ' · 默认' : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={active?.model || settings.model}
-                onValueChange={handleModelChange}
-                disabled={!activeProviderId || models.isLoading}
-              >
-                <SelectTrigger className='max-w-64'>
-                  <SelectValue
-                    placeholder={models.isLoading ? '读取模型中' : '选择模型'}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {modelNames.map((model) => (
-                    <SelectItem key={model} value={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className='ms-auto'>
-                {streaming ? (
-                  <Button
-                    type='button'
-                    variant='outline'
-                    onClick={() => abortRef.current?.abort()}
-                  >
-                    <Square />
-                    停止
-                  </Button>
-                ) : (
-                  <Button type='submit' disabled={!input.trim()}>
-                    <Send />
-                    发送
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </form>
+          onStop={() => abortRef.current?.abort()}
+        />
       </section>
-      <SettingsDialog
+
+      <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
+        <SheetContent side='left' className='w-[min(21rem,90vw)] p-0'>
+          <SheetHeader className='sr-only'>
+            <SheetTitle>本地会话</SheetTitle>
+            <SheetDescription>切换和管理当前浏览器中的会话</SheetDescription>
+          </SheetHeader>
+          {conversationNavigation}
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={requestSettingsOpen} onOpenChange={setRequestSettingsOpen}>
+        <SheetContent side='right' className='w-[min(23rem,94vw)] p-0'>
+          <SheetHeader className='sr-only'>
+            <SheetTitle>请求配置</SheetTitle>
+            <SheetDescription>选择模型并配置当前对话请求</SheetDescription>
+          </SheetHeader>
+          {requestConfiguration}
+        </SheetContent>
+      </Sheet>
+
+      <ProviderSettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        settings={settings}
-        setSettings={setSettings}
         providers={providers.data ?? []}
-        providersLoading={providers.isLoading}
         selectedProviderId={activeProviderId}
         onProviderChange={handleProviderChange}
-        selectedModel={active?.model || settings.model}
-        modelNames={modelNames}
-        onModelChange={handleModelChange}
       />
       <ConfirmDialog
         open={bulkDeleteConversationsOpen}
@@ -937,6 +847,425 @@ export function PlaygroundPage() {
   )
 }
 
+function ConversationNavigation({
+  conversations,
+  visibleConversations,
+  activeId,
+  selectedIds,
+  search,
+  streaming,
+  allSelected,
+  onSearchChange,
+  onSelect,
+  onSelectionChange,
+  onSelectAll,
+  onNew,
+  onBulkDelete,
+}: {
+  conversations: Conversation[]
+  visibleConversations: Conversation[]
+  activeId?: string
+  selectedIds: string[]
+  search: string
+  streaming: boolean
+  allSelected: boolean
+  onSearchChange: (value: string) => void
+  onSelect: (id: string) => void
+  onSelectionChange: (ids: string[]) => void
+  onSelectAll: () => void
+  onNew: () => void
+  onBulkDelete: () => void
+}) {
+  const [managing, setManaging] = useState(false)
+
+  return (
+    <div className='flex h-full min-h-0 flex-col'>
+      <div className='flex h-16 shrink-0 items-center justify-between gap-2 ps-3 pe-14 lg:pe-3'>
+        <div className='min-w-0'>
+          <div className='flex items-center gap-2'>
+            <MessageSquareText className='size-4 text-primary' />
+            <h1 className='truncate text-sm font-semibold'>聊天广场</h1>
+          </div>
+          <p className='mt-0.5 text-[11px] text-muted-foreground'>
+            本地会话 {conversations.length}
+          </p>
+        </div>
+        <ActionToolbar label='聊天会话操作'>
+          <ToolbarAction
+            label={managing ? '退出会话管理' : '管理会话'}
+            active={managing}
+            disabled={streaming}
+            onClick={() => {
+              setManaging((current) => !current)
+              onSelectionChange([])
+            }}
+          >
+            <ListChecks />
+          </ToolbarAction>
+          <ToolbarAction
+            label='新建会话'
+            disabled={streaming}
+            onClick={onNew}
+          >
+            <MessageSquarePlus />
+          </ToolbarAction>
+        </ActionToolbar>
+      </div>
+
+      <div className='shrink-0 px-2 pb-2'>
+        <div className='relative'>
+          <Search className='pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground' />
+          <Input
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder='搜索会话'
+            className='h-8 ps-8 text-xs'
+          />
+        </div>
+      </div>
+
+      {managing && (
+        <div className='mx-2 mb-2 flex h-9 items-center gap-2 rounded-md bg-muted px-2 text-xs'>
+          <button
+            type='button'
+            className='font-medium hover:text-primary'
+            disabled={streaming || conversations.length === 0}
+            onClick={onSelectAll}
+          >
+            {allSelected ? '取消全选' : '全选'}
+          </button>
+          <span className='min-w-0 flex-1 text-muted-foreground'>
+            已选 {selectedIds.length}
+          </span>
+          <ToolbarAction
+            label={`删除 ${selectedIds.length} 个会话`}
+            destructive
+            disabled={streaming || selectedIds.length === 0}
+            onClick={onBulkDelete}
+          >
+            <Trash2 />
+          </ToolbarAction>
+        </div>
+      )}
+
+      <ScrollArea className='min-h-0 flex-1'>
+        <div className='space-y-1 px-2 pb-3'>
+          {visibleConversations.map((item) => (
+            <div
+              key={item.id}
+              className={cn(
+                'group relative flex items-center rounded-md transition-colors hover:bg-muted/70',
+                item.id === activeId && 'bg-accent'
+              )}
+            >
+              {item.id === activeId && (
+                <span className='absolute inset-y-2 start-0 w-0.5 rounded-full bg-primary' />
+              )}
+              {managing && (
+                <Checkbox
+                  checked={selectedIds.includes(item.id)}
+                  disabled={streaming}
+                  onCheckedChange={(value) =>
+                    onSelectionChange(
+                      value === true
+                        ? selectedIds.includes(item.id)
+                          ? selectedIds
+                          : [...selectedIds, item.id]
+                        : selectedIds.filter((id) => id !== item.id)
+                    )
+                  }
+                  aria-label={`选择会话 ${item.title}`}
+                  className='ms-3 shrink-0'
+                />
+              )}
+              <button
+                type='button'
+                className='min-w-0 flex-1 px-3 py-2.5 text-left'
+                onClick={() => {
+                  if (!managing) {
+                    onSelect(item.id)
+                    return
+                  }
+                  onSelectionChange(
+                    selectedIds.includes(item.id)
+                      ? selectedIds.filter((id) => id !== item.id)
+                      : [...selectedIds, item.id]
+                  )
+                }}
+              >
+                <div className='truncate text-sm font-medium'>{item.title}</div>
+                <div className='mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground'>
+                  <span className='min-w-0 flex-1 truncate font-mono'>
+                    {item.model || '未选择模型'}
+                  </span>
+                  <span className='shrink-0'>
+                    {formatConversationActivity(item.updatedAt)}
+                  </span>
+                </div>
+              </button>
+            </div>
+          ))}
+          {!visibleConversations.length && (
+            <div className='px-3 py-10 text-center text-xs text-muted-foreground'>
+              没有匹配的会话
+            </div>
+          )}
+        </div>
+      </ScrollArea>
+      <div className='shrink-0 px-3 py-2 text-[10px] text-muted-foreground'>
+        历史仅保存在当前浏览器
+      </div>
+    </div>
+  )
+}
+
+function RequestConfiguration({
+  settings,
+  setSettings,
+  providers,
+  providersLoading,
+  selectedProvider,
+  selectedProviderId,
+  selectedModel,
+  modelNames,
+  modelsLoading,
+  onProviderChange,
+  onModelChange,
+  onManageProviders,
+}: {
+  settings: PlaygroundSettings
+  setSettings: (
+    value:
+      | PlaygroundSettings
+      | ((current: PlaygroundSettings) => PlaygroundSettings)
+  ) => void
+  providers: ChatProvider[]
+  providersLoading: boolean
+  selectedProvider?: ChatProvider
+  selectedProviderId: string
+  selectedModel: string
+  modelNames: string[]
+  modelsLoading: boolean
+  onProviderChange: (providerId: string) => void
+  onModelChange: (model: string) => void
+  onManageProviders: () => void
+}) {
+  const enabledProviders = providers.filter((provider) => provider.enabled)
+  const extraBodyValid = isJsonObject(settings.extraBody)
+
+  return (
+    <div className='flex h-full min-h-0 flex-col'>
+      <div className='flex h-14 shrink-0 items-center justify-between gap-2 border-b ps-4 pe-14'>
+        <div className='flex items-center gap-2'>
+          <Settings2 className='size-4 text-primary' />
+          <h2 className='text-sm font-semibold'>请求配置</h2>
+        </div>
+        <ToolbarAction label='管理模型提供商' onClick={onManageProviders}>
+          <ServerCog />
+        </ToolbarAction>
+      </div>
+
+      <ScrollArea className='min-h-0 flex-1'>
+        <div className='space-y-5 p-4'>
+          <section className='space-y-3'>
+            <ConfigurationHeading title='模型' />
+            <Field label='提供商'>
+              <Select
+                value={selectedProviderId}
+                onValueChange={onProviderChange}
+              >
+                <SelectTrigger className='w-full'>
+                  <SelectValue
+                    placeholder={
+                      providersLoading ? '读取提供商中' : '选择提供商'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {enabledProviders.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name}
+                      {provider.isDefault ? ' · 默认' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label='模型'>
+              <Select
+                value={selectedModel}
+                onValueChange={onModelChange}
+                disabled={!selectedProviderId || modelsLoading}
+              >
+                <SelectTrigger className='w-full'>
+                  <SelectValue
+                    placeholder={modelsLoading ? '读取模型中' : '选择模型'}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelNames.map((model) => (
+                    <SelectItem key={model} value={model}>
+                      {model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          </section>
+
+          {selectedProvider && (
+            <section className='space-y-3'>
+              <ConfigurationHeading title='请求目标' />
+              <div className='space-y-2 text-xs'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className='text-muted-foreground'>状态</span>
+                  <Badge
+                    variant={
+                      selectedProvider.apiKeyConfigured
+                        ? 'success'
+                        : 'secondary'
+                    }
+                  >
+                    {selectedProvider.apiKeyConfigured
+                      ? 'API Key 已配置'
+                      : '无 API Key'}
+                  </Badge>
+                </div>
+                <div>
+                  <div className='text-muted-foreground'>Chat Completions</div>
+                  <div className='mt-1 break-all font-mono text-[10px] leading-4'>
+                    {chatCompletionUrl(selectedProvider.baseUrl)}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          <section className='space-y-3'>
+            <ConfigurationHeading title='上下文' />
+            <Field label='系统提示'>
+              <Textarea
+                value={settings.systemPrompt}
+                onChange={(event) =>
+                  setSettings((current) => ({
+                    ...current,
+                    systemPrompt: event.target.value,
+                  }))
+                }
+                className='min-h-32 resize-y text-xs'
+                placeholder='可选'
+              />
+            </Field>
+          </section>
+
+          <section className='space-y-3'>
+            <div className='flex items-center justify-between gap-2'>
+              <ConfigurationHeading title='附加参数' />
+              <Badge variant={extraBodyValid ? 'success' : 'destructive'}>
+                {extraBodyValid ? (
+                  <Check className='size-3' />
+                ) : null}
+                {extraBodyValid ? 'JSON 有效' : 'JSON 无效'}
+              </Badge>
+            </div>
+            <Textarea
+              value={settings.extraBody}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  extraBody: event.target.value,
+                }))
+              }
+              className='min-h-40 resize-y font-mono text-[11px] leading-5'
+              spellCheck={false}
+            />
+          </section>
+        </div>
+      </ScrollArea>
+    </div>
+  )
+}
+
+function ConfigurationHeading({ title }: { title: string }) {
+  return (
+    <h3 className='text-[11px] font-semibold text-muted-foreground uppercase'>
+      {title}
+    </h3>
+  )
+}
+
+function Composer({
+  input,
+  streaming,
+  providerName,
+  model,
+  requestValid,
+  onInputChange,
+  onSubmit,
+  onStop,
+}: {
+  input: string
+  streaming: boolean
+  providerName?: string
+  model: string
+  requestValid: boolean
+  onInputChange: (value: string) => void
+  onSubmit: (event?: FormEvent) => void
+  onStop: () => void
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
+    >
+      <div className='mx-auto w-full max-w-6xl overflow-hidden rounded-lg border bg-card shadow-xs'>
+        <Textarea
+          value={input}
+          onChange={(event) => onInputChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === 'Enter' &&
+              !event.shiftKey &&
+              !event.ctrlKey &&
+              !event.metaKey
+            ) {
+              event.preventDefault()
+              onSubmit()
+            }
+          }}
+          placeholder='发送消息...'
+          disabled={streaming}
+          className='max-h-44 min-h-24 resize-none border-0 shadow-none focus-visible:ring-0'
+        />
+        <div className='flex items-center gap-2 border-t px-2.5 py-2'>
+          <div className='min-w-0 flex-1 truncate text-[11px] text-muted-foreground'>
+            {providerName || '未选择提供商'}
+            <span className='mx-1.5'>/</span>
+            <span className='font-mono'>{model || '未选择模型'}</span>
+          </div>
+          {streaming ? (
+            <Button type='button' size='sm' variant='outline' onClick={onStop}>
+              <Square />
+              停止
+            </Button>
+          ) : (
+            <Button
+              type='submit'
+              size='sm'
+              disabled={
+                !input.trim() || !providerName || !model || !requestValid
+              }
+            >
+              <Send />
+              发送
+            </Button>
+          )}
+        </div>
+      </div>
+    </form>
+  )
+}
+
 function EmptyPlayground({
   profiles,
   onPick,
@@ -945,23 +1274,24 @@ function EmptyPlayground({
   onPick: (profile: ProbeProfile) => void
 }) {
   return (
-    <div className='flex min-h-full items-center justify-center p-8'>
+    <div className='flex min-h-full items-center justify-center p-6 sm:p-8'>
       <div className='w-full max-w-3xl text-center'>
-        <div className='mx-auto flex size-12 items-center justify-center rounded-full border bg-background'>
+        <div className='mx-auto flex size-10 items-center justify-center rounded-lg border bg-background'>
           <MessageSquarePlus className='size-5 text-muted-foreground' />
         </div>
-        <h2 className='mt-5 text-2xl font-semibold'>开始一场游乐场对话</h2>
+        <h2 className='mt-4 text-lg font-semibold'>新建对话</h2>
         <p className='mt-2 text-sm text-muted-foreground'>
-          可直接聊天，也可载入探针方案，对照参考输出和效果图。
+          选择探针方案填充请求，或直接输入消息。
         </p>
-        <div className='mt-8 grid gap-3 sm:grid-cols-2'>
+        <div className='mt-6 grid gap-3 sm:grid-cols-2'>
           {profiles
             .filter((item) => item.enabled)
             .map((profile) => (
               <button
+                type='button'
                 key={profile.id}
                 onClick={() => onPick(profile)}
-                className='rounded-xl border bg-card p-4 text-left transition-colors hover:bg-accent'
+                className='rounded-lg border bg-card p-4 text-left transition-colors hover:bg-accent'
               >
                 <div className='flex items-center justify-between gap-2'>
                   <span className='font-medium'>{profile.name}</span>
@@ -1008,33 +1338,36 @@ function ChatBubble({
   const completedHtml =
     !user && status !== 'streaming' && extractHtmlPreviews(content).length > 0
   return (
-    <article className={cn('flex gap-3', user && 'justify-end')}>
+    <article className={cn('flex w-full gap-3 sm:gap-4', user && 'justify-end')}>
       <div
         className={cn(
-          'mt-1 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background',
+          'mt-1 flex size-9 shrink-0 items-center justify-center rounded-full bg-muted sm:size-10',
           user && 'order-2'
         )}
       >
         {user ? (
-          <UserRound className='size-4 text-muted-foreground' />
+          <UserRound className='size-4.5 text-muted-foreground' />
         ) : (
-          <Bot className='size-4 text-muted-foreground' />
+          <Bot className='size-4.5 text-muted-foreground' />
         )}
       </div>
       <div
-        className={cn('flex max-w-[88%] min-w-0 flex-col', user && 'items-end')}
+        className={cn(
+          'flex min-w-0 flex-col',
+          user ? 'max-w-[92%] items-end lg:max-w-[85%]' : 'flex-1'
+        )}
       >
         <div
           className={cn(
-            'rounded-xl border px-4 py-3 text-sm leading-6',
+            'min-w-0 max-w-full overflow-hidden rounded-lg px-4 py-3 text-sm leading-6 [overflow-wrap:anywhere] sm:px-5 sm:py-4',
             user ? 'bg-primary text-primary-foreground' : 'bg-card',
-            status === 'error' && 'border-destructive/50'
+            status === 'error' && 'ring-1 ring-destructive/50'
           )}
         >
           {!user && reasoning && (
             <ReasoningPanel
               content={reasoning}
-              streaming={status === 'streaming' && !content}
+              streaming={status === 'streaming'}
             />
           )}
           {content ? (
@@ -1043,6 +1376,7 @@ function ChatBubble({
             ) : (
               <MarkdownView
                 content={content}
+                className='max-w-full [overflow-wrap:anywhere] [&_code]:break-all [&_pre]:max-w-full [&_pre_code]:break-normal [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto'
                 codeBlockClassName={
                   completedHtml
                     ? 'border-0 bg-transparent p-0 text-foreground shadow-none dark:bg-transparent dark:text-foreground'
@@ -1088,6 +1422,8 @@ function ChatBubble({
               className='size-7'
               disabled={disabled}
               onClick={onRegenerate}
+              aria-label='重新生成回复'
+              title='重新生成'
             >
               <RefreshCw className='size-3.5' />
             </Button>
@@ -1102,6 +1438,8 @@ function ChatBubble({
             className='size-7 text-destructive'
             disabled={disabled}
             onClick={onDelete}
+            aria-label='删除消息'
+            title='删除'
           >
             <Trash2 className='size-3.5' />
           </Button>
@@ -1113,6 +1451,7 @@ function ChatBubble({
                 className='size-7'
                 disabled={activeIndex <= 0 || disabled}
                 onClick={() => onSelectVariant(activeIndex - 1)}
+                aria-label='查看上一个回复版本'
               >
                 <ChevronLeft />
               </Button>
@@ -1125,6 +1464,7 @@ function ChatBubble({
                 className='size-7'
                 disabled={activeIndex >= variants.length - 1 || disabled}
                 onClick={() => onSelectVariant(activeIndex + 1)}
+                aria-label='查看下一个回复版本'
               >
                 <ChevronRight />
               </Button>
@@ -1143,17 +1483,16 @@ function ReasoningPanel({
   content: string
   streaming: boolean
 }) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(streaming)
 
   useEffect(() => {
-    // A new streaming response reopens a panel the user may have collapsed.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (streaming) setOpen(true)
+    setOpen(streaming)
   }, [streaming])
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className='mb-3'>
-      <div className='overflow-hidden rounded-lg border bg-muted/25'>
+      <div className='overflow-hidden rounded-md bg-muted/35'>
         <CollapsibleTrigger asChild>
           <button
             type='button'
@@ -1177,9 +1516,9 @@ function ReasoningPanel({
           </button>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className='max-h-80 overflow-y-auto overscroll-contain border-t px-3 py-2.5 text-xs leading-5'>
+          <div className='max-h-80 overflow-y-auto overscroll-contain px-3 pb-2.5 text-xs leading-5'>
             {content ? (
-              <div className='break-words whitespace-pre-wrap text-muted-foreground'>
+              <div className='whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]'>
                 {content}
                 {streaming && <StreamingCursor />}
               </div>
@@ -1195,7 +1534,7 @@ function ReasoningPanel({
 
 function StreamingText({ content }: { content: string }) {
   return (
-    <div className='min-w-0 break-words whitespace-pre-wrap'>
+    <div className='min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]'>
       {content}
       <StreamingCursor />
     </div>
@@ -1211,159 +1550,47 @@ function StreamingCursor() {
   )
 }
 
-function SettingsDialog({
+function nextRenderFrame(): Promise<void> {
+  return new Promise((resolve) =>
+    window.requestAnimationFrame(() => resolve())
+  )
+}
+
+function ProviderSettingsDialog({
   open,
   onOpenChange,
-  settings,
-  setSettings,
   providers,
-  providersLoading,
   selectedProviderId,
   onProviderChange,
-  selectedModel,
-  modelNames,
-  onModelChange,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  settings: PlaygroundSettings
-  setSettings: (
-    value:
-      PlaygroundSettings | ((current: PlaygroundSettings) => PlaygroundSettings)
-  ) => void
   providers: ChatProvider[]
-  providersLoading: boolean
   selectedProviderId: string
   onProviderChange: (
     providerId: string,
     providerOverride?: ChatProvider
   ) => void
-  selectedModel: string
-  modelNames: string[]
-  onModelChange: (model: string) => void
 }) {
-  const selectedProvider = providers.find(
-    (provider) => provider.id === selectedProviderId
-  )
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size='wide' className='overflow-hidden'>
         <DialogHeader className='shrink-0'>
           <DialogTitle className='flex items-center gap-2'>
-            <Settings2 className='size-5 text-primary' />
-            请求参数
+            <ServerCog className='size-5 text-primary' />
+            模型提供商
           </DialogTitle>
           <DialogDescription>
-            对话参数保存在当前浏览器；模型提供商和加密 API Key 保存在后端数据库。
+            管理聊天请求使用的接口、API Key 和模型列表。
           </DialogDescription>
         </DialogHeader>
-        <Tabs defaultValue='request' className='min-h-0 flex-1'>
-          <TabsList className='shrink-0'>
-            <TabsTrigger value='request'>
-              <Settings2 />
-              请求设置
-            </TabsTrigger>
-            <TabsTrigger value='providers'>
-              <ServerCog />
-              模型提供商
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent
-            value='request'
-            className='min-h-0 overflow-y-auto pe-1'
-          >
-            <div className='grid gap-4 py-2 sm:grid-cols-2'>
-              <Field label='模型提供商'>
-                <Select
-                  value={selectedProviderId}
-                  onValueChange={onProviderChange}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        providersLoading ? '读取提供商中' : '选择提供商'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providers
-                      .filter((provider) => provider.enabled)
-                      .map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {provider.name}
-                          {provider.isDefault ? ' · 默认' : ''}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label='模型'>
-                <Select
-                  value={selectedModel}
-                  onValueChange={onModelChange}
-                  disabled={!selectedProviderId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder='选择模型' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {modelNames.map((model) => (
-                      <SelectItem key={model} value={model}>
-                        {model}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              {selectedProvider && (
-                <ProviderRequestPreview
-                  provider={selectedProvider}
-                  model={selectedModel}
-                />
-              )}
-              <Field label='系统提示' className='sm:col-span-2'>
-                <Textarea
-                  value={settings.systemPrompt}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      systemPrompt: event.target.value,
-                    }))
-                  }
-                  className='min-h-32'
-                  placeholder='可选'
-                />
-              </Field>
-              <Field
-                label='请求体附加字段 JSON'
-                className='sm:col-span-2'
-              >
-                <Textarea
-                  value={settings.extraBody}
-                  onChange={(event) =>
-                    setSettings((current) => ({
-                      ...current,
-                      extraBody: event.target.value,
-                    }))
-                  }
-                  className='min-h-44 font-mono text-xs'
-                  spellCheck={false}
-                />
-              </Field>
-            </div>
-          </TabsContent>
-          <TabsContent
-            value='providers'
-            className='min-h-0 overflow-y-auto pe-1'
-          >
-            <ProviderSettingsPanel
-              providers={providers}
-              selectedProviderId={selectedProviderId}
-              onProviderChange={onProviderChange}
-            />
-          </TabsContent>
-        </Tabs>
+        <div className='min-h-0 flex-1 overflow-y-auto pe-1'>
+          <ProviderSettingsPanel
+            providers={providers}
+            selectedProviderId={selectedProviderId}
+            onProviderChange={onProviderChange}
+          />
+        </div>
         <DialogFooter className='shrink-0'>
           <Button onClick={() => onOpenChange(false)}>完成</Button>
         </DialogFooter>
@@ -1397,7 +1624,7 @@ function ProviderSettingsPanel({
   const queryClient = useQueryClient()
   const [editingId, setEditingId] = useState<string | 'new' | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
-  const [previewProviderId, setPreviewProviderId] = useState<string | null>(
+  const [detailProviderId, setDetailProviderId] = useState<string | null>(
     null
   )
   const [draft, setDraft] = useState<ProviderDraft>(() => emptyProviderDraft())
@@ -1407,10 +1634,10 @@ function ProviderSettingsPanel({
     editingId && editingId !== 'new'
       ? providers.find((provider) => provider.id === editingId)
       : undefined
-  const previewProvider =
-    providers.find((provider) => provider.id === previewProviderId) ??
-    providers.find((provider) => provider.id === selectedProviderId) ??
-    providers[0]
+  const detailProvider = providers.find(
+    (provider) => provider.id === detailProviderId
+  )
+  const deleteTarget = providers.find((provider) => provider.id === deleteId)
 
   const updateProviderCache = (provider: ChatProvider) => {
     queryClient.setQueryData<ChatProvider[]>(['chat-providers'], (current) =>
@@ -1457,7 +1684,6 @@ function ProviderSettingsPanel({
       const wasNew = editingId === 'new'
       updateProviderCache(provider)
       refreshProviderQueries(provider.id)
-      setPreviewProviderId(provider.id)
       if (
         provider.enabled &&
         (wasNew || provider.isDefault || provider.id === selectedProviderId)
@@ -1476,7 +1702,6 @@ function ProviderSettingsPanel({
     onSuccess: (provider) => {
       updateProviderCache(provider)
       refreshProviderQueries(provider.id)
-      setPreviewProviderId(provider.id)
       toast.success(`已同步 ${provider.models.length} 个模型`)
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1492,7 +1717,7 @@ function ProviderSettingsPanel({
       refreshProviderQueries(providerId)
       setDeleteId(null)
       if (editingId === providerId) setEditingId(null)
-      if (previewProviderId === providerId) setPreviewProviderId(null)
+      if (detailProviderId === providerId) setDetailProviderId(null)
       toast.success('模型提供商已删除')
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -1507,7 +1732,6 @@ function ProviderSettingsPanel({
   const startEdit = (provider: ChatProvider) => {
     setEditingId(provider.id)
     setDeleteId(null)
-    setPreviewProviderId(provider.id)
     setDraft(providerDraft(provider))
     setApiKeyVisible(false)
   }
@@ -1542,329 +1766,352 @@ function ProviderSettingsPanel({
   }
 
   return (
-    <div className='grid min-h-0 gap-4 py-2 lg:grid-cols-[22rem_minmax(0,1fr)]'>
-      <section className='min-w-0 rounded-xl border bg-muted/10'>
-        <div className='flex items-center justify-between gap-2 border-b px-3 py-2.5'>
-          <div>
-            <div className='text-sm font-semibold'>提供商列表</div>
-            <div className='text-xs text-muted-foreground'>
-              {providers.length} 套配置
-            </div>
-          </div>
-          <ActionToolbar label='模型提供商操作'>
-            <ToolbarAction
-              label='刷新模型提供商配置'
-              onClick={() => refreshProviderQueries()}
-            >
-              <RefreshCw />
-            </ToolbarAction>
-            <ToolbarAction label='新建模型提供商' onClick={startCreate}>
-              <Plus />
-            </ToolbarAction>
-          </ActionToolbar>
+    <div className='space-y-3 py-1'>
+      <div className='flex items-center justify-between gap-3'>
+        <span className='text-sm text-muted-foreground'>
+          共 {providers.length} 个提供商
+        </span>
+        <div className='flex items-center gap-2'>
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={() => refreshProviderQueries()}
+          >
+            <RefreshCw />
+            刷新
+          </Button>
+          <Button type='button' size='sm' onClick={startCreate}>
+            <Plus />
+            新建
+          </Button>
         </div>
-        <div className='max-h-[52dvh] space-y-2 overflow-y-auto p-2'>
-          {providers.map((provider) => (
-            <div
-              key={provider.id}
-              className={cn(
-                'rounded-lg border bg-background p-3',
-                selectedProviderId === provider.id && 'border-primary/50'
-              )}
-            >
-              <div className='flex min-w-0 items-start gap-2'>
-                <button
-                  type='button'
-                  className='min-w-0 flex-1 text-left'
-                  onClick={() => {
-                    setPreviewProviderId(provider.id)
-                    if (provider.enabled)
-                      onProviderChange(provider.id, provider)
-                  }}
-                  title={
-                    provider.enabled
-                      ? '预览并设为当前提供商'
-                      : '预览已停用的提供商'
-                  }
-                >
-                  <div className='flex flex-wrap items-center gap-1.5'>
-                    <span className='truncate text-sm font-medium'>
-                      {provider.name}
-                    </span>
-                    {provider.isDefault && (
-                      <Badge variant='info'>
-                        <Star className='size-3' />
-                        默认
-                      </Badge>
-                    )}
-                    {!provider.enabled && (
-                      <Badge variant='secondary'>停用</Badge>
-                    )}
-                    {selectedProviderId === provider.id && (
-                      <Badge variant='success'>当前</Badge>
-                    )}
-                  </div>
-                  <div className='mt-1 break-all text-xs text-muted-foreground'>
-                    {provider.baseUrl}
-                  </div>
-                  <div className='mt-2 flex items-center gap-2 text-xs text-muted-foreground'>
-                    <span>{provider.models.length} 个模型</span>
-                    <span>·</span>
-                    <span className='inline-flex items-center gap-1'>
-                      <KeyRound className='size-3' />
+      </div>
+
+      <div className='overflow-hidden rounded-lg border'>
+        <Table rememberRowKey='chat-providers'>
+          <TableHeader>
+            <TableRow>
+              <TableHead>提供商</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>API Key</TableHead>
+              <TableHead>模型</TableHead>
+              <TableHead className='text-right'>操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {providers.map((provider) => {
+              const selected = selectedProviderId === provider.id
+              const syncing =
+                syncModels.isPending && syncModels.variables === provider.id
+              return (
+                <TableRow key={provider.id} rowId={provider.id}>
+                  <TableCell className='min-w-64 whitespace-normal'>
+                    <button
+                      type='button'
+                      className='block max-w-full text-left'
+                      onClick={() => setDetailProviderId(provider.id)}
+                    >
+                      <span className='flex flex-wrap items-center gap-1.5 font-medium'>
+                        {provider.name}
+                        {provider.isDefault && (
+                          <Badge variant='info'>
+                            <Star className='size-3' />
+                            默认
+                          </Badge>
+                        )}
+                        {selected && <Badge variant='success'>当前</Badge>}
+                      </span>
+                      <span className='mt-1 block break-all font-mono text-[11px] text-muted-foreground'>
+                        {provider.baseUrl}
+                      </span>
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={provider.enabled ? 'success' : 'secondary'}>
+                      {provider.enabled ? '启用' : '停用'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <span className='inline-flex items-center gap-1.5 text-xs text-muted-foreground'>
+                      <KeyRound className='size-3.5' />
                       {provider.apiKeyConfigured ? '已配置' : '未配置'}
                     </span>
-                  </div>
-                </button>
-                <div className='flex shrink-0 items-center gap-0.5'>
-                  <Button
-                    type='button'
-                    size='icon'
-                    variant='ghost'
-                    className='size-7'
-                    disabled={syncModels.isPending || !provider.enabled}
-                    onClick={() => syncModels.mutate(provider.id)}
-                    aria-label={`同步 ${provider.name} 的模型`}
-                    title='从 /v1/models 同步'
-                  >
-                    <RefreshCw
-                      className={cn(
-                        'size-3.5',
-                        syncModels.isPending &&
-                          syncModels.variables === provider.id &&
-                          'animate-spin'
-                      )}
-                    />
-                  </Button>
-                  <Button
-                    type='button'
-                    size='icon'
-                    variant='ghost'
-                    className='size-7'
-                    onClick={() => startEdit(provider)}
-                    aria-label={`编辑 ${provider.name}`}
-                    title='编辑'
-                  >
-                    <Pencil className='size-3.5' />
-                  </Button>
-                  <Button
-                    type='button'
-                    size='icon'
-                    variant='ghost'
-                    className='size-7 text-destructive'
-                    onClick={() => setDeleteId(provider.id)}
-                    aria-label={`删除 ${provider.name}`}
-                    title='删除'
-                  >
-                    <Trash2 className='size-3.5' />
-                  </Button>
-                </div>
-              </div>
-              {deleteId === provider.id && (
-                <div className='mt-3 flex items-center justify-between gap-2 rounded-md bg-destructive/5 px-2 py-1.5 text-xs'>
-                  <span className='text-destructive'>确认删除此配置？</span>
-                  <div className='flex gap-1'>
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='ghost'
-                      className='h-7 px-2 text-xs'
-                      onClick={() => setDeleteId(null)}
-                    >
-                      取消
-                    </Button>
-                    <Button
-                      type='button'
-                      size='sm'
-                      variant='destructive'
-                      className='h-7 px-2 text-xs'
-                      disabled={deleteProvider.isPending}
-                      onClick={() => deleteProvider.mutate(provider.id)}
-                    >
-                      删除
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-          {!providers.length && (
-            <div className='px-4 py-10 text-center text-sm text-muted-foreground'>
-              尚未配置模型提供商
-            </div>
-          )}
-        </div>
-      </section>
+                  </TableCell>
+                  <TableCell>{provider.models.length}</TableCell>
+                  <TableCell>
+                    <div className='flex justify-end'>
+                      <ActionToolbar label={`${provider.name} 操作`}>
+                        <ToolbarAction
+                          label={`查看 ${provider.name}`}
+                          onClick={() => setDetailProviderId(provider.id)}
+                        >
+                          <Eye />
+                        </ToolbarAction>
+                        <ToolbarAction
+                          label={selected ? '当前使用中' : `使用 ${provider.name}`}
+                          active={selected}
+                          disabled={!provider.enabled || selected}
+                          onClick={() => onProviderChange(provider.id, provider)}
+                        >
+                          <Check />
+                        </ToolbarAction>
+                        <ToolbarAction
+                          label={`同步 ${provider.name} 的模型`}
+                          disabled={syncModels.isPending || !provider.enabled}
+                          onClick={() => syncModels.mutate(provider.id)}
+                        >
+                          <RefreshCw className={cn(syncing && 'animate-spin')} />
+                        </ToolbarAction>
+                        <ToolbarAction
+                          label={`编辑 ${provider.name}`}
+                          onClick={() => startEdit(provider)}
+                        >
+                          <Pencil />
+                        </ToolbarAction>
+                        <ToolbarAction
+                          label={`删除 ${provider.name}`}
+                          destructive
+                          onClick={() => setDeleteId(provider.id)}
+                        >
+                          <Trash2 />
+                        </ToolbarAction>
+                      </ActionToolbar>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+            {!providers.length && (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className='h-28 text-center text-muted-foreground'
+                >
+                  尚未配置模型提供商
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
 
-      <section className='min-w-0 rounded-xl border p-4'>
-        {editingId ? (
-          <div className='space-y-4'>
-            <div>
-              <div className='flex items-center gap-2 text-sm font-semibold'>
-                <CloudCog className='size-4 text-primary' />
-                {editingId === 'new' ? '新建模型提供商' : '编辑模型提供商'}
-              </div>
-              <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                支持 OpenAI 兼容的 Base URL；可填写到服务根地址或以 /v1 结尾。
-              </p>
-            </div>
-            <div className='grid gap-4 sm:grid-cols-2'>
-              <Field label='名称' className='sm:col-span-1'>
-                <Input
-                  value={draft.name}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder='例如：生产模型网关'
-                />
-              </Field>
-              <Field label='Base URL' className='sm:col-span-1'>
-                <Input
-                  value={draft.baseUrl}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      baseUrl: event.target.value,
-                    }))
-                  }
-                  placeholder='https://HOST/v1'
-                />
-              </Field>
-              <Field label='API Key' className='sm:col-span-2'>
-                <PasswordInput
-                  value={draft.apiKey}
-                  visible={apiKeyVisible}
-                  onVisibleChange={changeApiKeyVisibility}
-                  disabled={revealingApiKey}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      apiKey: event.target.value,
-                      clearApiKey: false,
-                    }))
-                  }
-                  placeholder={
-                    editingProvider?.apiKeyConfigured
-                      ? '已配置；留空保持原值'
-                      : '可选'
-                  }
-                />
-                {editingProvider?.apiKeyConfigured && (
-                  <label className='flex items-center gap-2 text-xs text-muted-foreground'>
-                    <Checkbox
-                      checked={draft.clearApiKey}
-                      onCheckedChange={(checked) =>
-                        setDraft((current) => ({
-                          ...current,
-                          apiKey: '',
-                          clearApiKey: checked === true,
-                        }))
-                      }
-                    />
-                    清除已保存的 API Key
-                  </label>
-                )}
-              </Field>
-              <Field label='模型列表' className='sm:col-span-2'>
-                <Textarea
-                  value={draft.modelsText}
-                  onChange={(event) =>
-                    setDraft((current) => ({
-                      ...current,
-                      modelsText: event.target.value,
-                    }))
-                  }
-                  className='min-h-36 font-mono text-xs'
-                  placeholder={'每行一个模型，也支持逗号分隔\nmodel-a\nmodel-b'}
-                  spellCheck={false}
-                />
-                <p className='text-xs text-muted-foreground'>
-                  留空时聊天广场会实时读取 /v1/models；列表卡片的同步按钮可保存读取结果。
-                </p>
-              </Field>
-            </div>
-            <div className='grid gap-2 sm:grid-cols-2'>
-              <label className='flex items-center justify-between rounded-lg border p-3 text-sm'>
-                <span>
-                  <span className='font-medium'>启用</span>
-                  <span className='block text-xs text-muted-foreground'>
-                    可在聊天广场中选择
-                  </span>
-                </span>
-                <Switch
-                  checked={draft.enabled}
-                  onCheckedChange={(enabled) =>
-                    setDraft((current) => ({ ...current, enabled }))
-                  }
-                />
-              </label>
-              <label className='flex items-center justify-between rounded-lg border p-3 text-sm'>
-                <span>
-                  <span className='font-medium'>设为默认</span>
-                  <span className='block text-xs text-muted-foreground'>
-                    新会话优先使用
-                  </span>
-                </span>
-                <Switch
-                  checked={draft.isDefault}
-                  onCheckedChange={(isDefault) =>
-                    setDraft((current) => ({
-                      ...current,
-                      isDefault,
-                      enabled: isDefault ? true : current.enabled,
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            <div className='flex justify-end gap-2'>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => setEditingId(null)}
-              >
-                取消
-              </Button>
-              <Button
-                type='button'
-                disabled={saveProvider.isPending}
-                onClick={() => saveProvider.mutate()}
-              >
-                {saveProvider.isPending && <Loader2 className='animate-spin' />}
-                保存提供商
-              </Button>
-            </div>
-          </div>
-        ) : previewProvider ? (
-          <ProviderPreview
-            provider={previewProvider}
-            selected={selectedProviderId === previewProvider.id}
-            onEdit={() => startEdit(previewProvider)}
-            onUse={
-              previewProvider.enabled
-                ? () => onProviderChange(previewProvider.id, previewProvider)
-                : undefined
-            }
-          />
-        ) : (
-          <div className='flex min-h-72 flex-col items-center justify-center rounded-lg border border-dashed p-8 text-center'>
-            <ServerCog className='size-8 text-muted-foreground' />
-            <div className='mt-3 text-sm font-medium'>选择或新建提供商</div>
-            <p className='mt-1 max-w-sm text-xs leading-5 text-muted-foreground'>
-              配置 Base URL、API Key 和模型列表后，聊天请求由后端代理到对应的
-              /v1/chat/completions。
-            </p>
-            <Button type='button' size='sm' className='mt-4' onClick={startCreate}>
-              <Plus />
-              新建提供商
-            </Button>
-          </div>
-        )}
-      </section>
+      <ProviderEditorDialog
+        open={editingId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingId(null)
+            setApiKeyVisible(false)
+          }
+        }}
+        editingProvider={editingProvider}
+        draft={draft}
+        setDraft={setDraft}
+        apiKeyVisible={apiKeyVisible}
+        revealingApiKey={revealingApiKey}
+        onApiKeyVisibleChange={changeApiKeyVisibility}
+        pending={saveProvider.isPending}
+        onSave={() => saveProvider.mutate()}
+      />
+      <ProviderDetailDialog
+        provider={detailProvider}
+        selected={detailProvider?.id === selectedProviderId}
+        open={Boolean(detailProvider)}
+        onOpenChange={(open) => !open && setDetailProviderId(null)}
+        onUse={() => {
+          if (!detailProvider?.enabled) return
+          onProviderChange(detailProvider.id, detailProvider)
+          setDetailProviderId(null)
+        }}
+        onEdit={() => {
+          if (!detailProvider) return
+          const provider = detailProvider
+          setDetailProviderId(null)
+          window.requestAnimationFrame(() => startEdit(provider))
+        }}
+      />
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteId(null)}
+        title={`删除 ${deleteTarget?.name ?? '模型提供商'}？`}
+        desc='删除后无法用于新请求，已保存在浏览器中的历史对话不会被移除。'
+        confirmText={
+          <>
+            <Trash2 />
+            删除
+          </>
+        }
+        cancelBtnText='取消'
+        destructive
+        disabled={deleteProvider.isPending}
+        handleConfirm={() =>
+          deleteTarget && deleteProvider.mutate(deleteTarget.id)
+        }
+      />
     </div>
+  )
+}
+
+function ProviderEditorDialog({
+  open,
+  onOpenChange,
+  editingProvider,
+  draft,
+  setDraft,
+  apiKeyVisible,
+  revealingApiKey,
+  onApiKeyVisibleChange,
+  pending,
+  onSave,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  editingProvider?: ChatProvider
+  draft: ProviderDraft
+  setDraft: React.Dispatch<React.SetStateAction<ProviderDraft>>
+  apiKeyVisible: boolean
+  revealingApiKey: boolean
+  onApiKeyVisibleChange: (visible: boolean) => void
+  pending: boolean
+  onSave: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className='flex items-center gap-2'>
+            <CloudCog className='size-5 text-primary' />
+            {editingProvider ? '编辑模型提供商' : '新建模型提供商'}
+          </DialogTitle>
+          <DialogDescription>
+            Base URL 可填写服务根地址或以 /v1 结尾。
+          </DialogDescription>
+        </DialogHeader>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <Field label='名称'>
+            <Input
+              value={draft.name}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  name: event.target.value,
+                }))
+              }
+              placeholder='例如：生产模型网关'
+            />
+          </Field>
+          <Field label='Base URL'>
+            <Input
+              value={draft.baseUrl}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  baseUrl: event.target.value,
+                }))
+              }
+              placeholder='https://HOST/v1'
+            />
+          </Field>
+          <Field label='API Key' className='sm:col-span-2'>
+            <PasswordInput
+              value={draft.apiKey}
+              visible={apiKeyVisible}
+              onVisibleChange={onApiKeyVisibleChange}
+              disabled={revealingApiKey}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  apiKey: event.target.value,
+                  clearApiKey: false,
+                }))
+              }
+              placeholder={
+                editingProvider?.apiKeyConfigured
+                  ? '已配置；留空保持原值'
+                  : '可选'
+              }
+            />
+            {editingProvider?.apiKeyConfigured && (
+              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
+                <Checkbox
+                  checked={draft.clearApiKey}
+                  onCheckedChange={(checked) =>
+                    setDraft((current) => ({
+                      ...current,
+                      apiKey: '',
+                      clearApiKey: checked === true,
+                    }))
+                  }
+                />
+                清除已保存的 API Key
+              </label>
+            )}
+          </Field>
+          <Field label='模型列表' className='sm:col-span-2'>
+            <Textarea
+              value={draft.modelsText}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  modelsText: event.target.value,
+                }))
+              }
+              className='min-h-36 font-mono text-xs'
+              placeholder={'每行一个模型，也支持逗号分隔\nmodel-a\nmodel-b'}
+              spellCheck={false}
+            />
+            <p className='text-xs text-muted-foreground'>
+              留空时实时读取 /v1/models，也可在列表中手动同步。
+            </p>
+          </Field>
+          <div className='flex items-center justify-between py-1 text-sm'>
+            <span>
+              <span className='font-medium'>启用</span>
+              <span className='block text-xs text-muted-foreground'>
+                可在请求配置中选择
+              </span>
+            </span>
+            <Switch
+              checked={draft.enabled}
+              onCheckedChange={(enabled) =>
+                setDraft((current) => ({ ...current, enabled }))
+              }
+            />
+          </div>
+          <div className='flex items-center justify-between py-1 text-sm'>
+            <span>
+              <span className='font-medium'>设为默认</span>
+              <span className='block text-xs text-muted-foreground'>
+                新会话优先使用
+              </span>
+            </span>
+            <Switch
+              checked={draft.isDefault}
+              onCheckedChange={(isDefault) =>
+                setDraft((current) => ({
+                  ...current,
+                  isDefault,
+                  enabled: isDefault ? true : current.enabled,
+                }))
+              }
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => onOpenChange(false)}
+          >
+            取消
+          </Button>
+          <Button type='button' disabled={pending} onClick={onSave}>
+            {pending && <Loader2 className='animate-spin' />}
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1910,142 +2157,86 @@ function sortChatProviders(providers: ChatProvider[]): ChatProvider[] {
   })
 }
 
-function ProviderRequestPreview({
-  provider,
-  model,
-}: {
-  provider: ChatProvider
-  model: string
-}) {
-  return (
-    <div className='rounded-lg border bg-muted/20 p-3 sm:col-span-2'>
-      <div className='flex flex-wrap items-center gap-2'>
-        <span className='text-sm font-medium'>当前请求预览</span>
-        {provider.isDefault && <Badge variant='info'>默认</Badge>}
-        <Badge variant={provider.apiKeyConfigured ? 'success' : 'secondary'}>
-          API Key {provider.apiKeyConfigured ? '已配置' : '未配置'}
-        </Badge>
-      </div>
-      <dl className='mt-3 grid gap-2 text-xs sm:grid-cols-[7rem_minmax(0,1fr)]'>
-        <dt className='text-muted-foreground'>提供商</dt>
-        <dd className='font-medium'>{provider.name}</dd>
-        <dt className='text-muted-foreground'>接口</dt>
-        <dd className='break-all font-mono'>
-          {chatCompletionUrl(provider.baseUrl)}
-        </dd>
-        <dt className='text-muted-foreground'>模型</dt>
-        <dd className='break-all font-mono'>{model || '尚未选择'}</dd>
-      </dl>
-    </div>
-  )
-}
-
-function ProviderPreview({
+function ProviderDetailDialog({
   provider,
   selected,
+  open,
+  onOpenChange,
   onEdit,
   onUse,
 }: {
-  provider: ChatProvider
+  provider?: ChatProvider
   selected: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onEdit: () => void
-  onUse?: () => void
+  onUse: () => void
 }) {
+  if (!provider) return null
   return (
-    <div className='space-y-5'>
-      <div className='flex flex-wrap items-start justify-between gap-3'>
-        <div className='min-w-0'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <CloudCog className='size-4 text-primary' />
-            <h3 className='text-sm font-semibold'>{provider.name}</h3>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className='flex flex-wrap items-center gap-2'>
+            <CloudCog className='size-5 text-primary' />
+            {provider.name}
             {provider.isDefault && <Badge variant='info'>默认</Badge>}
             {!provider.enabled && <Badge variant='secondary'>停用</Badge>}
-            {selected && <Badge variant='success'>当前请求</Badge>}
+            {selected && <Badge variant='success'>当前</Badge>}
+          </DialogTitle>
+          <DialogDescription>模型提供商配置详情</DialogDescription>
+        </DialogHeader>
+        <dl className='grid gap-x-4 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]'>
+          <dt className='text-muted-foreground'>Base URL</dt>
+          <dd className='break-all font-mono text-xs'>{provider.baseUrl}</dd>
+          <dt className='text-muted-foreground'>Chat Completions</dt>
+          <dd className='break-all font-mono text-xs'>
+            {chatCompletionUrl(provider.baseUrl)}
+          </dd>
+          <dt className='text-muted-foreground'>API Key</dt>
+          <dd>{provider.apiKeyConfigured ? '已配置并加密保存' : '未配置'}</dd>
+          <dt className='text-muted-foreground'>可用状态</dt>
+          <dd>{provider.enabled ? '已启用' : '已停用'}</dd>
+        </dl>
+        <div>
+          <div className='mb-2 flex items-center justify-between gap-2'>
+            <span className='text-sm font-medium'>模型列表</span>
+            <Badge variant='outline'>{provider.models.length} 个</Badge>
           </div>
-          <p className='mt-1 text-xs text-muted-foreground'>
-            保存后的模型提供商配置预览
-          </p>
-        </div>
-        <div className='flex gap-2'>
-          {onUse && !selected && (
-            <Button type='button' size='sm' variant='outline' onClick={onUse}>
-              设为当前
-            </Button>
+          {provider.models.length ? (
+            <div className='flex max-h-52 flex-wrap gap-2 overflow-y-auto'>
+              {provider.models.map((model) => (
+                <Badge
+                  key={model}
+                  variant='secondary'
+                  className='max-w-full font-mono font-normal'
+                >
+                  <span className='truncate'>{model}</span>
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className='text-xs leading-5 text-muted-foreground'>
+              未保存模型列表，可从 /v1/models 同步。
+            </p>
           )}
-          <Button type='button' size='sm' onClick={onEdit}>
+        </div>
+        <DialogFooter>
+          <Button type='button' variant='outline' onClick={onEdit}>
             <Pencil />
             编辑
           </Button>
-        </div>
-      </div>
-
-      <div className='grid gap-3 sm:grid-cols-2'>
-        <PreviewValue label='Base URL' value={provider.baseUrl} mono />
-        <PreviewValue
-          label='Chat Completions'
-          value={chatCompletionUrl(provider.baseUrl)}
-          mono
-        />
-        <PreviewValue
-          label='API Key'
-          value={provider.apiKeyConfigured ? '已配置并加密保存' : '未配置'}
-        />
-        <PreviewValue
-          label='可用状态'
-          value={provider.enabled ? '已启用' : '已停用'}
-        />
-      </div>
-
-      <div>
-        <div className='mb-2 flex items-center justify-between gap-2'>
-          <span className='text-sm font-medium'>模型列表</span>
-          <Badge variant='outline'>{provider.models.length} 个</Badge>
-        </div>
-        {provider.models.length ? (
-          <div className='flex max-h-52 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/10 p-3'>
-            {provider.models.map((model) => (
-              <Badge
-                key={model}
-                variant='secondary'
-                className='max-w-full font-mono font-normal'
-              >
-                <span className='truncate'>{model}</span>
-              </Badge>
-            ))}
-          </div>
-        ) : (
-          <div className='rounded-lg border border-dashed p-4 text-xs leading-5 text-muted-foreground'>
-            未保存模型列表。请求设置选择该提供商时会尝试实时读取
-            <span className='mx-1 font-mono'>/v1/models</span>
-            ；也可点击左侧同步按钮后再预览。
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function PreviewValue({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-}) {
-  return (
-    <div className='min-w-0 rounded-lg border bg-muted/10 p-3'>
-      <div className='text-xs text-muted-foreground'>{label}</div>
-      <div
-        className={cn(
-          'mt-1 break-all text-sm',
-          mono && 'font-mono text-xs leading-5'
-        )}
-      >
-        {value}
-      </div>
-    </div>
+          <Button
+            type='button'
+            disabled={!provider.enabled || selected}
+            onClick={onUse}
+          >
+            <Check />
+            {selected ? '当前使用中' : '设为当前'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -2054,6 +2245,24 @@ function chatCompletionUrl(baseUrl: string): string {
   return base.endsWith('/v1')
     ? `${base}/chat/completions`
     : `${base}/v1/chat/completions`
+}
+
+function isJsonObject(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+  } catch {
+    return false
+  }
+}
+
+function formatConversationActivity(timestamp: number): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp)
 }
 
 function Field({
