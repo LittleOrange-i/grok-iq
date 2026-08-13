@@ -72,6 +72,55 @@ def test_blank_secret_preserves_value_and_explicit_clear_removes_it():
     assert clear.runtime_changes()["grok2api_admin_password"] == ""
 
 
+def test_onboarding_requires_connection_credentials_and_persists_completion(
+    tmp_path: Path,
+):
+    database, settings, service = build_service(tmp_path)
+
+    assert service.onboarding_view() == {
+        "completed": False,
+        "ready": False,
+        "requirements": {
+            "grok2apiBaseUrl": True,
+            "grok2apiAdminUsername": False,
+            "grok2apiAdminPassword": False,
+        },
+    }
+    with pytest.raises(ValueError, match="请先补全 grok2api"):
+        service.complete_onboarding()
+
+    service.update(
+        {
+            "grok2api_admin_username": "upstream-admin",
+            "grok2api_admin_password": "upstream-password",
+            "probe_worker_concurrency": 4,
+            "probe_queue_limit": 2500,
+            "scheduler_enabled": False,
+            "quarantine_recovery_enabled": False,
+            "scheduler_timezone": "Asia/Shanghai",
+            "analysis_window_hours": 72,
+        }
+    )
+
+    assert service.complete_onboarding()["completed"] is True
+    assert service.onboarding_view()["ready"] is True
+    assert settings.probe_worker_concurrency == 4
+    assert settings.probe_queue_limit == 2500
+    assert settings.scheduler_enabled is False
+    assert settings.quarantine_recovery_enabled is False
+    assert settings.scheduler_timezone == "Asia/Shanghai"
+    assert settings.analysis_window_hours == 72
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded.onboarding_view()["completed"] is True
+    assert reloaded_settings.probe_worker_concurrency == 4
+
+
 def test_runtime_settings_reject_invalid_threshold_order(tmp_path: Path):
     _, _, service = build_service(tmp_path)
     with pytest.raises(ValueError, match="降智信号 TPS 下限"):

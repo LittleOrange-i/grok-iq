@@ -1,10 +1,16 @@
+import { z } from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
-import { AuthenticatedLayout } from '@/components/layout/authenticated-layout'
+import { OnboardingPage } from '@/features/onboarding'
 
-export const Route = createFileRoute('/_authenticated')({
-  beforeLoad: async ({ context, location }) => {
+const searchSchema = z.object({
+  redirect: z.string().optional(),
+})
+
+export const Route = createFileRoute('/onboarding')({
+  validateSearch: searchSchema,
+  beforeLoad: async ({ context, location, search }) => {
     const auth = useAuthStore.getState().auth
     if (!auth.accessToken) {
       throw redirect({
@@ -31,12 +37,20 @@ export const Route = createFileRoute('/_authenticated')({
       queryFn: api.onboarding,
       staleTime: 0,
     })
-    if (!onboarding.completed) {
+    if (onboarding.completed) {
       throw redirect({
-        to: '/onboarding',
-        search: { redirect: location.href },
+        to: normalizedRedirect(search.redirect),
+        replace: true,
       })
     }
   },
-  component: AuthenticatedLayout,
+  component: OnboardingPage,
 })
+
+function normalizedRedirect(value?: string): string {
+  return value?.startsWith('/') &&
+    !value.startsWith('//') &&
+    !value.startsWith('/onboarding')
+    ? value
+    : '/'
+}

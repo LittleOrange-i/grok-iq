@@ -20,6 +20,25 @@ export type AuthSession = {
   user: AuthUser
 }
 
+export type OnboardingState = {
+  completed: boolean
+  ready: boolean
+  requirements: {
+    grok2apiBaseUrl: boolean
+    grok2apiAdminUsername: boolean
+    grok2apiAdminPassword: boolean
+  }
+}
+
+export type OnboardingCompleteResult = OnboardingState & {
+  settings: RuntimeSettings
+  connection: {
+    ok: true
+    baseUrl: string
+    grokBuild: Record<string, unknown>
+  }
+}
+
 export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 export type RegisterWebhookEventStatus =
@@ -1381,6 +1400,12 @@ export const api = {
   authMe: () => request<{ user: AuthUser }>('/auth/me'),
   authLogout: () =>
     request<{ loggedOut: boolean }>('/auth/logout', { method: 'POST' }),
+  onboarding: () => request<OnboardingState>('/onboarding'),
+  completeOnboarding: (body: RuntimeSettingsUpdate) =>
+    request<OnboardingCompleteResult>('/onboarding/complete', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   health: () => request<HealthResponse>('/health'),
   dashboard: (hours = 168) =>
     request<DashboardResponse>(`/dashboard?hours=${hours}`),

@@ -129,7 +129,7 @@ export function SignIn() {
               </CardTitle>
               <CardDescription className='mt-2 leading-6'>
                 {setupRequired
-                  ? '首次使用需要设置唯一管理员用户名和密码，完成后进入监控控制台。'
+                  ? '首次使用需要设置唯一管理员用户名和密码，登录后继续完成系统初始化。'
                   : '输入管理员用户名和密码继续使用监控控制台。'}
               </CardDescription>
             </div>

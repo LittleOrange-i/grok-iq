@@ -101,10 +101,18 @@ export function UserAuthForm({ setupRequired, redirectTo }: UserAuthFormProps) {
       })
       queryClient.setQueryData(['auth', 'me'], { user: session.user })
       toast.success(setupRequired ? '管理员创建成功' : '登录成功')
-      await navigate({
-        to: normalizedRedirect(redirectTo),
-        replace: true,
-      })
+      if (setupRequired) {
+        await navigate({
+          to: '/onboarding',
+          search: { redirect: normalizedRedirect(redirectTo) },
+          replace: true,
+        })
+      } else {
+        await navigate({
+          to: normalizedRedirect(redirectTo),
+          replace: true,
+        })
+      }
     } catch (error) {
       form.setError('root', { message: getErrorMessage(error) })
     } finally {
@@ -181,7 +189,7 @@ export function UserAuthForm({ setupRequired, redirectTo }: UserAuthFormProps) {
         )}
         <Button type='submit' className='mt-1 w-full' disabled={isLoading}>
           {isLoading ? <Loader2 className='animate-spin' /> : <LockKeyhole />}
-          {setupRequired ? '创建账号并进入' : '登录控制台'}
+          {setupRequired ? '创建账号并初始化' : '登录控制台'}
         </Button>
       </form>
     </Form>

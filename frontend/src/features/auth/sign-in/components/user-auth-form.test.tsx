@@ -105,7 +105,7 @@ describe('UserAuthForm', () => {
     )
     await userEvent.fill(screen.getByLabelText('确认密码'), 'password123')
     await userEvent.click(
-      screen.getByRole('button', { name: '创建账号并进入' })
+      screen.getByRole('button', { name: '创建账号并初始化' })
     )
 
     await vi.waitFor(() =>
@@ -116,7 +116,8 @@ describe('UserAuthForm', () => {
       })
     )
     expect(mocks.navigate).toHaveBeenCalledWith({
-      to: '/settings',
+      to: '/onboarding',
+      search: { redirect: '/settings' },
       replace: true,
     })
   })

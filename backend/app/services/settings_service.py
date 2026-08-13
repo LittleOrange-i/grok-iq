@@ -13,6 +13,7 @@ from app.persistence.settings_repository import SettingsRepository
 from app.services.runtime_settings_validator import RuntimeSettingsValidator
 
 REGISTER_FIXED_STRATEGY_MIGRATION_KEY = "register_probe_fixed_strategy_v2"
+INITIAL_ONBOARDING_COMPLETED_KEY = "initial_onboarding_completed_v1"
 
 
 def fixed_register_probe_strategy() -> dict[str, Any]:
@@ -145,6 +146,29 @@ class RuntimeSettingsService:
                 "corsOrigins": s.cors_origin_list,
             },
         }
+
+    def onboarding_view(self) -> dict[str, Any]:
+        requirements = {
+            "grok2apiBaseUrl": bool(self.settings.grok2api_base_url.strip()),
+            "grok2apiAdminUsername": bool(
+                self.settings.grok2api_admin_username.strip()
+            ),
+            "grok2apiAdminPassword": bool(self.settings.grok2api_admin_password),
+        }
+        return {
+            "completed": self.repository.flag_exists(
+                INITIAL_ONBOARDING_COMPLETED_KEY
+            ),
+            "ready": all(requirements.values()),
+            "requirements": requirements,
+        }
+
+    def complete_onboarding(self) -> dict[str, Any]:
+        state = self.onboarding_view()
+        if not state["ready"]:
+            raise ValueError("请先补全 grok2api 地址、管理员用户名和密码")
+        self.repository.set_flag(INITIAL_ONBOARDING_COMPLETED_KEY)
+        return self.onboarding_view()
 
     def reveal_secret(self, name: str) -> str:
         """Return one persisted runtime secret for the authenticated settings UI."""

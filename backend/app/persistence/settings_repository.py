@@ -100,3 +100,15 @@ class SettingsRepository:
         with self.database.transaction() as session:
             if session.get(MetadataRow, key) is None:
                 session.add(MetadataRow(key=key, value="applied"))
+
+    def flag_exists(self, key: str) -> bool:
+        with self.database.session() as session:
+            return session.get(MetadataRow, key) is not None
+
+    def set_flag(self, key: str, value: str = "completed") -> None:
+        with self.database.transaction() as session:
+            row = session.get(MetadataRow, key)
+            if row is None:
+                session.add(MetadataRow(key=key, value=value))
+            else:
+                row.value = value

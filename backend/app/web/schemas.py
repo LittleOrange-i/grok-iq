@@ -205,6 +205,66 @@ SecretSettingName = Literal[
 ]
 
 
+class OnboardingCompleteInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    grok2api_base_url: str | None = Field(
+        default=None,
+        alias="grok2apiBaseUrl",
+        max_length=2000,
+    )
+    grok2api_admin_username: str | None = Field(
+        default=None,
+        alias="grok2apiAdminUsername",
+        max_length=256,
+    )
+    grok2api_admin_password: str | None = Field(
+        default=None,
+        alias="grok2apiAdminPassword",
+        max_length=8000,
+    )
+    probe_worker_concurrency: int | None = Field(
+        default=None,
+        alias="probeWorkerConcurrency",
+        ge=1,
+        le=32,
+    )
+    probe_queue_limit: int | None = Field(
+        default=None,
+        alias="probeQueueLimit",
+        ge=1,
+        le=100_000,
+    )
+    scheduler_enabled: bool | None = Field(
+        default=None,
+        alias="schedulerEnabled",
+    )
+    quarantine_recovery_enabled: bool | None = Field(
+        default=None,
+        alias="quarantineRecoveryEnabled",
+    )
+    scheduler_timezone: str | None = Field(
+        default=None,
+        alias="schedulerTimezone",
+        max_length=80,
+    )
+    analysis_window_hours: int | None = Field(
+        default=None,
+        alias="analysisWindowHours",
+        ge=1,
+        le=24 * 365,
+    )
+
+    def runtime_changes(self) -> dict[str, Any]:
+        values = self.model_dump(exclude_unset=True)
+        return {
+            key: value
+            for key, value in values.items()
+            if (isinstance(value, str) and value.strip())
+            or isinstance(value, (bool, int))
+        }
+
+
 class RuntimeSettingsInput(BaseModel):
     """Editable settings exposed by the GrokIQ UI.
 
