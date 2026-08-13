@@ -668,20 +668,9 @@ export function PlaygroundPage() {
   )
 
   return (
-    <div className='grid h-full min-h-0 grid-cols-1 bg-background lg:grid-cols-[17rem_minmax(0,1fr)]'>
-      <aside className='hidden min-h-0 bg-muted/20 lg:block'>
-        {conversationNavigation}
-      </aside>
-
-      <section className='flex min-h-0 min-w-0 flex-col'>
+    <div className='h-full min-h-0 bg-background'>
+      <section className='flex h-full min-h-0 min-w-0 flex-col'>
         <header className='flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:px-4'>
-          <ToolbarAction
-            label='打开本地会话'
-            className='lg:hidden'
-            onClick={() => setMobileHistoryOpen(true)}
-          >
-            <PanelLeftOpen />
-          </ToolbarAction>
           <div className='min-w-0 flex-1'>
             <div className='flex min-w-0 items-center gap-2'>
               <h1 className='truncate text-sm font-semibold'>
@@ -701,6 +690,12 @@ export function PlaygroundPage() {
             </p>
           </div>
           <ActionToolbar label='当前会话操作'>
+            <ToolbarAction
+              label='打开会话列表'
+              onClick={() => setMobileHistoryOpen(true)}
+            >
+              <PanelLeftOpen />
+            </ToolbarAction>
             <ToolbarAction
               label='打开请求配置'
               onClick={() => setRequestSettingsOpen(true)}
@@ -736,7 +731,7 @@ export function PlaygroundPage() {
                 onPick={pickProfile}
               />
             ) : (
-              <div className='mx-auto flex w-full max-w-6xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8'>
+              <div className='mx-auto flex w-full max-w-7xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8'>
                 {active.messages.map((message) => (
                   <ChatBubble
                     key={message.id}
@@ -786,17 +781,26 @@ export function PlaygroundPage() {
         <Composer
           input={input}
           streaming={streaming}
-          providerName={activeProvider?.name}
+          providers={enabledProviders}
+          providersLoading={providers.isLoading}
+          providerId={activeProviderId}
           model={active?.model || settings.model}
+          modelNames={modelNames}
+          modelsLoading={models.isLoading}
           requestValid={extraBodyValid}
           onInputChange={setInput}
+          onProviderChange={handleProviderChange}
+          onModelChange={handleModelChange}
           onSubmit={handleSubmit}
           onStop={() => abortRef.current?.abort()}
         />
       </section>
 
       <Sheet open={mobileHistoryOpen} onOpenChange={setMobileHistoryOpen}>
-        <SheetContent side='left' className='w-[min(21rem,90vw)] p-0'>
+        <SheetContent
+          side='left'
+          className='w-[min(28rem,94vw)] max-w-none p-0 sm:max-w-none'
+        >
           <SheetHeader className='sr-only'>
             <SheetTitle>本地会话</SheetTitle>
             <SheetDescription>切换和管理当前浏览器中的会话</SheetDescription>
@@ -806,7 +810,10 @@ export function PlaygroundPage() {
       </Sheet>
 
       <Sheet open={requestSettingsOpen} onOpenChange={setRequestSettingsOpen}>
-        <SheetContent side='right' className='w-[min(23rem,94vw)] p-0'>
+        <SheetContent
+          side='right'
+          className='w-[min(32rem,96vw)] max-w-none p-0 sm:max-w-none'
+        >
           <SheetHeader className='sr-only'>
             <SheetTitle>请求配置</SheetTitle>
             <SheetDescription>选择模型并配置当前对话请求</SheetDescription>
@@ -1197,19 +1204,31 @@ function ConfigurationHeading({ title }: { title: string }) {
 function Composer({
   input,
   streaming,
-  providerName,
+  providers,
+  providersLoading,
+  providerId,
   model,
+  modelNames,
+  modelsLoading,
   requestValid,
   onInputChange,
+  onProviderChange,
+  onModelChange,
   onSubmit,
   onStop,
 }: {
   input: string
   streaming: boolean
-  providerName?: string
+  providers: ChatProvider[]
+  providersLoading: boolean
+  providerId: string
   model: string
+  modelNames: string[]
+  modelsLoading: boolean
   requestValid: boolean
   onInputChange: (value: string) => void
+  onProviderChange: (providerId: string) => void
+  onModelChange: (model: string) => void
   onSubmit: (event?: FormEvent) => void
   onStop: () => void
 }) {
@@ -1218,7 +1237,7 @@ function Composer({
       onSubmit={onSubmit}
       className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
     >
-      <div className='mx-auto w-full max-w-6xl overflow-hidden rounded-lg border bg-card shadow-xs'>
+      <div className='mx-auto w-full max-w-7xl overflow-hidden rounded-lg border bg-card shadow-xs'>
         <Textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
@@ -1238,10 +1257,52 @@ function Composer({
           className='max-h-44 min-h-24 resize-none border-0 shadow-none focus-visible:ring-0'
         />
         <div className='flex items-center gap-2 border-t px-2.5 py-2'>
-          <div className='min-w-0 flex-1 truncate text-[11px] text-muted-foreground'>
-            {providerName || '未选择提供商'}
-            <span className='mx-1.5'>/</span>
-            <span className='font-mono'>{model || '未选择模型'}</span>
+          <div className='flex min-w-0 flex-1 items-center gap-1.5'>
+            <Select
+              value={providerId}
+              onValueChange={onProviderChange}
+              disabled={streaming}
+            >
+              <SelectTrigger
+                size='sm'
+                aria-label='快速切换模型提供商'
+                className='max-w-44 border-0 bg-muted/60 px-2 shadow-none sm:max-w-56'
+              >
+                <SelectValue
+                  placeholder={providersLoading ? '读取提供商中' : '提供商'}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {providers.map((provider) => (
+                  <SelectItem key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className='text-xs text-muted-foreground'>/</span>
+            <Select
+              value={model}
+              onValueChange={onModelChange}
+              disabled={streaming || !providerId || modelsLoading}
+            >
+              <SelectTrigger
+                size='sm'
+                aria-label='快速切换模型'
+                className='min-w-0 max-w-56 border-0 bg-muted/60 px-2 font-mono shadow-none sm:max-w-80'
+              >
+                <SelectValue
+                  placeholder={modelsLoading ? '读取模型中' : '模型'}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {modelNames.map((modelName) => (
+                  <SelectItem key={modelName} value={modelName}>
+                    {modelName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {streaming ? (
             <Button type='button' size='sm' variant='outline' onClick={onStop}>
@@ -1253,7 +1314,7 @@ function Composer({
               type='submit'
               size='sm'
               disabled={
-                !input.trim() || !providerName || !model || !requestValid
+                !input.trim() || !providerId || !model || !requestValid
               }
             >
               <Send />
