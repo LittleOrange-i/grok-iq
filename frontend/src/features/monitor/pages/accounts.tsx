@@ -30,6 +30,7 @@ import {
   type ProbeSample,
   type UpstreamQuota,
 } from '@/lib/api'
+import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -643,12 +644,12 @@ export function AccountsPage() {
                       const assessment = account.assessment
                       const accountLabel =
                         account.name || account.email || `账号 ${id}`
-                      const secondaryAccountLabel =
-                        account.email &&
-                        account.email.trim().toLowerCase() !==
-                          accountLabel.trim().toLowerCase()
-                          ? `${account.email} · ID ${account.id}`
-                          : `ID ${account.id}`
+                      const secondaryAccountLabel = formatAccountSecondaryLabel({
+                        id: account.id,
+                        email: account.email,
+                        createdAt: account.createdAt,
+                        accountLabel,
+                      })
                       return (
                         <TableRow key={account.id} rowId={id}>
                           <TableCell>
@@ -677,7 +678,10 @@ export function AccountsPage() {
                           </TableCell>
                           <TableCell>
                             <div className='font-medium'>{accountLabel}</div>
-                            <div className='max-w-64 truncate text-xs text-muted-foreground'>
+                            <div
+                              className='max-w-80 text-xs text-muted-foreground'
+                              title={secondaryAccountLabel}
+                            >
                               {secondaryAccountLabel}
                             </div>
                           </TableCell>
@@ -1045,7 +1049,17 @@ export function AccountsPage() {
               {detail.data?.account?.name || `账号 ${detailId}`}
             </DialogTitle>
             <DialogDescription>
-              {detail.data?.account?.email || '账号探针详情'}
+              {detail.data?.account
+                ? formatAccountSecondaryLabel({
+                    id: detail.data.account.id,
+                    email: detail.data.account.email,
+                    createdAt: detail.data.account.createdAt,
+                    accountLabel:
+                      detail.data.account.name ||
+                      detail.data.account.email ||
+                      `账号 ${detailId}`,
+                  })
+                : '账号探针详情'}
             </DialogDescription>
           </DialogHeader>
           <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain pe-1'>

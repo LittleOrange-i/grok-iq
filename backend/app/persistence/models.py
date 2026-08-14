@@ -189,6 +189,7 @@ class ProbeRun(Base):
     # Labels are captured as run evidence, not synchronized account mirrors.
     account_name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     account_email: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    account_created_at: Mapped[datetime | None] = mapped_column(AppDateTime())
     profile_id: Mapped[str] = mapped_column(ForeignKey("probe_profiles.id"), nullable=False)
     plan_id: Mapped[str | None] = mapped_column(ForeignKey("probe_plans.id", ondelete="SET NULL"), index=True)
     parent_run_id: Mapped[str | None] = mapped_column(ForeignKey("probe_runs.id", ondelete="SET NULL"))

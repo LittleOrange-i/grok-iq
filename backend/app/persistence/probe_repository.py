@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, or_, select
@@ -389,6 +390,7 @@ class ProbeRepository:
         account_id: int,
         account_name: str,
         account_email: str,
+        account_created_at: Any = None,
         profile_id: str,
         rounds: int,
         proxy_targets: list[dict[str, Any]],
@@ -403,6 +405,7 @@ class ProbeRepository:
             account_id=account_id,
             account_name=account_name,
             account_email=account_email,
+            account_created_at=account_created_at,
             profile_id=profile_id,
             rounds=rounds,
             proxy_targets=proxy_targets,
@@ -1072,6 +1075,7 @@ class ProbeRepository:
                 "account_id": run.account_id,
                 "account_name": run.account_name,
                 "account_email": run.account_email,
+                "account_created_at": run.account_created_at,
                 "profile_id": run.profile_id,
                 "execution_mode": run.execution_mode,
                 "rounds": run.rounds,
@@ -1164,6 +1168,26 @@ class ProbeRepository:
 
     def run_detail(self, run_id: str) -> dict[str, Any] | None:
         return self._run_reader.run_detail(run_id)
+
+    def persist_account_created_at(
+        self, values: dict[int, datetime | None]
+    ) -> None:
+        updates = {
+            account_id: created_at
+            for account_id, created_at in values.items()
+            if account_id > 0 and created_at is not None
+        }
+        if not updates:
+            return
+        with self.database.transaction() as session:
+            runs = session.scalars(
+                select(ProbeRun).where(
+                    ProbeRun.account_id.in_(updates),
+                    ProbeRun.account_created_at.is_(None),
+                )
+            ).all()
+            for run in runs:
+                run.account_created_at = updates[run.account_id]
 
     def account_history(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         return self._run_reader.account_history(account_id, limit)

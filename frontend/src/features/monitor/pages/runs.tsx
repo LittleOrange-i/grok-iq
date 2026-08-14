@@ -44,6 +44,7 @@ import {
   type RunSelectionAction,
   type RunSelectionItem,
 } from '@/lib/api'
+import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
@@ -1189,10 +1190,12 @@ function RunRow({
   const restoreBlocked = accountRestoreNeedsAttention(run)
   const accountLabel =
     run.account_name || run.account_email || `账号 ${run.account_id}`
-  const accountEmail = run.account_email.trim()
-  const showAccountEmail =
-    accountEmail.length > 0 &&
-    accountEmail.toLocaleLowerCase() !== accountLabel.trim().toLocaleLowerCase()
+  const secondaryAccountLabel = formatAccountSecondaryLabel({
+    id: run.account_id,
+    email: run.account_email,
+    createdAt: run.account_created_at,
+    accountLabel,
+  })
   return (
     <TableRow rowId={run.id}>
       <TableCell>
@@ -1205,8 +1208,11 @@ function RunRow({
       </TableCell>
       <TableCell>
         <div className='font-medium'>{accountLabel}</div>
-        <div className='max-w-64 truncate text-xs text-muted-foreground'>
-          {showAccountEmail ? `${accountEmail} · ` : ''}ID {run.account_id}
+        <div
+          className='max-w-80 text-xs text-muted-foreground'
+          title={secondaryAccountLabel}
+        >
+          {secondaryAccountLabel}
         </div>
       </TableCell>
       <TableCell>
@@ -1554,7 +1560,24 @@ function RunDetail({
       <div className='grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(6,minmax(0,1fr))]'>
         <Metric
           label='账号'
-          value={run.account_name || run.account_id}
+          value={
+            <div className='min-w-0'>
+              <div className='break-all'>
+                {run.account_name || run.account_id}
+              </div>
+              <div className='mt-1 text-xs font-normal text-muted-foreground'>
+                {formatAccountSecondaryLabel({
+                  id: run.account_id,
+                  email: run.account_email,
+                  createdAt: run.account_created_at,
+                  accountLabel:
+                    run.account_name ||
+                    run.account_email ||
+                    `账号 ${run.account_id}`,
+                })}
+              </div>
+            </div>
+          }
           valueClassName='break-all'
         />
         <Metric

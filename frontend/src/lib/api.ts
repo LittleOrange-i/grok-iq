@@ -260,6 +260,7 @@ export type UpstreamAccount = {
   maxConcurrent?: number
   failureCount?: number
   lastUsedAt?: string | null
+  createdAt?: string | null
   egressNodeId?: string | null
   egressAssignmentMode?: string
   buildBotFlagged?: boolean
@@ -428,6 +429,7 @@ export type ProbeRun = {
   account_id: number
   account_name: string
   account_email: string
+  account_created_at?: string | null
   profile_id: string
   plan_id?: string | null
   status: string

@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import delete, inspect
 
 from app.analyzer import Thresholds
-from app.core.clock import utc_now
+from app.core.clock import to_app_timezone, utc_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import ChatProbeResult, IntegrationError
 from app.persistence.account_repository import (
@@ -44,11 +44,13 @@ def create_run(
     *,
     account_name: str | None = None,
     account_email: str = "",
+    account_created_at=None,
 ) -> str:
     return repository.create_run(
         account_id=account_id,
         account_name=account_name or f"account-{account_id}",
         account_email=account_email,
+        account_created_at=account_created_at,
         profile_id="quality-marker",
         rounds=1,
         proxy_targets=[{"kind": "direct", "id": None, "name": "直连"}],
@@ -98,6 +100,10 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
     assert "account_assessments" in tables
     assert "recovery_guarded" in assessment_columns
     assert "probe_runs" in tables
+    probe_run_columns = {
+        value["name"] for value in inspect(database.engine).get_columns("probe_runs")
+    }
+    assert "account_created_at" in probe_run_columns
     assert "probe_duration_estimates" in tables
     assert "sso_reports" in tables
     sso_report_columns = {
@@ -581,6 +587,23 @@ def test_runs_can_be_searched_by_account_name_email_or_id(repository: ProbeRepos
     result = repository.list_runs(page=1, page_size=20, search="301")
     assert result["total"] == 1
     assert result["items"][0]["account_id"] == 301
+
+
+def test_runs_store_and_backfill_account_created_at(repository: ProbeRepository):
+    created_at = utc_now().replace(microsecond=0)
+    expected = to_app_timezone(created_at)
+    run_id = create_run(repository, account_id=401, account_created_at=created_at)
+    missing_id = create_run(repository, account_id=402)
+
+    stored = repository.get_run(run_id)
+    assert stored["account_created_at"] == expected
+    assert repository.get_run(missing_id)["account_created_at"] is None
+
+    repository.persist_account_created_at({401: created_at, 402: created_at})
+    assert repository.get_run(missing_id)["account_created_at"] == expected
+    assert repository.list_runs(page=1, page_size=20, search="401")["items"][0][
+        "account_created_at"
+    ] == expected
 
 
 class FakeGrokClient:

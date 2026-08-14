@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.clock import utc_now
+from app.core.clock import account_created_at, utc_now
 
 from .database import Database
 from .models import ProbePlan, ProbeProfile, ProbeRun
@@ -47,6 +47,7 @@ class ProbeQueueWriter:
         account_id: int,
         account_name: str,
         account_email: str,
+        account_created_at: Any = None,
         profile_id: str,
         rounds: int,
         proxy_targets: list[dict[str, Any]],
@@ -72,6 +73,7 @@ class ProbeQueueWriter:
                     account_id=account_id,
                     account_name=account_name,
                     account_email=account_email,
+                    account_created_at=account_created_at,
                     profile_id=profile_id,
                     plan_id=plan_id,
                     parent_run_id=parent_run_id,
@@ -360,6 +362,7 @@ class ProbeQueueWriter:
                         account_id=account_id,
                         account_name=str(account.get("name") or f"account-{account_id}"),
                         account_email=str(account.get("email") or ""),
+                        account_created_at=account_created_at(account),
                         profile_id=profile_id,
                         plan_id=plan_id,
                         source_event_id=source_event_id,

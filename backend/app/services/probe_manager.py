@@ -15,7 +15,7 @@ from typing import Any
 import psutil
 
 from app.analyzer import Thresholds
-from app.core.clock import app_isoformat, utc_now
+from app.core.clock import account_created_at, app_isoformat, utc_now
 from app.core.config import Settings
 from app.core.logging import (
     PROBE_LOG_FILE_NAME,
@@ -195,6 +195,7 @@ class ProbeManager:
                 account_id=account_id,
                 account_name=str(account.get("name") or f"account-{account_id}"),
                 account_email=str(account.get("email") or ""),
+                account_created_at=account_created_at(account),
                 profile_id=profile_id,
                 execution_mode=execution_mode,
                 rounds=rounds,
@@ -334,6 +335,9 @@ class ProbeManager:
         self._ensure_account_restore_ready(int(values["account_id"]))
         account = await self.client.get_account(int(values["account_id"]))
         self._validate_account_for_targets(account, list(values["proxy_targets"]))
+        values["account_created_at"] = account_created_at(account) or values.get(
+            "account_created_at"
+        )
         new_id = self.repository.create_run(
             **values,
             trigger="retry",

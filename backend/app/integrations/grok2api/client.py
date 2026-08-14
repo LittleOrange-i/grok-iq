@@ -422,6 +422,40 @@ class Grok2APIClient:
     async def get_account(self, account_id: int) -> dict[str, Any]:
         return await self.admin_request("GET", f"/api/admin/v1/accounts/{account_id}")
 
+    async def get_accounts_by_ids(self, account_ids: set[int]) -> list[dict[str, Any]]:
+        """Load a small set of accounts by grok2api internal ID.
+
+        The admin list supports ``#id`` as an exact primary-key lookup, so this
+        avoids paging the entire account pool when a task list only needs a
+        handful of missing labels.
+        """
+
+        requested = sorted(account_id for account_id in account_ids if account_id > 0)
+        if not requested:
+            return []
+        items = await asyncio.gather(
+            *(self._lookup_account_by_id(account_id) for account_id in requested)
+        )
+        return [item for item in items if item is not None]
+
+    async def _lookup_account_by_id(self, account_id: int) -> dict[str, Any] | None:
+        payload = await self.list_accounts(search=f"#{account_id}", page=1, pageSize=1)
+        item = next(
+            (
+                candidate
+                for candidate in payload.get("items", [])
+                if int(candidate.get("id") or 0) == account_id
+            ),
+            None,
+        )
+        if item is not None:
+            return item
+        try:
+            item = await self.get_account(account_id)
+        except Exception:
+            return None
+        return item if int(item.get("id") or 0) == account_id else None
+
     async def list_egress_nodes(self, **params: Any) -> dict[str, Any]:
         query = {"scope": "grok_build", "page": 1, "pageSize": 100} | params
         return await self.admin_request("GET", "/api/admin/v1/egress-nodes", params=query)

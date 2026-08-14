@@ -72,6 +72,7 @@ def build_router(
     protected.include_router(
         build_probes_router(
             settings=settings,
+            client=client,
             accounts=account_repository,
             repository=probe_repository,
             manager=probe_manager,

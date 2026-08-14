@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 APP_TIMEZONE_NAME = "Asia/Shanghai"
@@ -51,6 +52,28 @@ def app_now() -> datetime:
 def app_isoformat(value: datetime | None) -> str | None:
     converted = to_app_timezone(value)
     return converted.isoformat() if converted else None
+
+
+def parse_optional_datetime(value: Any) -> datetime | None:
+    """Parse an optional ISO timestamp from upstream account payloads."""
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return ensure_utc(value)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return ensure_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def account_created_at(account: dict[str, Any] | None) -> datetime | None:
+    if not account:
+        return None
+    return parse_optional_datetime(account.get("createdAt") or account.get("created_at"))
 
 
 def configure_process_timezone() -> None:

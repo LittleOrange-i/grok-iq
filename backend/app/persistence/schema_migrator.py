@@ -97,6 +97,10 @@ COMPATIBILITY_COLUMNS = {
             "account_restored_at",
             "ALTER TABLE probe_runs ADD COLUMN account_restored_at DATETIME",
         ),
+        (
+            "account_created_at",
+            "ALTER TABLE probe_runs ADD COLUMN account_created_at DATETIME",
+        ),
     ],
     "probe_samples": [
         (

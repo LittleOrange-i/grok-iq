@@ -4,7 +4,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from app.core.clock import account_created_at, app_isoformat
 from app.core.config import Settings
+from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.services.probe_manager import ProbeManager
@@ -24,12 +26,14 @@ class ProbesRouter:
         self,
         *,
         settings: Settings,
+        client: Grok2APIClient,
         accounts: AccountRepository,
         repository: ProbeRepository,
         manager: ProbeManager,
         scheduler: SchedulerService,
     ):
         self.settings = settings
+        self.client = client
         self.accounts = accounts
         self.repository = repository
         self.manager = manager
@@ -278,7 +282,7 @@ class ProbesRouter:
             proxy_targets=[target.model_dump() for target in payload.proxy_targets],
         )
 
-    def list_probe_runs(
+    async def list_probe_runs(
         self,
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=30, ge=1, le=100, alias="pageSize"),
@@ -287,7 +291,7 @@ class ProbesRouter:
         account_id: int | None = Query(default=None, alias="accountId"),
         plan_id: str | None = Query(default=None, alias="planId"),
     ) -> dict[str, Any]:
-        return self.repository.list_runs(
+        payload = self.repository.list_runs(
             page=page,
             page_size=page_size,
             status=status,
@@ -295,6 +299,8 @@ class ProbesRouter:
             account_id=account_id,
             plan_id=plan_id,
         )
+        payload["items"] = await self._with_account_created_at(payload.get("items", []))
+        return payload
 
     def probe_worker_status(self) -> dict[str, Any]:
         return self.manager.status()
@@ -328,10 +334,12 @@ class ProbesRouter:
             plan_id=plan_id,
         )
 
-    def probe_run_detail(self, run_id: str) -> dict[str, Any]:
+    async def probe_run_detail(self, run_id: str) -> dict[str, Any]:
         value = self.repository.run_detail(run_id)
         if value is None:
             raise HTTPException(status_code=404, detail="探针任务不存在")
+        runs = await self._with_account_created_at([value["run"]])
+        value["run"] = runs[0]
         return value
 
     async def cancel_probe_run(self, run_id: str) -> dict[str, Any]:
@@ -381,10 +389,37 @@ class ProbesRouter:
     def delete_scheduler_executions(self, payload: BulkIdsInput) -> dict[str, Any]:
         return self.repository.delete_schedule_executions(payload.ids)
 
+    async def _with_account_created_at(
+        self, runs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        missing_ids = {
+            int(run.get("account_id") or 0)
+            for run in runs
+            if not run.get("account_created_at") and int(run.get("account_id") or 0) > 0
+        }
+        if not missing_ids:
+            return runs
+        try:
+            accounts = await self.client.get_accounts_by_ids(missing_ids)
+        except Exception:
+            return runs
+        created_at_by_id = {
+            int(account.get("id") or 0): account_created_at(account)
+            for account in accounts
+        }
+        self.repository.persist_account_created_at(created_at_by_id)
+        for run in runs:
+            account_id = int(run.get("account_id") or 0)
+            created_at = created_at_by_id.get(account_id)
+            if created_at is not None and not run.get("account_created_at"):
+                run["account_created_at"] = app_isoformat(created_at)
+        return runs
+
 
 def build_probes_router(
     *,
     settings: Settings,
+    client: Grok2APIClient,
     accounts: AccountRepository,
     repository: ProbeRepository,
     manager: ProbeManager,
@@ -392,6 +427,7 @@ def build_probes_router(
 ) -> APIRouter:
     return ProbesRouter(
         settings=settings,
+        client=client,
         accounts=accounts,
         repository=repository,
         manager=manager,
