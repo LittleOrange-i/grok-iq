@@ -243,6 +243,27 @@ async def test_webhook_account_auto_binding_uses_least_loaded_healthy_node(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_webhook_account_rebind_skips_used_healthy_nodes(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    client = EgressClient()
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    rebound = await service.rebind_account_egress(
+        {"id": "41", "egressNodeId": "4"}
+    )
+
+    assert rebound is not None
+    assert rebound["egressNodeId"] == "3"
+    assert client.bindings == [([41], 3, "manual")]
+
+
+@pytest.mark.asyncio
 async def test_batch_egress_binding_skips_probe_locked_accounts(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,7 +28,11 @@ from app.persistence.probe_repository import (
     QueueFullError,
     RunStateError,
 )
+from app.services.account_service import AccountService
 from app.services.probe_manager import ProbeManager
+from app.services.probe_run_executor import ProbeRunExecutor
+from app.services.probe_runtime import WorkerRuntime
+from tests.test_account_service import EgressClient
 
 
 @pytest.fixture
@@ -604,6 +610,228 @@ def test_runs_store_and_backfill_account_created_at(repository: ProbeRepository)
     assert repository.list_runs(page=1, page_size=20, search="401")["items"][0][
         "account_created_at"
     ] == expected
+
+
+@pytest.mark.asyncio
+async def test_register_probe_switches_egress_after_degradation(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    repository.seed_defaults()
+    account_client = EgressClient()
+    account_service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=account_client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=repository,
+    )
+    probe_client = FakeGrokClient()
+    probe_client.account_egress_node_id = 4
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            scheduler_enabled=False,
+            register_probe_switch_on_degradation=True,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=probe_client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+        account_service=account_service,
+    )
+    run_id = repository.create_run(
+        account_id=41,
+        account_name="register-account",
+        account_email="register@example.test",
+        profile_id="quality-marker",
+        rounds=1,
+        proxy_targets=[{"kind": "current", "id": None}],
+        trigger="register",
+        priority=100,
+        queue_limit=20,
+        source_event_id="event-switch",
+    )
+    with repository.database.transaction() as session:
+        run = session.get(ProbeRun, run_id)
+        assert run is not None
+        run.original_egress_node_id = 4
+        run.status = "completed"
+        run.summary = {"anomaly_count": 1}
+        run.completed_at = utc_now()
+    account_client.bindings.append(([41], 4, "manual"))
+
+    follow_up_id = await manager.maybe_switch_register_probe_egress(
+        repository.get_run(run_id) or {},
+        {"status": "completed", "summary": {"anomaly_count": 1}},
+    )
+
+    assert follow_up_id
+    follow_up = repository.get_run(follow_up_id)
+    assert follow_up is not None
+    assert follow_up["trigger"] == "register"
+    assert follow_up["parent_run_id"] == run_id
+    assert follow_up["source_event_id"] == "event-switch"
+    assert account_client.bindings[-1][1] != 4
+
+
+@pytest.mark.asyncio
+async def test_register_probe_switch_can_be_disabled(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    repository = ProbeRepository(database)
+    repository.seed_defaults()
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            scheduler_enabled=False,
+            register_probe_switch_on_degradation=False,
+        ),
+        repository=repository,
+        accounts=AccountRepository(database),
+        client=FakeGrokClient(),  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+        account_service=AccountService(
+            settings=Settings(database_path=tmp_path / "grokiq.db"),
+            client=EgressClient(),  # type: ignore[arg-type]
+            accounts=AccountRepository(database),
+            probes=repository,
+        ),
+    )
+
+    follow_up_id = await manager.maybe_switch_register_probe_egress(
+        {
+            "id": "run-disabled",
+            "account_id": 41,
+            "trigger": "register",
+            "source_event_id": "event-disabled",
+            "profile_id": "quality-marker",
+            "execution_mode": "chat",
+            "rounds": 1,
+            "proxy_targets": [{"kind": "current", "id": None}],
+        },
+        {"status": "completed", "summary": {"anomaly_count": 2}},
+    )
+
+    assert follow_up_id is None
+
+
+@pytest.mark.asyncio
+async def test_register_follow_up_defers_auto_quarantine():
+    calls: list[str] = []
+
+    class Accounts:
+        @staticmethod
+        def get_assessment(_: int) -> dict[str, Any]:
+            return {"monitor_status": "healthy"}
+
+        @staticmethod
+        def recalculate(*_: Any) -> dict[str, Any]:
+            return {"monitor_status": "high_risk", "risk_score": 75}
+
+    async def switch_egress(*_: Any) -> str:
+        calls.append("switch")
+        return "follow-up-run"
+
+    async def quarantine(*_: Any) -> dict[str, Any]:
+        calls.append("quarantine")
+        return {"monitor_status": "quarantined", "risk_score": 75}
+
+    manager = SimpleNamespace(
+        accounts=Accounts(),
+        thresholds=Thresholds(),
+        settings=Settings(),
+        notifications=None,
+        maybe_switch_register_probe_egress=switch_egress,
+        _apply_auto_quarantine=quarantine,
+    )
+    now = utc_now()
+    runtime = WorkerRuntime(
+        index=1,
+        worker_id="worker-1",
+        status="running",
+        started_at=now,
+        state_changed_at=now,
+        last_heartbeat_at=now,
+    )
+
+    await ProbeRunExecutor(
+        manager,  # type: ignore[arg-type]
+        logging.getLogger(__name__),
+    )._post_process(
+        {
+            "id": "register-run",
+            "account_id": 41,
+            "account_name": "register-account",
+            "account_email": "register@example.test",
+            "trigger": "register",
+        },
+        runtime,
+        {
+            "status": "completed",
+            "summary": {"anomaly_count": 3},
+        },
+    )
+
+    assert calls == ["switch"]
+
+
+@pytest.mark.asyncio
+async def test_register_follow_up_exhaustion_applies_auto_quarantine():
+    calls: list[str] = []
+
+    class Accounts:
+        @staticmethod
+        def get_assessment(_: int) -> dict[str, Any]:
+            return {"monitor_status": "healthy"}
+
+        @staticmethod
+        def recalculate(*_: Any) -> dict[str, Any]:
+            return {"monitor_status": "high_risk", "risk_score": 75}
+
+    async def switch_egress(*_: Any) -> None:
+        calls.append("switch")
+
+    async def quarantine(*_: Any) -> dict[str, Any]:
+        calls.append("quarantine")
+        return {"monitor_status": "quarantined", "risk_score": 75}
+
+    manager = SimpleNamespace(
+        accounts=Accounts(),
+        thresholds=Thresholds(),
+        settings=Settings(),
+        notifications=None,
+        maybe_switch_register_probe_egress=switch_egress,
+        _apply_auto_quarantine=quarantine,
+    )
+    now = utc_now()
+    runtime = WorkerRuntime(
+        index=1,
+        worker_id="worker-1",
+        status="running",
+        started_at=now,
+        state_changed_at=now,
+        last_heartbeat_at=now,
+    )
+
+    await ProbeRunExecutor(
+        manager,  # type: ignore[arg-type]
+        logging.getLogger(__name__),
+    )._post_process(
+        {
+            "id": "register-run",
+            "account_id": 41,
+            "account_name": "register-account",
+            "account_email": "register@example.test",
+            "trigger": "register",
+        },
+        runtime,
+        {
+            "status": "completed",
+            "summary": {"anomaly_count": 3},
+        },
+    )
+
+    assert calls == ["switch", "quarantine"]
 
 
 class FakeGrokClient:

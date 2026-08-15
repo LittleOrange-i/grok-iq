@@ -399,6 +399,7 @@ class ProbeRepository:
         queue_limit: int,
         plan_id: str | None = None,
         parent_run_id: str | None = None,
+        source_event_id: str | None = None,
         execution_mode: str = "chat",
     ) -> str:
         return self._queue_writer.create_run(
@@ -414,6 +415,7 @@ class ProbeRepository:
             queue_limit=queue_limit,
             plan_id=plan_id,
             parent_run_id=parent_run_id,
+            source_event_id=source_event_id,
             execution_mode=execution_mode,
         )
 
@@ -1081,7 +1083,68 @@ class ProbeRepository:
                 "rounds": run.rounds,
                 "proxy_targets": run.proxy_targets,
                 "parent_run_id": run.id,
+                "source_event_id": run.source_event_id,
             }
+
+    def has_child_run(self, run_id: str) -> bool:
+        with self.database.session() as session:
+            return (
+                session.scalar(
+                    select(func.count(ProbeRun.id)).where(ProbeRun.parent_run_id == run_id)
+                )
+                or 0
+            ) > 0
+
+    def register_tried_egress_node_ids(self, run: dict[str, Any]) -> set[int]:
+        """Return egress nodes already used by this register-probe chain."""
+
+        account_id = int(run.get("account_id") or 0)
+        source_event_id = str(run.get("source_event_id") or "").strip()
+        if account_id <= 0:
+            return set()
+        with self.database.session() as session:
+            filters = [ProbeRun.account_id == account_id]
+            if source_event_id:
+                filters.append(ProbeRun.source_event_id == source_event_id)
+            else:
+                related_ids = self._ancestor_run_ids(session, str(run.get("id") or ""))
+                related_ids.add(str(run.get("id") or ""))
+                filters.append(ProbeRun.id.in_(related_ids))
+            run_ids = list(session.scalars(select(ProbeRun.id).where(*filters)).all())
+            node_ids = {
+                int(node_id)
+                for node_id in session.scalars(
+                    select(ProbeRun.original_egress_node_id).where(
+                        ProbeRun.id.in_(run_ids),
+                        ProbeRun.original_egress_node_id.is_not(None),
+                    )
+                ).all()
+                if int(node_id or 0) > 0
+            }
+            sample_nodes = session.execute(
+                select(ProbeSample.egress_node_id, ProbeSample.verified_egress_node_id).where(
+                    ProbeSample.run_id.in_(run_ids)
+                )
+            ).all()
+        for egress_node_id, verified_node_id in sample_nodes:
+            for node_id in (egress_node_id, verified_node_id):
+                if int(node_id or 0) > 0:
+                    node_ids.add(int(node_id))
+        return node_ids
+
+    @staticmethod
+    def _ancestor_run_ids(session: Session, run_id: str) -> set[str]:
+        related = {run_id} if run_id else set()
+        current_id = run_id
+        for _ in range(20):
+            parent_id = session.scalar(
+                select(ProbeRun.parent_run_id).where(ProbeRun.id == current_id)
+            )
+            if not parent_id or parent_id in related:
+                break
+            related.add(parent_id)
+            current_id = parent_id
+        return related
 
     @staticmethod
     def _restore_pending(run: ProbeRun) -> bool:

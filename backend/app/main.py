@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.analyzer import Thresholds
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.version import current_version
 from app.integrations.grok2api.client import Grok2APIClient
 from app.integrations.wechat.client import WeChatTestAccountClient
 from app.persistence.account_repository import AccountRepository
@@ -27,6 +28,7 @@ from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
 from app.services.sso_report_service import SsoReportService
+from app.services.update_check import UpdateCheckService
 from app.services.wechat_notification import WeChatAccountNotificationService
 from app.web.exception_handlers import install_exception_handlers
 from app.web.router import build_router
@@ -74,6 +76,12 @@ wechat_client = WeChatTestAccountClient(settings)
 wechat_notification_service = WeChatAccountNotificationService(
     settings, wechat_client
 )
+account_service = AccountService(
+    settings=settings,
+    client=grok_client,
+    accounts=account_repository,
+    probes=probe_repository,
+)
 probe_manager = ProbeManager(
     settings=settings,
     repository=probe_repository,
@@ -81,13 +89,8 @@ probe_manager = ProbeManager(
     client=grok_client,
     thresholds=thresholds,
     notifications=wechat_notification_service,
+    account_service=account_service,
     log_path=probe_log_path,
-)
-account_service = AccountService(
-    settings=settings,
-    client=grok_client,
-    accounts=account_repository,
-    probes=probe_repository,
 )
 egress_service = EgressService(client=grok_client, probes=probe_repository)
 scheduler_service = SchedulerService(
@@ -104,6 +107,7 @@ register_integration_service = RegisterIntegrationService(
     probes=probe_manager,
     notifications=wechat_notification_service,
 )
+update_check_service = UpdateCheckService()
 
 
 @asynccontextmanager
@@ -125,9 +129,11 @@ async def lifespan(_: FastAPI):
     await register_integration_service.start()
     await sso_report_service.start()
     await scheduler_service.start()
+    await update_check_service.start()
     try:
         yield
     finally:
+        await update_check_service.stop()
         await scheduler_service.stop()
         await sso_report_service.stop()
         await register_integration_service.stop()
@@ -135,7 +141,11 @@ async def lifespan(_: FastAPI):
         database.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+app = FastAPI(
+    title=settings.app_name,
+    version=current_version().removeprefix("v"),
+    lifespan=lifespan,
+)
 install_exception_handlers(app)
 
 
@@ -162,6 +172,7 @@ app.include_router(
         sso_reports=sso_report_service,
         register_integration=register_integration_service,
         wechat_notifications=wechat_notification_service,
+        updates=update_check_service,
     )
 )
 

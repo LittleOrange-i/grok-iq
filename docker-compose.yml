@@ -3,6 +3,8 @@ services:
     image: ${GROKIQ_BACKEND_IMAGE:-ghcr.io/kaibush/grok-iq-backend:latest}
     build:
       context: ./backend
+      args:
+        GROKIQ_VERSION: ${GROKIQ_VERSION:-}
     init: true
     restart: unless-stopped
     environment:

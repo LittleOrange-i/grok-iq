@@ -5,6 +5,7 @@ import {
   Layers3,
   MessageSquareText,
   Power,
+  RefreshCw,
   ServerCog,
   ShieldCheck,
   Webhook,
@@ -245,6 +246,61 @@ export function SettingsIntegrationTab({
                   set('initialProbeOnRegister', value)
                 }
                 aria-label='注册后创建探针'
+              />
+            </div>
+
+            <div
+              className={cn(
+                'mt-4 flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between',
+                form.initialProbeOnRegister &&
+                  form.registerProbeSwitchOnDegradation
+                  ? 'border-primary/25 bg-primary/[0.035]'
+                  : 'bg-muted/20'
+              )}
+            >
+              <div className='flex min-w-0 items-start gap-3'>
+                <div
+                  className={cn(
+                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
+                    form.initialProbeOnRegister &&
+                      form.registerProbeSwitchOnDegradation
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  <RefreshCw className='size-4' />
+                </div>
+                <div className='min-w-0'>
+                  <div className='text-sm font-medium'>降智后换出口再测</div>
+                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+                    注册探针出现降智信号后，自动改绑到另一个健康出口并再创建一个任务；已用过的出口不会重复选择。
+                    有可用替代出口时，自动隔离会延后到续测链结束。
+                  </p>
+                  <div className='mt-2 flex items-center gap-2 text-xs text-muted-foreground'>
+                    <span
+                      className={cn(
+                        'size-1.5 rounded-full',
+                        form.initialProbeOnRegister &&
+                          form.registerProbeSwitchOnDegradation
+                          ? 'bg-emerald-500'
+                          : 'bg-muted-foreground/50'
+                      )}
+                    />
+                    {!form.initialProbeOnRegister
+                      ? '需先开启注册后探针'
+                      : form.registerProbeSwitchOnDegradation
+                        ? '降智后自动换出口续测'
+                        : '仅执行首次注册探针'}
+                  </div>
+                </div>
+              </div>
+              <Switch
+                checked={form.registerProbeSwitchOnDegradation}
+                disabled={!form.initialProbeOnRegister}
+                onCheckedChange={(value) =>
+                  set('registerProbeSwitchOnDegradation', value)
+                }
+                aria-label='降智后换出口再测'
               />
             </div>
           </IntegrationPanel>

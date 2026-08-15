@@ -39,6 +39,26 @@ export type OnboardingCompleteResult = OnboardingState & {
   }
 }
 
+export type SystemVersionStatus =
+  | 'idle'
+  | 'checking'
+  | 'no_release'
+  | 'up_to_date'
+  | 'update_available'
+  | 'error'
+
+export type SystemVersionInfo = {
+  status: SystemVersionStatus
+  updateAvailable: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseUrl: string
+  releaseNotes: string
+  publishedAt: string
+  checkedAt: string
+  error: string
+}
+
 export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 export type RegisterWebhookEventStatus =
@@ -609,6 +629,7 @@ export type RuntimeSettings = {
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
+  registerProbeSwitchOnDegradation: boolean
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecretConfigured: boolean
@@ -683,6 +704,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'registerProbeExecutionMode'
     | 'registerProbeRounds'
     | 'registerProbeProxyTargets'
+    | 'registerProbeSwitchOnDegradation'
     | 'wechatNotificationEnabled'
     | 'wechatAppId'
     | 'wechatOpenid'
@@ -762,6 +784,7 @@ type RuntimeSettingsWire = Omit<
   | 'quarantineRecoveryEnabled'
   | 'scheduledProbeRegisterCooldownMinutes'
   | 'registerProbeStabilizationSeconds'
+  | 'registerProbeSwitchOnDegradation'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
@@ -791,6 +814,7 @@ type RuntimeSettingsWire = Omit<
   quarantineRecoveryEnabled?: boolean
   scheduledProbeRegisterCooldownMinutes?: number
   registerProbeStabilizationSeconds?: number
+  registerProbeSwitchOnDegradation?: boolean
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -806,6 +830,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     registerProbeProxyTargets: value.registerProbeProxyTargets ?? [
       { kind: 'current', id: null },
     ],
+    registerProbeSwitchOnDegradation:
+      value.registerProbeSwitchOnDegradation ?? true,
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
@@ -1409,6 +1435,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   health: () => request<HealthResponse>('/health'),
+  systemVersion: () =>
+    request<SystemVersionInfo>('/system/version', { cache: 'no-store' }),
+  checkSystemUpdate: () =>
+    request<SystemVersionInfo>('/system/update/check', {
+      method: 'POST',
+      cache: 'no-store',
+    }),
   dashboard: (hours = 168) =>
     request<DashboardResponse>(`/dashboard?hours=${hours}`),
   ssoReports: () => request<SsoReportItem[]>('/sso-reports'),

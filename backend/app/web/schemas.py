@@ -298,6 +298,9 @@ class RuntimeSettingsInput(BaseModel):
     register_probe_proxy_targets: list[ProxyTargetInput] | None = Field(
         default=None, alias="registerProbeProxyTargets", max_length=20
     )
+    register_probe_switch_on_degradation: bool | None = Field(
+        default=None, alias="registerProbeSwitchOnDegradation"
+    )
     wechat_notification_enabled: bool | None = Field(
         default=None, alias="wechatNotificationEnabled"
     )

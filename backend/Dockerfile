@@ -2,10 +2,13 @@
 
 FROM python:3.12-slim
 
+ARG GROKIQ_VERSION=""
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    TZ=Asia/Shanghai
+    TZ=Asia/Shanghai \
+    GROKIQ_VERSION=${GROKIQ_VERSION}
 
 WORKDIR /app
 
@@ -13,7 +16,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends tzdata && \
     rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml alembic.ini ./
+COPY pyproject.toml alembic.ini VERSION ./
 COPY alembic ./alembic
 COPY app ./app
 

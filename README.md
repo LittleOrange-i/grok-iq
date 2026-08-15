@@ -320,6 +320,25 @@ docker compose up -d
 
 首次进入时创建管理员账号；随后前往“系统设置”完成连接与运行参数配置，即可开始创建探针任务。
 
+### 版本检查与更新
+
+GrokIQ 启动后会立即读取 `kaibush/grok-iq` 的最新 GitHub Release，之后每 1 小时检查一次。
+发现高于当前 `VERSION` 的版本时，已登录页面会显示可关闭的更新弹框；“系统设置 → 版本更新”也可查看
+当前版本、最新版本、Release 说明和最近检查时间，或手动触发检查。
+
+本地运行 `npm run dev` 时，“版本更新”页会额外显示“预览提醒”按钮，用于模拟完整弹框；该入口由
+`import.meta.env.DEV` 编译条件控制，生产构建不会显示，也不会向后端写入模拟版本。
+
+更新已发布的容器：
+
+```bash
+docker compose --profile "*" pull
+docker compose --profile "*" up -d --force-recreate --remove-orphans
+```
+
+标签构建会把标签版本注入后端镜像，并在镜像发布完成后创建对应 GitHub Release。仅有普通分支镜像且没有
+Release 时，不会被版本检查识别为新版本。
+
 如需从当前源码构建镜像：
 
 ```bash

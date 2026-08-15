@@ -93,6 +93,7 @@ class RuntimeSettingsService:
             "registerProbeExecutionMode": s.register_probe_execution_mode,
             "registerProbeRounds": s.register_probe_rounds,
             "registerProbeProxyTargets": s.register_probe_proxy_targets,
+            "registerProbeSwitchOnDegradation": s.register_probe_switch_on_degradation,
             "wechatNotificationEnabled": s.wechat_notification_enabled,
             "wechatAppId": s.wechat_app_id,
             "wechatAppSecretConfigured": bool(s.wechat_app_secret),

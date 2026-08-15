@@ -315,29 +315,29 @@ class AccountService:
             raise ValueError("Webhook 账号缺少有效 ID")
         if int(account.get("egressNodeId") or 0) > 0:
             return account
-
-        payload = await self.client.list_egress_nodes(page=1, pageSize=500)
-        candidates: list[dict[str, Any]] = []
-        for node in payload.get("items", []):
-            capacity = int(node.get("accountCapacity") or 0)
-            assigned = int(node.get("assignedAccountCount") or 0)
-            if not bool(node.get("enabled")) or not bool(node.get("proxyConfigured")):
-                continue
-            if str(node.get("probeStatus") or "") != "healthy":
-                continue
-            if capacity > 0 and assigned >= capacity:
-                continue
-            candidates.append(node)
-        if not candidates:
+        rebound = await self.rebind_account_egress(account)
+        if rebound is None:
             raise ValueError("当前没有可用于自动绑定的健康 grok_build 出口")
+        return rebound
 
-        selected = min(
-            candidates,
-            key=lambda node: (
-                int(node.get("assignedAccountCount") or 0),
-                int(node.get("id") or 0),
-            ),
-        )
+    async def rebind_account_egress(
+        self,
+        account: dict[str, Any],
+        *,
+        exclude_node_ids: set[int] | None = None,
+    ) -> dict[str, Any] | None:
+        """Move one account onto the least-loaded healthy egress still unused."""
+
+        account_id = int(account.get("id") or 0)
+        if account_id <= 0:
+            raise ValueError("Webhook 账号缺少有效 ID")
+        excluded = {node_id for node_id in (exclude_node_ids or set()) if node_id > 0}
+        current_id = int(account.get("egressNodeId") or 0)
+        if current_id > 0:
+            excluded.add(current_id)
+        selected = await self._select_healthy_egress(exclude_node_ids=excluded)
+        if selected is None:
+            return None
         node_id = int(selected.get("id") or 0)
         if node_id <= 0:
             raise ValueError("自动绑定选出的出口节点 ID 无效")
@@ -348,8 +348,38 @@ class AccountService:
         )
         if result.updated != 1:
             reason = result.failures[0].error if result.failures else "上游未更新账号绑定"
-            raise ValueError(f"Webhook 新账号自动绑定出口失败：{reason}")
+            raise ValueError(f"Webhook 账号自动绑定出口失败：{reason}")
         return await self.client.get_account(account_id)
+
+    async def _select_healthy_egress(
+        self,
+        *,
+        exclude_node_ids: set[int],
+    ) -> dict[str, Any] | None:
+        payload = await self.client.list_egress_nodes(page=1, pageSize=500)
+        candidates: list[dict[str, Any]] = []
+        for node in payload.get("items", []):
+            node_id = int(node.get("id") or 0)
+            capacity = int(node.get("accountCapacity") or 0)
+            assigned = int(node.get("assignedAccountCount") or 0)
+            if node_id <= 0 or node_id in exclude_node_ids:
+                continue
+            if not bool(node.get("enabled")) or not bool(node.get("proxyConfigured")):
+                continue
+            if str(node.get("probeStatus") or "") != "healthy":
+                continue
+            if capacity > 0 and assigned >= capacity:
+                continue
+            candidates.append(node)
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda node: (
+                int(node.get("assignedAccountCount") or 0),
+                int(node.get("id") or 0),
+            ),
+        )
 
     async def delete_upstream_account(self, account_id: int) -> dict[str, Any]:
         await self.client.delete_account(account_id)

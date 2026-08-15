@@ -56,6 +56,7 @@ class ProbeQueueWriter:
         queue_limit: int,
         plan_id: str | None = None,
         parent_run_id: str | None = None,
+        source_event_id: str | None = None,
         execution_mode: str = "chat",
     ) -> str:
         run_id = uuid.uuid4().hex
@@ -77,6 +78,7 @@ class ProbeQueueWriter:
                     profile_id=profile_id,
                     plan_id=plan_id,
                     parent_run_id=parent_run_id,
+                    source_event_id=source_event_id,
                     status="queued",
                     trigger=trigger,
                     automatic=trigger != "manual",

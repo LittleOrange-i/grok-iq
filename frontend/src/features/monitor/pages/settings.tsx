@@ -23,6 +23,7 @@ import {
 } from '@/features/monitor/components/settings-model'
 import { SettingsNotificationsTab } from '@/features/monitor/components/settings-notifications-tab'
 import { SettingsRiskTab } from '@/features/monitor/components/settings-risk-tab'
+import { SettingsVersionTab } from '@/features/monitor/components/settings-version-tab'
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
@@ -248,6 +249,7 @@ export function SettingsPage() {
           <TabsTrigger value='risk'>风险与隔离</TabsTrigger>
           <TabsTrigger value='notifications'>通知推送</TabsTrigger>
           <TabsTrigger value='integration'>联动与启动项</TabsTrigger>
+          <TabsTrigger value='version'>版本更新</TabsTrigger>
         </TabsList>
 
         <TabsContent value='connection'>
@@ -297,6 +299,10 @@ export function SettingsPage() {
             set={set}
             toggleSecretClear={toggleSecretClear}
           />
+        </TabsContent>
+
+        <TabsContent value='version'>
+          <SettingsVersionTab />
         </TabsContent>
       </Tabs>
     </Page>

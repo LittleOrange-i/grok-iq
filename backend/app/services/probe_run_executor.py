@@ -459,17 +459,32 @@ class ProbeRunExecutor:
                 account_id,
             )
         else:
+            register_follow_up_id: str | None = None
             try:
-                assessment = await manager._apply_auto_quarantine(account_id, assessment)
+                register_follow_up_id = await manager.maybe_switch_register_probe_egress(
+                    run, finished
+                )
             except Exception:
-                # A failed automatic action must not suppress the risk message;
-                # send the recalculated high-risk assessment below.
                 logger.exception(
-                    "auto quarantine failed worker=%s run=%s account=%s",
+                    "register probe egress switch failed worker=%s run=%s account=%s",
                     runtime.worker_id,
                     run_id,
                     account_id,
                 )
+            if register_follow_up_id is None:
+                try:
+                    assessment = await manager._apply_auto_quarantine(
+                        account_id, assessment
+                    )
+                except Exception:
+                    # A failed automatic action must not suppress the risk message;
+                    # send the recalculated high-risk assessment below.
+                    logger.exception(
+                        "auto quarantine failed worker=%s run=%s account=%s",
+                        runtime.worker_id,
+                        run_id,
+                        account_id,
+                    )
             if manager.notifications is not None:
                 try:
                     trigger = str(run.get("trigger") or "probe")

@@ -10,7 +10,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psutil
 
@@ -40,6 +40,9 @@ from app.services.probe_target_validator import ProbeTargetValidator
 from app.services.probe_worker_loop import ProbeWorkerLoop
 from app.services.wechat_notification import WeChatAccountNotificationService
 
+if TYPE_CHECKING:
+    from app.services.account_service import AccountService
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +58,7 @@ class ProbeManager:
         client: Grok2APIClient,
         thresholds: Thresholds,
         notifications: WeChatAccountNotificationService | None = None,
+        account_service: AccountService | None = None,
         log_path: Path | None = None,
     ):
         self.settings = settings
@@ -63,6 +67,7 @@ class ProbeManager:
         self.client = client
         self.thresholds = thresholds
         self.notifications = notifications
+        self.account_service = account_service
         self.log_path = log_path or (settings.database_path.resolve().parent / "logs" / PROBE_LOG_FILE_NAME)
         self._process_started_at = utc_now()
         self._process = psutil.Process()
@@ -346,6 +351,88 @@ class ProbeManager:
         )
         self._wake.set()
         return new_id
+
+    async def maybe_switch_register_probe_egress(
+        self,
+        run: dict[str, Any],
+        finished: dict[str, Any],
+    ) -> str | None:
+        """Rebind a degraded register probe onto another healthy egress."""
+
+        if not self.settings.register_probe_switch_on_degradation:
+            return None
+        if self.account_service is None:
+            return None
+        if str(run.get("trigger") or "") != "register":
+            return None
+        if str(finished.get("status") or "") not in {"completed", "completed_with_errors"}:
+            return None
+        summary = finished.get("summary") if isinstance(finished.get("summary"), dict) else {}
+        if int(summary.get("anomaly_count") or 0) <= 0:
+            return None
+        run_id = str(run.get("id") or "")
+        if not run_id or self.repository.has_child_run(run_id):
+            return None
+        account_id = int(run.get("account_id") or 0)
+        if account_id <= 0:
+            return None
+        if self.repository.has_blocking_account_restore(account_id=account_id):
+            logger.info(
+                "register probe egress switch skipped run=%s account=%s reason=restore_pending",
+                run_id,
+                account_id,
+            )
+            return None
+        account = await self.client.get_account(account_id)
+        self._validate_account_for_targets(
+            account, list(run.get("proxy_targets") or [])
+        )
+        tried_node_ids = self.repository.register_tried_egress_node_ids(run)
+        current_node_id = int(account.get("egressNodeId") or 0)
+        if current_node_id > 0:
+            tried_node_ids.add(current_node_id)
+        rebound = await self.account_service.rebind_account_egress(
+            account,
+            exclude_node_ids=tried_node_ids,
+        )
+        if rebound is None:
+            logger.info(
+                "register probe egress switch exhausted run=%s account=%s tried=%s",
+                run_id,
+                account_id,
+                sorted(tried_node_ids),
+            )
+            return None
+        self._validate_account_for_targets(rebound, list(run.get("proxy_targets") or []))
+        async with self._enqueue_lock:
+            follow_up_id = self.repository.create_run(
+                account_id=account_id,
+                account_name=str(
+                    rebound.get("name") or run.get("account_name") or f"account-{account_id}"
+                ),
+                account_email=str(rebound.get("email") or run.get("account_email") or ""),
+                account_created_at=account_created_at(rebound)
+                or run.get("account_created_at"),
+                profile_id=str(run.get("profile_id") or ""),
+                execution_mode=str(run.get("execution_mode") or "chat"),
+                rounds=int(run.get("rounds") or 1),
+                proxy_targets=list(run.get("proxy_targets") or []),
+                trigger="register",
+                priority=100,
+                queue_limit=self.settings.probe_queue_limit,
+                parent_run_id=run_id,
+                source_event_id=str(run.get("source_event_id") or "") or None,
+            )
+        self._wake.set()
+        logger.info(
+            "register probe egress switched run=%s follow_up=%s account=%s from=%s to=%s",
+            run_id,
+            follow_up_id,
+            account_id,
+            current_node_id or None,
+            int(rebound.get("egressNodeId") or 0) or None,
+        )
+        return follow_up_id
 
     async def cancel(self, run_id: str) -> str:
         status = self.repository.request_cancel(run_id)

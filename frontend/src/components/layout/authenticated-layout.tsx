@@ -10,6 +10,7 @@ import { AppSidebar } from '@/components/layout/app-sidebar'
 import { Header } from '@/components/layout/header'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { SkipToMain } from '@/components/skip-to-main'
+import { SystemUpdateDialog } from '@/components/system-update-dialog'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 export function AuthenticatedLayout({
@@ -62,6 +63,7 @@ export function AuthenticatedLayout({
             {children ?? <Outlet />}
           </SidebarInset>
         </div>
+        <SystemUpdateDialog />
       </SidebarProvider>
     </LayoutProvider>
   )

@@ -63,6 +63,7 @@ class Settings(BaseSettings):
             dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
         ]
     )
+    register_probe_switch_on_degradation: bool = True
 
     # The WeChat public-platform test account uses the same template-message
     # API as a normal public account, which keeps local development independent
@@ -139,6 +140,7 @@ class Settings(BaseSettings):
         "register_probe_execution_mode",
         "register_probe_rounds",
         "register_probe_proxy_targets",
+        "register_probe_switch_on_degradation",
         "wechat_notification_enabled",
         "wechat_app_id",
         "wechat_app_secret",

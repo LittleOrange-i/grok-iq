@@ -346,6 +346,23 @@ def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Pa
     ]
 
 
+def test_register_probe_switch_setting_is_persisted(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+
+    changed = service.update({"register_probe_switch_on_degradation": False})
+
+    assert changed == ["register_probe_switch_on_degradation"]
+    assert settings.register_probe_switch_on_degradation is False
+    assert service.public_view()["registerProbeSwitchOnDegradation"] is False
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(_database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_probe_switch_on_degradation is False
+
+
 def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
     with pytest.raises(ValueError, match="AppID、AppSecret、OpenID"):

@@ -19,6 +19,7 @@ export type SettingsForm = {
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
+  registerProbeSwitchOnDegradation: boolean
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecret: string
@@ -143,6 +144,8 @@ export function toSettingsForm(
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: REGISTER_PROBE_ROUNDS,
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
+    registerProbeSwitchOnDegradation:
+      settings.registerProbeSwitchOnDegradation ?? true,
     wechatNotificationEnabled: settings.wechatNotificationEnabled,
     wechatAppId: settings.wechatAppId,
     wechatAppSecret: settings.wechatAppSecret,
@@ -201,6 +204,7 @@ export function buildSettingsPayload(
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: REGISTER_PROBE_ROUNDS,
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
+    registerProbeSwitchOnDegradation: form.registerProbeSwitchOnDegradation,
     wechatNotificationEnabled: form.wechatNotificationEnabled,
     wechatAppId: form.wechatAppId.trim(),
     wechatOpenid: form.wechatOpenid.trim(),

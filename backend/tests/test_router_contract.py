@@ -14,6 +14,8 @@ EXPECTED_ROUTES = {
     ("GET", "/api/auth/me"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/health"),
+    ("GET", "/api/system/version"),
+    ("POST", "/api/system/update/check"),
     ("GET", "/api/dashboard"),
     ("GET", "/api/accounts"),
     ("GET", "/api/accounts/selection"),
@@ -114,6 +116,7 @@ def build_test_router():
         sso_reports=MagicMock(),
         register_integration=MagicMock(),
         wechat_notifications=MagicMock(),
+        updates=MagicMock(),
     )
 
 

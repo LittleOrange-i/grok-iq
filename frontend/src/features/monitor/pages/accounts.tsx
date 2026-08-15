@@ -24,13 +24,13 @@ import {
   UsersRound,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import {
   api,
   type AccountDetailResponse,
   type ProbeSample,
   type UpstreamQuota,
 } from '@/lib/api'
-import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -644,12 +644,14 @@ export function AccountsPage() {
                       const assessment = account.assessment
                       const accountLabel =
                         account.name || account.email || `账号 ${id}`
-                      const secondaryAccountLabel = formatAccountSecondaryLabel({
-                        id: account.id,
-                        email: account.email,
-                        createdAt: account.createdAt,
-                        accountLabel,
-                      })
+                      const secondaryAccountLabel = formatAccountSecondaryLabel(
+                        {
+                          id: account.id,
+                          email: account.email,
+                          createdAt: account.createdAt,
+                          accountLabel,
+                        }
+                      )
                       return (
                         <TableRow key={account.id} rowId={id}>
                           <TableCell>
