@@ -147,6 +147,12 @@ COMPATIBILITY_COLUMNS = {
             "ALTER TABLE sso_reports ADD COLUMN completed_at DATETIME",
         ),
     ],
+    "register_webhook_events": [
+        (
+            "sso",
+            "ALTER TABLE register_webhook_events ADD COLUMN sso TEXT NOT NULL DEFAULT ''",
+        ),
+    ],
 }
 COMPATIBILITY_INDEXES = {
     "account_assessments": [

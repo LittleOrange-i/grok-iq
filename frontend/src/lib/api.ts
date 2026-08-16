@@ -175,6 +175,12 @@ export type SsoReportDetail = SsoReportItem & {
   results: SsoCheckResult[]
 }
 
+export type AccountSsoReportResult = SsoReportDetail & {
+  requested: number
+  included: number
+  missingAccountIds: number[]
+}
+
 export type AuthenticationRequiredCode =
   'authentication_required' | 'setup_required'
 export const AUTH_REQUIRED_EVENT = 'grokiq-auth-required'
@@ -1462,6 +1468,11 @@ export const api = {
     request<SsoReportDetail>('/sso-reports', {
       method: 'POST',
       body: JSON.stringify(body),
+    }),
+  createAccountSsoReport: (accountIds: number[]) =>
+    request<AccountSsoReportResult>('/sso-reports/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ account_ids: accountIds }),
     }),
   deleteSsoReports: (ids: string[]) =>
     request<{

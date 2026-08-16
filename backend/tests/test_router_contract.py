@@ -82,6 +82,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/chat/completions"),
     ("GET", "/api/sso-reports"),
     ("POST", "/api/sso-reports"),
+    ("POST", "/api/sso-reports/accounts"),
     ("DELETE", "/api/sso-reports"),
     ("GET", "/api/sso-reports/{report_id}"),
     ("DELETE", "/api/sso-reports/{report_id}"),

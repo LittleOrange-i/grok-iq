@@ -35,6 +35,7 @@ class RegisterEventRepository:
                     ),
                     registration_id=str(values.get("registration_id") or ""),
                     email=str(values["email"]).lower(),
+                    sso=str(values.get("sso") or "").strip(),
                     grok2api_account_id=values.get("grok2api_account_id"),
                     bot_risk=bool(values.get("bot_risk")),
                     bfs=(
@@ -51,7 +52,7 @@ class RegisterEventRepository:
                 return model_dict(event), True
         except IntegrityError:
             # Concurrent at-least-once deliveries can race on the primary key.
-            with self.database.session() as session:
+            with self.database.transaction() as session:
                 event = session.get(RegisterWebhookEvent, event_id)
                 if event is None:
                     raise
@@ -134,7 +135,14 @@ class RegisterEventRepository:
             )
 
         return {
-            "items": [model_dict(event) for event in events],
+            "items": [
+                {
+                    key: value
+                    for key, value in model_dict(event).items()
+                    if key != "sso"
+                }
+                for event in events
+            ],
             "total": total,
             "page": page,
             "pageSize": page_size,
@@ -150,7 +158,35 @@ class RegisterEventRepository:
     ) -> dict[str, Any]:
         if event.email.lower() != str(values["email"]).lower():
             raise RegisterEventConflictError("event_id 已被其他邮箱使用")
+        incoming_sso = str(values.get("sso") or "").strip()
+        if incoming_sso:
+            event.sso = incoming_sso
+            event.updated_at = utc_now()
         return model_dict(event)
+
+    def sso_for_accounts(self, account_ids: list[int]) -> dict[int, dict[str, str]]:
+        """Return the latest non-empty raw SSO received for each account."""
+        normalized = sorted({int(value) for value in account_ids if int(value) > 0})
+        if not normalized:
+            return {}
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(RegisterWebhookEvent)
+                .where(
+                    RegisterWebhookEvent.resolved_account_id.in_(normalized),
+                    RegisterWebhookEvent.sso != "",
+                )
+                .order_by(RegisterWebhookEvent.updated_at.desc())
+            ).all()
+        result: dict[int, dict[str, str]] = {}
+        for row in rows:
+            account_id = int(row.resolved_account_id or 0)
+            if account_id and account_id not in result:
+                result[account_id] = {
+                    "email": str(row.email or ""),
+                    "sso": str(row.sso or ""),
+                }
+        return result
 
     def recover_processing(self) -> int:
         now = utc_now()
@@ -161,6 +197,15 @@ class RegisterEventRepository:
                 .values(status="pending", next_attempt_at=now, updated_at=now)
             )
             return int(result.rowcount or 0)
+
+    def bind_account(self, event_id: str, account_id: int) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            if event is None:
+                return
+            event.resolved_account_id = int(account_id)
+            event.updated_at = now
 
     def claim_due(self) -> dict[str, Any] | None:
         now = utc_now()

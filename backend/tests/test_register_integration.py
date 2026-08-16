@@ -15,6 +15,10 @@ class RegisterRepository:
         self.completed: tuple[str, int, list[str]] | None = None
         self.retried: tuple[str, str, float] | None = None
         self.failed: tuple[str, str] | None = None
+        self.bound: tuple[str, int] | None = None
+
+    def bind_account(self, event_id: str, account_id: int) -> None:
+        self.bound = (event_id, account_id)
 
     def complete(self, event_id: str, account_id: int, run_ids: list[str]) -> None:
         self.completed = (event_id, account_id, run_ids)
@@ -106,6 +110,7 @@ async def test_webhook_auto_binds_before_enqueue():
     assert probes.values["rounds"] == 3
     assert probes.values["proxy_targets"] == [{"kind": "current", "id": None}]
     assert repository.completed == ("event-1", 17, ["run-1"])
+    assert repository.bound == ("event-1", 17)
 
 
 @pytest.mark.asyncio
@@ -145,6 +150,7 @@ async def test_webhook_defers_probe_during_new_account_stabilization():
     assert 1 <= repository.retried[2] <= stabilization_seconds
     assert account_service.auto_bound is False
     assert probes.values is None
+    assert repository.bound == ("event-new-account", 17)
 
 
 @pytest.mark.asyncio

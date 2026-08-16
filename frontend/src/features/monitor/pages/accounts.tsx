@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import {
   Activity,
   BatteryFull,
@@ -16,6 +17,7 @@ import {
   Power,
   PowerOff,
   RefreshCw,
+  ScanSearch,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -97,6 +99,7 @@ type RecoveryGuardFilter = 'all' | 'true' | 'false'
 
 export function AccountsPage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [search, setSearch] = useState('')
@@ -216,6 +219,21 @@ export function AccountsPage() {
       toast.success(
         `已选择全部 ${result.selectable} 个可检测账号${result.excluded ? `，跳过 ${result.excluded} 个鉴权异常账号` : ''}`
       )
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+  const accountSsoReportMutation = useMutation({
+    mutationFn: (accountIds: number[]) => api.createAccountSsoReport(accountIds),
+    onSuccess: (result) => {
+      const skipped = result.missingAccountIds.length
+      const message = `已创建 SSO 检测报告，包含 ${result.included} 个账号`
+      if (skipped) {
+        toast.warning(`${message}；${skipped} 个账号缺少 SSO，已跳过`)
+      } else {
+        toast.success(message)
+      }
+      void client.invalidateQueries({ queryKey: ['sso-reports'] })
+      void navigate({ to: '/sso-reports' })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -365,8 +383,9 @@ export function AccountsPage() {
   const batchActionPending = batchAccountMutation.isPending
   const egressBindingPending = egressBindingMutation.isPending
   const deletePending = deleteAccountsMutation.isPending
+  const ssoReportPending = accountSsoReportMutation.isPending
   const selectionActionPending =
-    batchActionPending || egressBindingPending || deletePending
+    batchActionPending || egressBindingPending || deletePending || ssoReportPending
   const bindableEgress = (egress.data?.items ?? []).filter(
     (node) => node.enabled && node.proxyConfigured
   )
@@ -375,7 +394,7 @@ export function AccountsPage() {
     <Page>
       <PageHeader
         title='账号探针'
-        description='账号列表实时来自 grok2api；本地仅叠加风险判定，不保存账号凭据或账号镜像。'
+        description='账号列表实时来自 grok2api；本地叠加风险判定，并保存注册机联动提供的 SSO 用于检测。'
         descriptionAsHint
         actions={
           <>
@@ -429,6 +448,14 @@ export function AccountsPage() {
                 }}
               >
                 <Play />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`检测已选 ${selected.length} 个账号的 SSO`}
+                pending={ssoReportPending}
+                disabled={selectionActionPending || selected.length === 0}
+                onClick={() => accountSsoReportMutation.mutate(selected)}
+              >
+                <ScanSearch />
               </ToolbarAction>
               <ToolbarAction
                 label={`批量设置 ${selected.length} 个已选账号的出口`}

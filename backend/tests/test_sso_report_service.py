@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.integrations.sso.checker import SsoCredential
 from app.persistence.database import Database
+from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.sso_report_repository import SsoReportRepository
 from app.services.sso_report_service import SsoReportService
 
@@ -88,6 +89,40 @@ async def test_each_execution_persists_one_credential_free_report(tmp_path: Path
         assert checker_factory.values == [
             ("http://proxy-user:proxy-pass@127.0.0.1:8080", 12, 35)
         ]
+    finally:
+        await service.stop()
+        database.dispose()
+
+
+async def test_account_report_skips_accounts_without_stored_sso(tmp_path: Path) -> None:
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    register_events = RegisterEventRepository(database)
+    register_events.receive(
+        {
+            "event_id": "registration:alpha:grok2api-imported",
+            "email": "alpha@example.test",
+            "sso": "RAW-ALPHA",
+        }
+    )
+    register_events.complete("registration:alpha:grok2api-imported", 17, [])
+    service = SsoReportService(
+        SsoReportRepository(database),
+        register_events=register_events,
+        checker_factory=CheckerFactory(),
+    )
+    await service.start()
+    try:
+        queued = service.create_for_accounts([17, 29])
+
+        assert queued["requested"] == 2
+        assert queued["included"] == 1
+        assert queued["missingAccountIds"] == [29]
+        report = await wait_for_terminal(service, queued["id"])
+        assert report["status"] == "completed"
+        assert report["total"] == 1
+        assert report["results"][0]["expected_email"] == "alpha@example.test"
+        assert "RAW-ALPHA" not in str(report)
     finally:
         await service.stop()
         database.dispose()

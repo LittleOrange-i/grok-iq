@@ -397,6 +397,7 @@ class RegisterWebhookEvent(Base):
     event_type: Mapped[str] = mapped_column(String(80), default="", nullable=False)
     registration_id: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    sso: Mapped[str] = mapped_column(Text, default="", nullable=False)
     grok2api_account_id: Mapped[int | None] = mapped_column(Integer)
     bot_risk: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bfs: Mapped[str] = mapped_column(String(120), default="", nullable=False)

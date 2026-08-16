@@ -70,7 +70,10 @@ sso_report_repository = SsoReportRepository(database)
 runtime_settings_service = RuntimeSettingsService(settings, settings_repository)
 auth_service = AuthService(settings, auth_repository)
 chat_service = ChatService(settings=settings, providers=chat_provider_repository)
-sso_report_service = SsoReportService(sso_report_repository)
+sso_report_service = SsoReportService(
+    sso_report_repository,
+    register_events=register_event_repository,
+)
 grok_client = Grok2APIClient(settings)
 wechat_client = WeChatTestAccountClient(settings)
 wechat_notification_service = WeChatAccountNotificationService(

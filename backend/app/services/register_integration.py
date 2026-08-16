@@ -116,6 +116,9 @@ class RegisterIntegrationService:
         try:
             account = await self._registered_account(event)
             account_id = int(account.get("id") or 0)
+            self.repository.bind_account(event_id, account_id)
+            if self.settings.initial_probe_on_register:
+                self._ensure_initial_probe_ready(event, account)
             await self._record_registration_risk(event_id, event, account)
             run_ids = await self._enqueue_initial_probe(event_id, account)
             self.repository.complete(event_id, account_id, run_ids)
@@ -139,8 +142,6 @@ class RegisterIntegrationService:
         )
         if account is None:
             raise RegisteredAccountPending("grok2api 中尚未发现该注册账号")
-        if self.settings.initial_probe_on_register:
-            self._ensure_initial_probe_ready(event, account)
         return account
 
     async def _record_registration_risk(

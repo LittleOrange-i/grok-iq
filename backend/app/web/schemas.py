@@ -489,10 +489,15 @@ class SsoReportCreateInput(BaseModel):
     )
 
 
+class AccountSsoReportInput(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=1000)
+
+
 class RegisterAccountEvent(BaseModel):
     event_id: str = Field(default="", max_length=120)
     event_type: str = Field(default="grok2api.account_imported", max_length=80)
     email: str = Field(min_length=3, max_length=255)
+    sso: str = Field(default="", max_length=20000)
     grok2api_account_id: int | None = None
     bot_risk: bool = False
     bfs: int | str | None = None
@@ -504,6 +509,7 @@ class RegisterAccountEvent(BaseModel):
         self.event_id = self.event_id.strip()
         self.event_type = self.event_type.strip() or "grok2api.account_imported"
         self.email = self.email.strip().lower()
+        self.sso = self.sso.strip()
         self.registration_id = self.registration_id.strip()
         self.occurred_at = self.occurred_at.strip()
         if "@" not in self.email:

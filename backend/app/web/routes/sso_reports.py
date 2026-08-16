@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Response, status
 
 from app.services.sso_report_service import SsoReportService
-from app.web.schemas import BulkIdsInput, SsoReportCreateInput
+from app.web.schemas import AccountSsoReportInput, BulkIdsInput, SsoReportCreateInput
 
 
 def build_sso_reports_router(service: SsoReportService) -> APIRouter:
@@ -24,6 +24,12 @@ def build_sso_reports_router(service: SsoReportService) -> APIRouter:
             concurrency=payload.concurrency,
             request_timeout_seconds=payload.request_timeout_seconds,
         )
+
+    @router.post("/accounts", status_code=status.HTTP_202_ACCEPTED)
+    async def create_account_report(
+        payload: AccountSsoReportInput,
+    ) -> dict[str, Any]:
+        return service.create_for_accounts(payload.account_ids)
 
     @router.get("/{report_id}")
     def report_detail(report_id: str) -> dict[str, Any]:

@@ -16,6 +16,7 @@ from app.integrations.sso import (
     SsoCredentialLoader,
     normalize_proxy,
 )
+from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.sso_report_repository import SsoReportRepository
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,12 @@ class SsoReportService:
     def __init__(
         self,
         repository: SsoReportRepository,
+        register_events: RegisterEventRepository | None = None,
         checker: SsoChecker | None = None,
         checker_factory: SsoCheckerFactory | None = None,
     ) -> None:
         self.repository = repository
+        self.register_events = register_events
         if checker is not None and checker_factory is not None:
             raise ValueError("checker 和 checker_factory 不能同时设置")
         self.checker_factory = checker_factory or (
@@ -91,9 +94,61 @@ class SsoReportService:
         concurrency: int = 8,
         request_timeout_seconds: int = 20,
     ) -> dict[str, Any]:
+        credentials = SsoCredentialLoader.load(content)
+        return self._create_with_credentials(
+            name,
+            credentials,
+            proxy,
+            concurrency=concurrency,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+
+    def create_for_accounts(self, account_ids: list[int]) -> dict[str, Any]:
+        if self.register_events is None:
+            raise RuntimeError("账号 SSO 存储尚未配置")
+        normalized = list(
+            dict.fromkeys(int(value) for value in account_ids if int(value) > 0)
+        )
+        stored = self.register_events.sso_for_accounts(normalized)
+        credentials = [
+            SsoCredential(
+                token=stored[account_id]["sso"],
+                expected_email=stored[account_id]["email"],
+                label=stored[account_id]["email"] or f"账号 {account_id}",
+            )
+            for account_id in normalized
+            if account_id in stored
+        ]
+        missing_account_ids = [
+            account_id for account_id in normalized if account_id not in stored
+        ]
+        if not credentials:
+            raise ValueError("已选账号均没有可用 SSO")
+        report = self._create_with_credentials(
+            app_now().strftime("账号 SSO 检测 · %Y-%m-%d %H:%M"),
+            credentials,
+            "",
+            concurrency=8,
+            request_timeout_seconds=20,
+        )
+        return {
+            **report,
+            "requested": len(normalized),
+            "included": len(credentials),
+            "missingAccountIds": missing_account_ids,
+        }
+
+    def _create_with_credentials(
+        self,
+        name: str,
+        credentials: list[SsoCredential],
+        proxy: str,
+        *,
+        concurrency: int,
+        request_timeout_seconds: int,
+    ) -> dict[str, Any]:
         if self._task is None or self._task.done():
             raise RuntimeError("SSO 后台检测服务尚未启动")
-        credentials = SsoCredentialLoader.load(content)
         if not credentials:
             raise ValueError("至少输入一行 SSO")
         if len(credentials) > 1000:
