@@ -4,6 +4,7 @@ import { render } from 'vitest-browser-react'
 import { userEvent } from 'vitest/browser'
 import { api, type SystemVersionInfo } from '@/lib/api'
 import {
+  localDateKey,
   SYSTEM_UPDATE_DISMISS_KEY,
   SYSTEM_UPDATE_PREVIEW_EVENT,
 } from '@/lib/system-update'
@@ -34,37 +35,52 @@ async function renderDialog() {
 
 describe('SystemUpdateDialog', () => {
   beforeEach(() => {
-    window.sessionStorage.clear()
+    window.localStorage.clear()
     vi.restoreAllMocks()
     vi.spyOn(api, 'systemVersion').mockResolvedValue(update)
   })
 
-  it('shows a newer GitHub Release and can be dismissed for the session', async () => {
+  it('shows a newer GitHub Release and can be dismissed for today', async () => {
     const screen = await renderDialog()
 
     await expect
       .element(screen.getByRole('dialog', { name: '发现 GrokIQ 新版本' }))
       .toBeInTheDocument()
     await userEvent.click(
-      screen.getByRole('button', { name: '本次会话不再提示' })
+      screen.getByRole('button', { name: '今日不再提醒' })
     )
 
-    expect(window.sessionStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)).toBe(
-      'v1.1.0'
+    expect(window.localStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)).toBe(
+      JSON.stringify({ version: 'v1.1.0', date: localDateKey() })
     )
     await expect
       .element(screen.getByRole('dialog', { name: '发现 GrokIQ 新版本' }))
       .not.toBeInTheDocument()
   })
 
-  it('keeps a dismissed version closed after remounting', async () => {
-    window.sessionStorage.setItem(SYSTEM_UPDATE_DISMISS_KEY, 'v1.1.0')
+  it('keeps a same-day dismissal closed after remounting', async () => {
+    window.localStorage.setItem(
+      SYSTEM_UPDATE_DISMISS_KEY,
+      JSON.stringify({ version: 'v1.1.0', date: localDateKey() })
+    )
     const screen = await renderDialog()
 
     await vi.waitFor(() => expect(api.systemVersion).toHaveBeenCalledOnce())
     await expect
       .element(screen.getByRole('dialog', { name: '发现 GrokIQ 新版本' }))
       .not.toBeInTheDocument()
+  })
+
+  it('shows the same version again on the next day', async () => {
+    window.localStorage.setItem(
+      SYSTEM_UPDATE_DISMISS_KEY,
+      JSON.stringify({ version: 'v1.1.0', date: '1999-01-01' })
+    )
+    const screen = await renderDialog()
+
+    await expect
+      .element(screen.getByRole('dialog', { name: '发现 GrokIQ 新版本' }))
+      .toBeInTheDocument()
   })
 
   it('shows a development-only preview without dismissing a real version', async () => {
@@ -83,6 +99,6 @@ describe('SystemUpdateDialog', () => {
 
     await expect.element(screen.getByText('开发预览')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '关闭预览' }))
-    expect(window.sessionStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)).toBeNull()
+    expect(window.localStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)).toBeNull()
   })
 })

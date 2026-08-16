@@ -11,10 +11,14 @@ import { toast } from 'sonner'
 import { api, type SystemVersionInfo } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import {
+  localDateKey,
+  parseDismissedUpdate,
+  shouldSuppressUpdateDialog,
   SYSTEM_UPDATE_COMMANDS,
   SYSTEM_UPDATE_DISMISS_KEY,
   SYSTEM_UPDATE_PREVIEW_EVENT,
   SYSTEM_VERSION_QUERY_KEY,
+  type DismissedUpdate,
 } from '@/lib/system-update'
 import { getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -29,17 +33,22 @@ import {
 } from '@/components/ui/dialog'
 import { MarkdownView } from '@/components/formatted-content'
 
-function dismissedUpdateVersion() {
+function readDismissedUpdate() {
   try {
-    return window.sessionStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY) ?? ''
+    return parseDismissedUpdate(
+      window.localStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)
+    )
   } catch {
-    return ''
+    return null
   }
 }
 
-function rememberDismissedVersion(version: string) {
+function rememberDismissedUpdate(value: DismissedUpdate) {
   try {
-    window.sessionStorage.setItem(SYSTEM_UPDATE_DISMISS_KEY, version)
+    window.localStorage.setItem(
+      SYSTEM_UPDATE_DISMISS_KEY,
+      JSON.stringify(value)
+    )
   } catch {
     // The in-memory state below still closes the dialog for this page.
   }
@@ -55,9 +64,7 @@ export function SystemUpdateDialog() {
         ? 3_000
         : 5 * 60_000,
   })
-  const [dismissedVersion, setDismissedVersion] = useState(
-    dismissedUpdateVersion
-  )
+  const [dismissedUpdate, setDismissedUpdate] = useState(readDismissedUpdate)
   const [preview, setPreview] = useState<SystemVersionInfo | null>(null)
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -77,7 +84,7 @@ export function SystemUpdateDialog() {
     isPreview ||
     (info?.updateAvailable &&
       latestVersion &&
-      dismissedVersion !== latestVersion)
+      !shouldSuppressUpdateDialog(latestVersion, dismissedUpdate))
   )
 
   const dismiss = () => {
@@ -86,8 +93,9 @@ export function SystemUpdateDialog() {
       return
     }
     if (!latestVersion) return
-    rememberDismissedVersion(latestVersion)
-    setDismissedVersion(latestVersion)
+    const next = { version: latestVersion, date: localDateKey() }
+    rememberDismissedUpdate(next)
+    setDismissedUpdate(next)
   }
 
   const copyCommands = () => {
@@ -167,7 +175,7 @@ export function SystemUpdateDialog() {
 
         <DialogFooter className='border-t bg-muted/15 p-4 sm:px-6'>
           <Button type='button' variant='outline' onClick={dismiss}>
-            {isPreview ? '关闭预览' : '本次会话不再提示'}
+            {isPreview ? '关闭预览' : '今日不再提醒'}
           </Button>
           <Button asChild>
             <a href={info.releaseUrl} target='_blank' rel='noreferrer'>

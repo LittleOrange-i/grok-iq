@@ -10,6 +10,43 @@ export const SYSTEM_UPDATE_COMMANDS = [
 export const SYSTEM_UPDATE_DISMISS_KEY = 'grokiq-dismissed-update-version'
 export const SYSTEM_UPDATE_PREVIEW_EVENT = 'grokiq-system-update-preview'
 
+export type DismissedUpdate = {
+  version: string
+  date: string
+}
+
+export function localDateKey(now = new Date()) {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function parseDismissedUpdate(raw: string | null): DismissedUpdate | null {
+  if (!raw) return null
+  try {
+    const value = JSON.parse(raw) as Partial<DismissedUpdate>
+    const version = String(value.version || '').trim()
+    const date = String(value.date || '').trim()
+    if (version && date) return { version, date }
+  } catch {
+    // Ignore the previous session-only version string.
+  }
+  return null
+}
+
+export function shouldSuppressUpdateDialog(
+  latestVersion: string,
+  dismissed: DismissedUpdate | null,
+  now = new Date()
+) {
+  return (
+    Boolean(latestVersion) &&
+    dismissed?.version === latestVersion &&
+    dismissed.date === localDateKey(now)
+  )
+}
+
 export function buildSystemUpdatePreview(
   current: SystemVersionInfo
 ): SystemVersionInfo {
@@ -30,7 +67,7 @@ export function buildSystemUpdatePreview(
       '',
       '- 展示 GitHub Release 更新说明',
       '- 提供 Docker Compose 更新命令',
-      '- 支持关闭本次提醒',
+      '- 支持今日不再提醒',
     ].join('\n'),
     publishedAt: new Date().toISOString(),
     checkedAt: new Date().toISOString(),
