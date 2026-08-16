@@ -1023,7 +1023,11 @@ class ProbeManager:
         was_enabled = bool(account.get("enabled"))
         if was_enabled:
             await self.client.set_account_enabled(account_id, False)
-        until = utc_now() + timedelta(minutes=self.settings.quarantine_minutes)
+        until = (
+            utc_now() + timedelta(minutes=self.settings.quarantine_minutes)
+            if self.settings.auto_quarantine_recovery_enabled
+            else None
+        )
         quarantined = self.accounts.set_manual_status(
             account_id=account_id,
             status="quarantined",
@@ -1037,9 +1041,14 @@ class ProbeManager:
             account_id=account_id,
             kind="auto_quarantine",
             severity="critical",
-            title="账号已被自动暂时停用",
+            title="账号已被自动停用",
             detail={
                 "quarantineUntil": app_isoformat(until),
+                "recoveryMode": (
+                    "temporary"
+                    if self.settings.auto_quarantine_recovery_enabled
+                    else "permanent"
+                ),
                 "riskScore": assessment["risk_score"],
             },
         )

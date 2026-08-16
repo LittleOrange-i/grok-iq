@@ -156,6 +156,24 @@ def test_quarantine_recovery_setting_is_persisted_and_exposed(tmp_path: Path):
     assert reloaded_settings.quarantine_recovery_enabled is False
 
 
+def test_auto_quarantine_recovery_policy_is_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update({"auto_quarantine_recovery_enabled": False})
+
+    assert changed == ["auto_quarantine_recovery_enabled"]
+    assert settings.auto_quarantine_recovery_enabled is False
+    assert service.public_view()["autoQuarantineRecoveryEnabled"] is False
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded_settings.auto_quarantine_recovery_enabled is False
+
+
 def test_register_stabilization_setting_is_persisted_and_exposed(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
 

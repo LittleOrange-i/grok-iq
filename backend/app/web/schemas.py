@@ -390,6 +390,9 @@ class RuntimeSettingsInput(BaseModel):
     min_generation_ms: int | None = Field(default=None, alias="minGenerationMs", ge=1, le=60_000)
     minimum_output_tokens: int | None = Field(default=None, alias="minimumOutputTokens", ge=1, le=4096)
     auto_quarantine: bool | None = Field(default=None, alias="autoQuarantine")
+    auto_quarantine_recovery_enabled: bool | None = Field(
+        default=None, alias="autoQuarantineRecoveryEnabled"
+    )
     quarantine_minutes: int | None = Field(default=None, alias="quarantineMinutes", ge=1, le=7 * 24 * 60)
     clear_secrets: list[SecretSettingName] = Field(default_factory=list, alias="clearSecrets")
 

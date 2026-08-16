@@ -341,16 +341,16 @@ export function SettingsRiskTab({
       <SettingsCard
         icon={Power}
         title='自动隔离'
-        description='配置高风险账号的自动停用和恢复时间。关闭后仍会记录并展示风险状态。'
+        description='配置高风险账号的自动停用方式。可以在指定时间后恢复，也可以保持停用直到人工恢复。'
         descriptionAsHint
       >
-        <div className='grid overflow-hidden rounded-xl border lg:grid-cols-[minmax(0,1fr)_22rem]'>
+        <div className='grid overflow-hidden rounded-xl border lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.72fr)_14rem]'>
           <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
             <div className='flex items-center gap-1.5 text-sm font-medium'>
-              自动暂时停用高风险账号
+              自动停用高风险账号
               <InfoTooltip
-                label='自动暂时停用高风险账号'
-                content={`重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 暂时停用账号`}
+                label='自动停用高风险账号'
+                content={`重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 停用账号`}
               />
             </div>
             <Switch
@@ -358,12 +358,29 @@ export function SettingsRiskTab({
               onCheckedChange={(value) => set('autoQuarantine', value)}
             />
           </div>
-          <div className='grid min-h-20 grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 border-t px-4 py-3 lg:border-t-0 lg:border-l'>
+          <div className='flex min-h-20 items-center justify-between gap-4 border-t px-4 py-3 lg:border-t-0 lg:border-l'>
+            <div className='flex items-center gap-1.5 text-sm font-medium'>
+              到期自动恢复
+              <InfoTooltip
+                label='到期自动恢复'
+                content='开启后按停用时长自动启用并降至最低优先级；关闭后保持停用，只能人工恢复。'
+              />
+            </div>
+            <Switch
+              checked={form.autoQuarantineRecoveryEnabled}
+              disabled={!form.autoQuarantine}
+              onCheckedChange={(value) =>
+                set('autoQuarantineRecoveryEnabled', value)
+              }
+              aria-label='自动隔离到期后恢复账号'
+            />
+          </div>
+          <div className='grid min-h-20 grid-cols-[minmax(0,1fr)_7rem] items-center gap-3 border-t px-4 py-3 lg:border-t-0 lg:border-l'>
             <div className='flex items-center gap-1.5 text-sm font-medium'>
               停用时长
               <InfoTooltip
                 label='停用时长'
-                content='单位为分钟；到期后自动启用并降至最低优先级。'
+                content='单位为分钟，仅在开启到期自动恢复时使用。'
               />
             </div>
             <Input
@@ -371,7 +388,10 @@ export function SettingsRiskTab({
               value={form.quarantineMinutes}
               min={1}
               max={10080}
-              disabled={!form.autoQuarantine}
+              disabled={
+                !form.autoQuarantine ||
+                !form.autoQuarantineRecoveryEnabled
+              }
               aria-label='停用时长（分钟）'
               onChange={(event) =>
                 set('quarantineMinutes', Number(event.target.value))

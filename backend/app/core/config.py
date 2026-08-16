@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     min_generation_ms: int = Field(default=250, ge=1, le=60_000)
     minimum_output_tokens: int = Field(default=32, ge=1, le=4096)
     auto_quarantine: bool = False
+    auto_quarantine_recovery_enabled: bool = True
     quarantine_minutes: int = Field(default=30, ge=1, le=7 * 24 * 60)
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -184,6 +185,7 @@ class Settings(BaseSettings):
         "min_generation_ms",
         "minimum_output_tokens",
         "auto_quarantine",
+        "auto_quarantine_recovery_enabled",
         "quarantine_minutes",
     )
     SECRET_RUNTIME_FIELDS: ClassVar[frozenset[str]] = frozenset(

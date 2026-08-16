@@ -57,6 +57,7 @@ export type SettingsForm = {
   minGenerationMs: number
   minimumOutputTokens: number
   autoQuarantine: boolean
+  autoQuarantineRecoveryEnabled: boolean
   quarantineMinutes: number
 }
 
@@ -185,6 +186,8 @@ export function toSettingsForm(
     minGenerationMs: settings.minGenerationMs,
     minimumOutputTokens: settings.minimumOutputTokens,
     autoQuarantine: settings.autoQuarantine,
+    autoQuarantineRecoveryEnabled:
+      settings.autoQuarantineRecoveryEnabled ?? true,
     quarantineMinutes: settings.quarantineMinutes,
   }
 }
@@ -241,6 +244,7 @@ export function buildSettingsPayload(
     minGenerationMs: form.minGenerationMs,
     minimumOutputTokens: form.minimumOutputTokens,
     autoQuarantine: form.autoQuarantine,
+    autoQuarantineRecoveryEnabled: form.autoQuarantineRecoveryEnabled,
     quarantineMinutes: form.quarantineMinutes,
     clearSecrets,
   }

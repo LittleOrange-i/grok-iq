@@ -673,6 +673,7 @@ export type RuntimeSettings = {
   minGenerationMs: number
   minimumOutputTokens: number
   autoQuarantine: boolean
+  autoQuarantineRecoveryEnabled: boolean
   quarantineMinutes: number
   bootstrap: {
     host: string
@@ -747,6 +748,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'minGenerationMs'
     | 'minimumOutputTokens'
     | 'autoQuarantine'
+    | 'autoQuarantineRecoveryEnabled'
     | 'quarantineMinutes'
   >
 > & {
@@ -785,6 +787,7 @@ type RuntimeSettingsWire = Omit<
   | 'scheduledProbeRegisterCooldownMinutes'
   | 'registerProbeStabilizationSeconds'
   | 'registerProbeSwitchOnDegradation'
+  | 'autoQuarantineRecoveryEnabled'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
@@ -815,6 +818,7 @@ type RuntimeSettingsWire = Omit<
   scheduledProbeRegisterCooldownMinutes?: number
   registerProbeStabilizationSeconds?: number
   registerProbeSwitchOnDegradation?: boolean
+  autoQuarantineRecoveryEnabled?: boolean
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -835,6 +839,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
+    autoQuarantineRecoveryEnabled:
+      value.autoQuarantineRecoveryEnabled ?? true,
     scheduledProbeRegisterCooldownMinutes:
       value.scheduledProbeRegisterCooldownMinutes ?? 360,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,

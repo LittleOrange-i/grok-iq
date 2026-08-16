@@ -989,6 +989,42 @@ class DisabledFakeGrokClient(FakeGrokClient):
         self.account_enabled = False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_enabled", [True, False])
+async def test_auto_quarantine_records_selected_recovery_policy(
+    tmp_path: Path,
+    recovery_enabled: bool,
+):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    accounts = AccountRepository(database)
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            auto_quarantine=True,
+            auto_quarantine_recovery_enabled=recovery_enabled,
+            quarantine_minutes=30,
+        ),
+        repository=ProbeRepository(database),
+        accounts=accounts,
+        client=FakeGrokClient(),  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+
+    result = await manager._apply_auto_quarantine(42, {  # noqa: SLF001
+        "monitor_status": "high_risk",
+        "risk_score": 88,
+    })
+
+    assert result["monitor_status"] == "quarantined"
+    assert result["disabled_by_monitor"] is True
+    if recovery_enabled:
+        assert result["quarantine_until"] is not None
+    else:
+        assert result["quarantine_until"] is None
+        assert accounts.due_quarantines() == []
+
+
 def test_worker_activity_stats_use_rolling_process_window(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
