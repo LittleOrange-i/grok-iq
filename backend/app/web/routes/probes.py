@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
-from app.core.clock import account_created_at, app_isoformat
+from app.core.clock import account_created_at, app_isoformat, ensure_utc
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
@@ -290,7 +291,17 @@ class ProbesRouter:
         search: str = "",
         account_id: int | None = Query(default=None, alias="accountId"),
         plan_id: str | None = Query(default=None, alias="planId"),
+        created_from: Annotated[datetime | None, Query(alias="createdFrom")] = None,
+        created_to: Annotated[datetime | None, Query(alias="createdTo")] = None,
     ) -> dict[str, Any]:
+        normalized_from = ensure_utc(created_from)
+        normalized_to = ensure_utc(created_to)
+        if (
+            normalized_from is not None
+            and normalized_to is not None
+            and normalized_from > normalized_to
+        ):
+            raise ValueError("任务开始时间不能晚于结束时间")
         payload = self.repository.list_runs(
             page=page,
             page_size=page_size,
@@ -298,6 +309,8 @@ class ProbesRouter:
             search=search,
             account_id=account_id,
             plan_id=plan_id,
+            created_from=normalized_from,
+            created_to=normalized_to,
         )
         payload["items"] = await self._with_account_created_at(payload.get("items", []))
         return payload
@@ -326,12 +339,24 @@ class ProbesRouter:
         search: str = "",
         account_id: int | None = Query(default=None, alias="accountId"),
         plan_id: str | None = Query(default=None, alias="planId"),
+        created_from: Annotated[datetime | None, Query(alias="createdFrom")] = None,
+        created_to: Annotated[datetime | None, Query(alias="createdTo")] = None,
     ) -> dict[str, Any]:
+        normalized_from = ensure_utc(created_from)
+        normalized_to = ensure_utc(created_to)
+        if (
+            normalized_from is not None
+            and normalized_to is not None
+            and normalized_from > normalized_to
+        ):
+            raise ValueError("任务开始时间不能晚于结束时间")
         return self.repository.select_run_ids(
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
+            created_from=normalized_from,
+            created_to=normalized_to,
         )
 
     async def probe_run_detail(self, run_id: str) -> dict[str, Any]:

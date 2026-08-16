@@ -112,6 +112,19 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
     assert "account_created_at" in probe_run_columns
     assert "probe_duration_estimates" in tables
     assert "sso_reports" in tables
+    register_event_columns = {
+        value["name"]
+        for value in inspect(database.engine).get_columns("register_webhook_events")
+    }
+    assert {"sso", "sso_received_at"} <= register_event_columns
+    register_event_indexes = {
+        value["name"]
+        for value in inspect(database.engine).get_indexes("register_webhook_events")
+    }
+    assert {
+        "ix_register_webhook_resolved_sso_received",
+        "ix_register_webhook_upstream_sso_received",
+    } <= register_event_indexes
     sso_report_columns = {
         value["name"] for value in inspect(database.engine).get_columns("sso_reports")
     }
@@ -593,6 +606,30 @@ def test_runs_can_be_searched_by_account_name_email_or_id(repository: ProbeRepos
     result = repository.list_runs(page=1, page_size=20, search="301")
     assert result["total"] == 1
     assert result["items"][0]["account_id"] == 301
+
+
+def test_runs_can_be_filtered_by_indexed_creation_range(repository: ProbeRepository):
+    old_run_id = create_run(repository, account_id=311)
+    recent_run_id = create_run(repository, account_id=312)
+    now = utc_now().replace(microsecond=0)
+    with repository.database.transaction() as session:
+        session.get(ProbeRun, old_run_id).created_at = now - timedelta(days=2)  # type: ignore[union-attr]
+        session.get(ProbeRun, recent_run_id).created_at = now  # type: ignore[union-attr]
+
+    result = repository.list_runs(
+        page=1,
+        page_size=20,
+        created_from=now - timedelta(hours=1),
+        created_to=now + timedelta(hours=1),
+    )
+    selection = repository.select_run_ids(
+        created_from=now - timedelta(hours=1),
+        created_to=now + timedelta(hours=1),
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == recent_run_id
+    assert [item["id"] for item in selection["items"]] == [recent_run_id]
 
 
 def test_runs_store_and_backfill_account_created_at(repository: ProbeRepository):

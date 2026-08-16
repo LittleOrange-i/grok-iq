@@ -44,12 +44,16 @@ class ProbeRunReader:
         search: str = "",
         account_id: int | None = None,
         plan_id: str | None = None,
+        created_from: Any = None,
+        created_to: Any = None,
     ) -> dict[str, Any]:
         filters = self._run_list_filters(
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
+            created_from=created_from,
+            created_to=created_to,
         )
         with self.database.session() as session:
             values = session.execute(
@@ -93,12 +97,16 @@ class ProbeRunReader:
         search: str = "",
         account_id: int | None = None,
         plan_id: str | None = None,
+        created_from: Any = None,
+        created_to: Any = None,
     ) -> dict[str, Any]:
         filters = self._run_list_filters(
             status=status,
             search=search,
             account_id=account_id,
             plan_id=plan_id,
+            created_from=created_from,
+            created_to=created_to,
         )
         with self.database.session() as session:
             total, active_count = session.execute(
@@ -115,7 +123,10 @@ class ProbeRunReader:
                 .limit(page_size)
             ).all()
             estimates = self._duration_estimates_for_runs(session, values)
-            executing_ids, restore_ids = self._blocked_account_ids(session)
+            page_account_ids = {int(run.account_id) for run in values}
+            executing_ids, restore_ids = self._blocked_account_ids(
+                session, account_ids=page_account_ids
+            )
             items = [
                 self._run_list_item(value, estimates, executing_ids, restore_ids)
                 for value in values
@@ -240,6 +251,8 @@ class ProbeRunReader:
         search: str,
         account_id: int | None,
         plan_id: str | None,
+        created_from: Any,
+        created_to: Any,
     ) -> list[Any]:
         filters: list[Any] = []
         if status:
@@ -257,13 +270,28 @@ class ProbeRunReader:
             filters.append(ProbeRun.account_id == account_id)
         if plan_id is not None:
             filters.append(ProbeRun.plan_id == plan_id)
+        if created_from is not None:
+            filters.append(ProbeRun.created_at >= created_from)
+        if created_to is not None:
+            filters.append(ProbeRun.created_at <= created_to)
         return filters
 
-    def _blocked_account_ids(self, session: Session) -> tuple[set[int], set[int]]:
+    def _blocked_account_ids(
+        self,
+        session: Session,
+        *,
+        account_ids: set[int] | None = None,
+    ) -> tuple[set[int], set[int]]:
+        if account_ids is not None and not account_ids:
+            return set(), set()
+        account_filter = (
+            ProbeRun.account_id.in_(account_ids) if account_ids is not None else None
+        )
+        scoped = (account_filter,) if account_filter is not None else ()
         executing_ids = set(
             session.scalars(
                 select(ProbeRun.account_id)
-                .where(ProbeRun.status.in_(self.executing_statuses))
+                .where(ProbeRun.status.in_(self.executing_statuses), *scoped)
                 .distinct()
             ).all()
         )
@@ -272,7 +300,8 @@ class ProbeRunReader:
                 select(ProbeRun.account_id)
                 .where(
                     ProbeRun.account_restore_status.in_(self.restore_statuses)
-                    | ProbeRun.diagnostic_activation_active.is_(True)
+                    | ProbeRun.diagnostic_activation_active.is_(True),
+                    *scoped,
                 )
                 .distinct()
             ).all()

@@ -177,6 +177,8 @@ export function RunsPage() {
   const client = useQueryClient()
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
+  const [createdFrom, setCreatedFrom] = useState('')
+  const [createdTo, setCreatedTo] = useState('')
   const [deferredSearch, searchPending] = useDebouncedValue(search.trim())
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
@@ -200,8 +202,21 @@ export function RunsPage() {
     detailScrollTopRef.current = 0
     setDetailId(id)
   }
+  const createdFromIso = toIsoDateTime(createdFrom)
+  const createdToIso = toIsoDateTime(createdTo)
+  const invalidTimeRange = Boolean(
+    createdFromIso && createdToIso && createdFromIso > createdToIso
+  )
   const query = useQuery({
-    queryKey: ['runs', status, deferredSearch, page, pageSize],
+    queryKey: [
+      'runs',
+      status,
+      deferredSearch,
+      createdFromIso,
+      createdToIso,
+      page,
+      pageSize,
+    ],
     queryFn: ({ signal }) =>
       api.runs(
         {
@@ -209,9 +224,12 @@ export function RunsPage() {
           pageSize,
           status: status === 'all' ? '' : status,
           search: deferredSearch,
+          createdFrom: createdFromIso,
+          createdTo: createdToIso,
         },
         signal
       ),
+    enabled: !invalidTimeRange,
     placeholderData: (previous) => previous,
     refetchInterval: (value) => {
       const activeCount = value.state.data?.activeCount
@@ -484,6 +502,8 @@ export function RunsPage() {
       api.runSelection({
         status: status === 'all' ? '' : status,
         search: deferredSearch,
+        createdFrom: createdFromIso,
+        createdTo: createdToIso,
       }),
     onSuccess: (result) => {
       setSelection(new Map(result.items.map((item) => [item.id, item])))
@@ -621,6 +641,7 @@ export function RunsPage() {
                 disabled={
                   showTableLoading ||
                   bulkPending ||
+                  invalidTimeRange ||
                   (query.data?.total ?? 0) === 0
                 }
                 onClick={() => {
@@ -750,6 +771,38 @@ export function RunsPage() {
               )}
             </div>
             <div className='flex flex-wrap items-center justify-end gap-2'>
+              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
+                <span>开始</span>
+                <Input
+                  type='datetime-local'
+                  value={createdFrom}
+                  max={createdTo || undefined}
+                  onChange={(event) => {
+                    beginTableInteraction()
+                    setCreatedFrom(event.target.value)
+                    setPage(1)
+                    clearSelection()
+                  }}
+                  className='h-9 w-auto min-w-44 text-xs'
+                  aria-label='任务创建开始时间'
+                />
+              </label>
+              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
+                <span>结束</span>
+                <Input
+                  type='datetime-local'
+                  value={createdTo}
+                  min={createdFrom || undefined}
+                  onChange={(event) => {
+                    beginTableInteraction()
+                    setCreatedTo(event.target.value)
+                    setPage(1)
+                    clearSelection()
+                  }}
+                  className='h-9 w-auto min-w-44 text-xs'
+                  aria-label='任务创建结束时间'
+                />
+              </label>
               <Select
                 value={status}
                 onValueChange={(value) => {
@@ -777,6 +830,11 @@ export function RunsPage() {
               </Select>
             </div>
           </div>
+          {invalidTimeRange && (
+            <p className='mb-4 text-xs text-destructive'>
+              开始时间需要早于或等于结束时间。
+            </p>
+          )}
           {query.isLoading && !query.data ? (
             <LoadingState />
           ) : (
@@ -833,13 +891,19 @@ export function RunsPage() {
                 ) : (
                   <EmptyState
                     title={
-                      deferredSearch || status !== 'all'
+                      deferredSearch ||
+                      status !== 'all' ||
+                      createdFrom ||
+                      createdTo
                         ? '未找到匹配任务'
                         : '暂无探针任务'
                     }
                     description={
-                      deferredSearch || status !== 'all'
-                        ? '请调整账号搜索词或任务状态筛选条件。'
+                      deferredSearch ||
+                      status !== 'all' ||
+                      createdFrom ||
+                      createdTo
+                        ? '请调整账号搜索词、任务状态或时间范围。'
                         : '从账号页面手动选择账号，或配置一个 Cron 计划。'
                     }
                   />
@@ -1267,11 +1331,12 @@ function RunRow({
         <div className='text-sm'>
           {run.current_round ? `第 ${run.current_round} 轮` : '—'}
         </div>
-        <div className='text-xs text-muted-foreground'>
+        <div className='flex items-center gap-1 text-xs text-muted-foreground'>
           <TargetKeyLabel
             value={run.current_target_key}
             egressNodeNames={egressNodeNames}
           />
+          <RunEgressIndicator run={run} egressNodeNames={egressNodeNames} />
         </div>
       </TableCell>
       <TableCell>{formatDate(run.created_at)}</TableCell>
@@ -1824,6 +1889,81 @@ function TargetKeyLabel({
       prefix='Node '
     />
   )
+}
+
+function RunEgressIndicator({
+  run,
+  egressNodeNames,
+}: {
+  run: ProbeRun
+  egressNodeNames: EgressNodeNameMap
+}) {
+  const configuredTargets = run.proxy_targets.map((target) =>
+    formatRunTarget(target.kind, target.id, egressNodeNames)
+  )
+  const currentTarget = run.current_target_key
+    ? formatRunTargetKey(run.current_target_key, egressNodeNames)
+    : '尚未进入探针步骤'
+  const accountBinding = run.account_settings_snapshot_at
+    ? run.original_egress_node_id
+      ? formatEgressNodeText(
+          egressNodeNames,
+          run.original_egress_node_id,
+          'Node '
+        )
+      : '未绑定固定出口'
+    : '任务尚未领取，暂无绑定快照'
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className='inline-flex size-6 shrink-0 cursor-help items-center justify-center rounded-md border bg-background text-muted-foreground'
+          tabIndex={0}
+          aria-label='查看当前任务出口'
+        >
+          <ServerCog className='size-3.5' />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className='max-w-96 space-y-1'>
+        <div className='font-medium'>当前任务出口</div>
+        <div>当前步骤：{currentTarget}</div>
+        <div>账号绑定：{accountBinding}</div>
+        <div>任务目标：{configuredTargets.join('、') || '未配置'}</div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function formatRunTarget(
+  kind: string,
+  nodeId: number | null,
+  egressNodeNames: EgressNodeNameMap
+) {
+  if (kind === 'current') return '账号当前出口'
+  if (kind === 'direct') return '上游调度（诊断）'
+  if (kind === 'egress' && nodeId != null) {
+    return formatEgressNodeText(egressNodeNames, nodeId, 'Node ')
+  }
+  return kind || '未知目标'
+}
+
+function formatRunTargetKey(
+  targetKey: string,
+  egressNodeNames: EgressNodeNameMap
+) {
+  if (targetKey === 'current') return '账号当前出口'
+  if (targetKey === 'direct') return '上游调度（诊断）'
+  if (targetKey.startsWith('egress:')) {
+    return formatEgressNodeText(egressNodeNames, targetKey.slice(7), 'Node ')
+  }
+  return targetKey
+}
+
+function toIsoDateTime(value: string) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
 }
 
 function RestoreFact({
