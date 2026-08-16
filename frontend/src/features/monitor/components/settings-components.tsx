@@ -193,7 +193,7 @@ export function WebhookContractDialog() {
         <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
           <DialogTitle>grok-register 请求协议</DialogTitle>
           <DialogDescription>
-            POST JSON；必填字段只有 email，探针策略由本页面统一维护。
+            POST JSON；必填字段只有 email，获取到 SSO 时建议一并传入。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 overflow-y-auto'>
@@ -230,6 +230,12 @@ function WebhookContract() {
       name: 'grok2api_account_id',
       type: 'integer',
       description: '已知时可传；未知时监控端按邮箱精确匹配。',
+    },
+    {
+      name: 'sso',
+      type: 'string',
+      description:
+        '原始 SSO，供账号中心检测使用；支持裸 token、sso= 前缀或 email----token。获取失败时可省略或传空字符串。',
     },
     {
       name: 'bot_risk',
@@ -270,7 +276,7 @@ function WebhookContract() {
         />
         <WebhookBodyExample
           title='推荐请求体'
-          description='调用方会重试时传 event_id，避免重复创建任务。'
+          description='传入稳定 event_id，并在注册机已获取 SSO 时携带原始值。'
           body={REGISTER_WEBHOOK_RECOMMENDED_BODY}
           onCopy={() =>
             copyBody(REGISTER_WEBHOOK_RECOMMENDED_BODY, '推荐请求体')

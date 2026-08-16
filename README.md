@@ -17,7 +17,7 @@ GrokIQ 将日常账号巡检集中到一个界面中：从账号筛选、批量�
 - **计划任务**：用 Cron 定期巡检，避免重复堆积任务。
 - **Worker 可观测性**：查看并发执行状态、阻塞原因和近期日志。
 - **聊天广场**：用于流式对话验证，支持多套模型配置、本地会话历史和 Markdown / HTML 预览。
-- **SSO 检测**：每行导入一个 SSO 批量检查登录态和 Bot 标记；每次执行保存独立报告，支持回看、筛选和批量删除。
+- **SSO 检测**：可按行导入 SSO，也可对注册联动已保存 SSO 的账号批量检查登录态和 Bot 标记；每次执行保存独立报告，支持回看、筛选和批量删除。
 
 ## 界面预览
 
@@ -156,7 +156,7 @@ GrokIQ 将日常账号巡检集中到一个界面中：从账号筛选、批量�
 - **风险标记**：按风险周期内全部出口样本的异常占比、连续异常、强信号和预期内容匹配情况计算账号状态；次数、占比、权重、封顶和状态保底分都能热更新。
 - **任务控制**：查看队列和 Worker，支持停止、重试、删除以及批量操作。
 - **结果回看**：从账号、任务或样本详情里直接看指标和原始输出，长内容按需展开。
-- **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可自动创建探针任务。
+- **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可保存 SSO、记录注册风险，并可选自动创建探针任务。
 - **SSO 报告**：仅 `bot=0` 记为正常，其他值记为风控标记；持久报告不保存 SSO、哈希或会话 ID。
 
 ## 风险因子怎么调
@@ -206,7 +206,7 @@ grok-register 注册完成
   -> grok_build 导入 Grok2API 成功
   -> Webhook 通知本项目
   -> 匹配 Grok2API 账号
-  -> 记录注册风险 / 可选自动创建探针
+  -> 保存可选 SSO / 记录注册风险 / 可选自动创建探针
 ```
 
 只有 `grok_build` 已被 Grok2API 接收后才会发送事件。注册成功但导入失败时不会提前触发 GrokIQ。
@@ -240,7 +240,8 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 ```json
 {
   "event_id": "registration:123:grok2api-imported",
-  "email": "user@example.com"
+  "email": "user@example.com",
+  "sso": "sso=..."
 }
 ```
 
@@ -252,6 +253,7 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 | `event_type` | string | 事件类型，默认 `grok2api.account_imported` |
 | `registration_id` | string | 调用方自己的注册记录 ID |
 | `grok2api_account_id` | integer | 已知时可传；未知时按邮箱匹配 |
+| `sso` | string | 原始 SSO；供账号页批量检测。支持裸 token、`sso=` 前缀或 `email----token` |
 | `bot_risk` | boolean | 注册阶段是否发现风控，默认 `false` |
 | `bfs` | string / integer | 注册阶段的 bfs 风控值 |
 | `occurred_at` | string | 事件发生时间，建议使用 ISO 8601 |
@@ -261,7 +263,8 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 ### 投递行为
 
 - `grok-register` 先把事件写入本地 Outbox，再由后台线程投递；网络错误或非 `2xx` 会自动退避重试。
-- 每个注册结果使用稳定的 `event_id`。本项目按事件 ID 去重，重复投递不会重复创建探针。
+- 每个注册结果使用稳定的 `event_id`。本项目按事件 ID 去重，重复投递不会重复创建探针；若后续重试带上新的 `sso`，会更新已保存的 SSO。
+- 事件列表和 SSO 报告都不回传原始 SSO。未提供 `sso` 的账号可以继续做探针，但不能从账号页发起 SSO 检测。
 - Webhook 返回 `2xx` 只表示本项目已接收。后续账号匹配、排队和探针执行由本项目继续处理。
 - 如果账号暂时还没出现在 Grok2API，本项目会继续重试匹配；关闭自动探针时仍会保留导入事件。
 - `grok-register` 的账号详情会显示投递状态、尝试次数、接收时间和最近错误，方便查联动问题。

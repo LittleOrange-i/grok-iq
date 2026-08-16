@@ -113,7 +113,8 @@ export const REGISTER_WEBHOOK_MINIMAL_BODY = `{
 }`
 export const REGISTER_WEBHOOK_RECOMMENDED_BODY = `{
   "event_id": "registration:123:grok2api-imported",
-  "email": "user@example.com"
+  "email": "user@example.com",
+  "sso": "sso=..."
 }`
 export const WECHAT_TEMPLATE_BODY = `{{first.DATA}}
 账号：{{account.DATA}}
