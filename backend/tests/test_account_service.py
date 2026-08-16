@@ -12,6 +12,7 @@ from app.integrations.grok2api.client import AccountBatchUpdateResult
 from app.persistence.account_repository import AccountRepository
 from app.persistence.database import Database
 from app.persistence.probe_repository import ProbeRepository
+from app.persistence.register_event_repository import RegisterEventRepository
 from app.services.account_service import QUARANTINE_RECOVERY_PRIORITY, AccountService
 
 
@@ -169,6 +170,34 @@ class EgressClient:
 class LockedProbeSettings:
     def account_settings_locked_ids(self, account_ids: set[int]) -> set[int]:
         return account_ids & {2}
+
+
+@pytest.mark.asyncio
+async def test_account_list_marks_stored_sso_availability(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    register_events = RegisterEventRepository(database)
+    register_events.receive(
+        {
+            "event_id": "registration:alpha:grok2api-imported",
+            "email": "alpha@example.test",
+            "sso": "RAW-ALPHA",
+            "grok2api_account_id": 1,
+        }
+    )
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=AccountListClient(),  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+        register_events=register_events,
+    )
+
+    result = await service.list_accounts(page=1, page_size=50)
+
+    assert result["items"][0]["ssoAvailable"] is True
+    assert result["items"][1]["ssoAvailable"] is False
+    database.dispose()
 
 
 @pytest.mark.asyncio

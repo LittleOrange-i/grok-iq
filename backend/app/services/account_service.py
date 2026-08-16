@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
+from app.persistence.register_event_repository import RegisterEventRepository
 
 QUARANTINE_RECOVERY_PRIORITY = -2_000_000_000
 
@@ -20,11 +21,13 @@ class AccountService:
         client: Grok2APIClient,
         accounts: AccountRepository,
         probes: ProbeRepository,
+        register_events: RegisterEventRepository | None = None,
     ):
         self.settings = settings
         self.client = client
         self.accounts = accounts
         self.probes = probes
+        self.register_events = register_events
 
     async def list_accounts(
         self,
@@ -42,8 +45,13 @@ class AccountService:
             upstream = await self.client.list_all_accounts(**upstream_filters)
             account_ids = [int(item.get("id") or 0) for item in upstream]
             assessments = self.accounts.get_assessments(account_ids)
+            sso_account_ids = self._account_ids_with_sso(account_ids)
             values = [
-                self._overlay(item, assessments.get(int(item.get("id") or 0)))
+                self._overlay(
+                    item,
+                    assessments.get(int(item.get("id") or 0)),
+                    sso_available=int(item.get("id") or 0) in sso_account_ids,
+                )
                 for item in upstream
                 if self._matches(item, search=search, enabled=enabled)
                 and self._matches_assessment(
@@ -69,16 +77,29 @@ class AccountService:
             params["search"] = search.strip()
         payload = await self.client.list_accounts(**params)
         items = list(payload.get("items", []))
-        assessments = self.accounts.get_assessments([int(item.get("id") or 0) for item in items])
+        account_ids = [int(item.get("id") or 0) for item in items]
+        assessments = self.accounts.get_assessments(account_ids)
+        sso_account_ids = self._account_ids_with_sso(account_ids)
         return {
             **payload,
-            "items": [self._overlay(item, assessments.get(int(item.get("id") or 0))) for item in items],
+            "items": [
+                self._overlay(
+                    item,
+                    assessments.get(int(item.get("id") or 0)),
+                    sso_available=int(item.get("id") or 0) in sso_account_ids,
+                )
+                for item in items
+            ],
         }
 
     async def detail(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         account = await self.client.get_account(account_id)
         return {
-            "account": self._overlay(account, self.accounts.get_assessment(account_id)),
+            "account": self._overlay(
+                account,
+                self.accounts.get_assessment(account_id),
+                sso_available=account_id in self._account_ids_with_sso([account_id]),
+            ),
             "history": self.probes.account_history(account_id, limit),
         }
 
@@ -498,10 +519,21 @@ class AccountService:
         auth_status = str(item.get("authStatus") or "")
         return not auth_status or auth_status == "active"
 
+    def _account_ids_with_sso(self, account_ids: list[int]) -> set[int]:
+        if self.register_events is None:
+            return set()
+        return self.register_events.account_ids_with_sso(account_ids)
+
     @staticmethod
-    def _overlay(item: dict[str, Any], assessment: dict[str, Any] | None) -> dict[str, Any]:
+    def _overlay(
+        item: dict[str, Any],
+        assessment: dict[str, Any] | None,
+        *,
+        sso_available: bool = False,
+    ) -> dict[str, Any]:
         return {
             **item,
+            "ssoAvailable": sso_available,
             "assessment": assessment
             or {
                 "account_id": int(item.get("id") or 0),

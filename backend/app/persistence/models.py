@@ -391,6 +391,16 @@ class RegisterWebhookEvent(Base):
     __tablename__ = "register_webhook_events"
     __table_args__ = (
         Index("ix_register_webhook_due", "status", "next_attempt_at"),
+        Index(
+            "ix_register_webhook_resolved_sso_received",
+            "resolved_account_id",
+            "sso_received_at",
+        ),
+        Index(
+            "ix_register_webhook_upstream_sso_received",
+            "grok2api_account_id",
+            "sso_received_at",
+        ),
     )
 
     event_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -398,6 +408,7 @@ class RegisterWebhookEvent(Base):
     registration_id: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     sso: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    sso_received_at: Mapped[datetime | None] = mapped_column(AppDateTime())
     grok2api_account_id: Mapped[int | None] = mapped_column(Integer)
     bot_risk: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     bfs: Mapped[str] = mapped_column(String(120), default="", nullable=False)

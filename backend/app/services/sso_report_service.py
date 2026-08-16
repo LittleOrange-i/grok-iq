@@ -110,17 +110,28 @@ class SsoReportService:
             dict.fromkeys(int(value) for value in account_ids if int(value) > 0)
         )
         stored = self.register_events.sso_for_accounts(normalized)
-        credentials = [
-            SsoCredential(
-                token=stored[account_id]["sso"],
-                expected_email=stored[account_id]["email"],
-                label=stored[account_id]["email"] or f"账号 {account_id}",
+        credentials: list[SsoCredential] = []
+        included_account_ids: set[int] = set()
+        for account_id in normalized:
+            item = stored.get(account_id)
+            if item is None:
+                continue
+            parsed = SsoCredentialLoader.load(str(item.get("sso") or ""))
+            if not parsed:
+                continue
+            email = str(item.get("email") or "")
+            credentials.append(
+                SsoCredential(
+                    token=parsed[0].token,
+                    expected_email=email or parsed[0].expected_email,
+                    label=email or parsed[0].label or f"账号 {account_id}",
+                )
             )
-            for account_id in normalized
-            if account_id in stored
-        ]
+            included_account_ids.add(account_id)
         missing_account_ids = [
-            account_id for account_id in normalized if account_id not in stored
+            account_id
+            for account_id in normalized
+            if account_id not in included_account_ids
         ]
         if not credentials:
             raise ValueError("已选账号均没有可用 SSO")

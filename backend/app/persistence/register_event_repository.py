@@ -23,6 +23,7 @@ class RegisterEventRepository:
     def receive(self, values: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         event_id = str(values["event_id"])
         now = utc_now()
+        incoming_sso = str(values.get("sso") or "").strip()
         try:
             with self.database.transaction() as session:
                 event = session.get(RegisterWebhookEvent, event_id)
@@ -35,7 +36,8 @@ class RegisterEventRepository:
                     ),
                     registration_id=str(values.get("registration_id") or ""),
                     email=str(values["email"]).lower(),
-                    sso=str(values.get("sso") or "").strip(),
+                    sso=incoming_sso,
+                    sso_received_at=now if incoming_sso else None,
                     grok2api_account_id=values.get("grok2api_account_id"),
                     bot_risk=bool(values.get("bot_risk")),
                     bfs=(
@@ -159,9 +161,13 @@ class RegisterEventRepository:
         if event.email.lower() != str(values["email"]).lower():
             raise RegisterEventConflictError("event_id 已被其他邮箱使用")
         incoming_sso = str(values.get("sso") or "").strip()
-        if incoming_sso:
+        if incoming_sso and (
+            incoming_sso != str(event.sso or "") or event.sso_received_at is None
+        ):
+            now = utc_now()
             event.sso = incoming_sso
-            event.updated_at = utc_now()
+            event.sso_received_at = now
+            event.updated_at = now
         return model_dict(event)
 
     def sso_for_accounts(self, account_ids: list[int]) -> dict[int, dict[str, str]]:
@@ -170,22 +176,68 @@ class RegisterEventRepository:
         if not normalized:
             return {}
         with self.database.session() as session:
-            rows = session.scalars(
-                select(RegisterWebhookEvent)
-                .where(
-                    RegisterWebhookEvent.resolved_account_id.in_(normalized),
-                    RegisterWebhookEvent.sso != "",
+            rows = session.execute(
+                select(
+                    RegisterWebhookEvent.resolved_account_id,
+                    RegisterWebhookEvent.grok2api_account_id,
+                    RegisterWebhookEvent.email,
+                    RegisterWebhookEvent.sso,
                 )
-                .order_by(RegisterWebhookEvent.updated_at.desc())
+                .where(
+                    RegisterWebhookEvent.sso != "",
+                    or_(
+                        RegisterWebhookEvent.resolved_account_id.in_(normalized),
+                        RegisterWebhookEvent.grok2api_account_id.in_(normalized),
+                    ),
+                )
+                .order_by(
+                    RegisterWebhookEvent.sso_received_at.desc(),
+                    RegisterWebhookEvent.created_at.desc(),
+                )
             ).all()
         result: dict[int, dict[str, str]] = {}
-        for row in rows:
-            account_id = int(row.resolved_account_id or 0)
+        requested = set(normalized)
+        for resolved_id, upstream_id, email, sso in rows:
+            resolved_account_id = int(resolved_id or 0)
+            grok2api_account_id = int(upstream_id or 0)
+            account_id = (
+                resolved_account_id
+                if resolved_account_id in requested
+                else grok2api_account_id
+                if grok2api_account_id in requested
+                else 0
+            )
             if account_id and account_id not in result:
                 result[account_id] = {
-                    "email": str(row.email or ""),
-                    "sso": str(row.sso or ""),
+                    "email": str(email or ""),
+                    "sso": str(sso or ""),
                 }
+        return result
+
+    def account_ids_with_sso(self, account_ids: list[int]) -> set[int]:
+        normalized = list(dict.fromkeys(int(value) for value in account_ids if value))
+        if not normalized:
+            return set()
+        requested = set(normalized)
+        with self.database.session() as session:
+            rows = session.execute(
+                select(
+                    RegisterWebhookEvent.resolved_account_id,
+                    RegisterWebhookEvent.grok2api_account_id,
+                ).where(
+                    RegisterWebhookEvent.sso != "",
+                    or_(
+                        RegisterWebhookEvent.resolved_account_id.in_(normalized),
+                        RegisterWebhookEvent.grok2api_account_id.in_(normalized),
+                    ),
+                )
+            ).all()
+        result: set[int] = set()
+        for resolved_account_id, grok2api_account_id in rows:
+            for value in (resolved_account_id, grok2api_account_id):
+                account_id = int(value or 0)
+                if account_id in requested:
+                    result.add(account_id)
         return result
 
     def recover_processing(self) -> int:

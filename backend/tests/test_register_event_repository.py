@@ -83,3 +83,36 @@ def test_duplicate_event_refreshes_sso_after_account_resolution(tmp_path: Path):
         17: {"email": "alpha@example.test", "sso": "REFRESHED-SSO"}
     }
     database.dispose()
+
+
+def test_latest_sso_uses_receipt_time_and_unresolved_upstream_account_id(
+    tmp_path: Path,
+):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    repository = RegisterEventRepository(database)
+    repository.receive(
+        {
+            "event_id": "registration:old:grok2api-imported",
+            "email": "alpha@example.test",
+            "sso": "OLD-SSO",
+            "grok2api_account_id": 17,
+        }
+    )
+    repository.receive(
+        {
+            "event_id": "registration:new:grok2api-imported",
+            "email": "alpha@example.test",
+            "sso": "NEW-SSO",
+            "grok2api_account_id": 17,
+        }
+    )
+
+    # A later bind mutates updated_at on the older event, but not its SSO time.
+    repository.bind_account("registration:old:grok2api-imported", 17)
+
+    assert repository.sso_for_accounts([17]) == {
+        17: {"email": "alpha@example.test", "sso": "NEW-SSO"}
+    }
+    assert repository.account_ids_with_sso([17, 29]) == {17}
+    database.dispose()

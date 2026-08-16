@@ -290,6 +290,7 @@ export type UpstreamAccount = {
   egressNodeId?: string | null
   egressAssignmentMode?: string
   buildBotFlagged?: boolean
+  ssoAvailable: boolean
   quota?: UpstreamQuota
   assessment: Assessment
 }

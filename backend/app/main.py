@@ -84,6 +84,7 @@ account_service = AccountService(
     client=grok_client,
     accounts=account_repository,
     probes=probe_repository,
+    register_events=register_event_repository,
 )
 probe_manager = ProbeManager(
     settings=settings,

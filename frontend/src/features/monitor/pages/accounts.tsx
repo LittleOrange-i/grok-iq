@@ -8,8 +8,10 @@ import {
   BatteryMedium,
   BatteryWarning,
   CircleHelp,
+  CircleX,
   Eye,
   Filter,
+  KeyRound,
   ListChecks,
   Loader2,
   Network,
@@ -119,6 +121,7 @@ export function AccountsPage() {
   const [egressBindingOpen, setEgressBindingOpen] = useState(false)
   const [egressBindingTarget, setEgressBindingTarget] = useState<string>()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [ssoConfirmOpen, setSsoConfirmOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [sampleToDelete, setSampleToDelete] = useState<ProbeSample | null>(null)
@@ -225,6 +228,7 @@ export function AccountsPage() {
   const accountSsoReportMutation = useMutation({
     mutationFn: (accountIds: number[]) => api.createAccountSsoReport(accountIds),
     onSuccess: (result) => {
+      setSsoConfirmOpen(false)
       const skipped = result.missingAccountIds.length
       const message = `已创建 SSO 检测报告，包含 ${result.included} 个账号`
       if (skipped) {
@@ -453,7 +457,15 @@ export function AccountsPage() {
                 label={`检测已选 ${selected.length} 个账号的 SSO`}
                 pending={ssoReportPending}
                 disabled={selectionActionPending || selected.length === 0}
-                onClick={() => accountSsoReportMutation.mutate(selected)}
+                onClick={() => {
+                  if (selected.length > 1000) {
+                    toast.error(
+                      `单次最多检测 1000 个账号，当前已选 ${selected.length} 个；请缩小筛选范围后重试`
+                    )
+                    return
+                  }
+                  setSsoConfirmOpen(true)
+                }}
               >
                 <ScanSearch />
               </ToolbarAction>
@@ -656,6 +668,7 @@ export function AccountsPage() {
                         />
                       </TableHead>
                       <TableHead>账号</TableHead>
+                      <TableHead className='w-16 text-center'>SSO</TableHead>
                       <TableHead>上游状态</TableHead>
                       <TableHead>监控判定</TableHead>
                       <TableHead>周期样本 / 信号</TableHead>
@@ -713,6 +726,11 @@ export function AccountsPage() {
                             >
                               {secondaryAccountLabel}
                             </div>
+                          </TableCell>
+                          <TableCell className='text-center'>
+                            <SsoAvailabilityIndicator
+                              available={account.ssoAvailable}
+                            />
                           </TableCell>
                           <TableCell>
                             <div className='flex items-center gap-2'>
@@ -1029,6 +1047,38 @@ export function AccountsPage() {
         }
       />
       <ConfirmDialog
+        open={ssoConfirmOpen}
+        onOpenChange={(open) => {
+          if (!ssoReportPending) setSsoConfirmOpen(open)
+        }}
+        title={`检测 ${selected.length} 个账号的 SSO？`}
+        desc={
+          <div className='space-y-2'>
+            <p>将使用注册联动保存的 SSO 创建检测报告。</p>
+            <p className='text-muted-foreground'>
+              缺少 SSO 或存储值解析失败的账号会被跳过，并在创建结果中显示数量。
+            </p>
+          </div>
+        }
+        cancelBtnText='取消'
+        confirmText={
+          ssoReportPending ? (
+            <>
+              <Loader2 className='animate-spin' />
+              创建中…
+            </>
+          ) : (
+            <>
+              <ScanSearch />
+              确认检测
+            </>
+          )
+        }
+        isLoading={ssoReportPending}
+        disabled={selected.length === 0 || selected.length > 1000}
+        handleConfirm={() => accountSsoReportMutation.mutate(selected)}
+      />
+      <ConfirmDialog
         open={deleteConfirmOpen}
         onOpenChange={(open) => {
           if (!open && !deletePending) setDeleteConfirmOpen(false)
@@ -1189,6 +1239,34 @@ export function AccountsPage() {
         }}
       />
     </Page>
+  )
+}
+
+function SsoAvailabilityIndicator({ available }: { available: boolean }) {
+  const Icon = available ? KeyRound : CircleX
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            'inline-flex size-6 items-center justify-center rounded-md',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            available
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : 'text-muted-foreground'
+          )}
+          tabIndex={0}
+          aria-label={available ? '已保存 SSO' : '缺失 SSO'}
+        >
+          <Icon className='size-4' />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {available
+          ? '已保存 SSO，可执行 SSO 检测'
+          : '缺失 SSO，执行检测时将跳过'}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

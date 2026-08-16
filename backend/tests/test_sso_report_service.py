@@ -11,7 +11,12 @@ from app.services.sso_report_service import SsoReportService
 
 
 class Checker:
+    def __init__(self, tokens: list[str] | None = None) -> None:
+        self.tokens = tokens
+
     def check_many(self, credentials: list[SsoCredential], *, progress=None):  # type: ignore[no-untyped-def]
+        if self.tokens is not None:
+            self.tokens.extend(item.token for item in credentials)
         results = []
         total = len(credentials)
         for index, item in enumerate(credentials):
@@ -38,10 +43,11 @@ class Checker:
 class CheckerFactory:
     def __init__(self) -> None:
         self.values: list[tuple[str, int, int]] = []
+        self.tokens: list[str] = []
 
     def __call__(self, proxy: str, concurrency: int, timeout: int):  # type: ignore[no-untyped-def]
         self.values.append((proxy, concurrency, timeout))
-        return Checker()
+        return Checker(self.tokens)
 
 
 async def wait_for_terminal(service: SsoReportService, report_id: str):  # type: ignore[no-untyped-def]
@@ -102,14 +108,15 @@ async def test_account_report_skips_accounts_without_stored_sso(tmp_path: Path) 
         {
             "event_id": "registration:alpha:grok2api-imported",
             "email": "alpha@example.test",
-            "sso": "RAW-ALPHA",
+            "sso": "alpha@example.test----sso=RAW-ALPHA",
         }
     )
     register_events.complete("registration:alpha:grok2api-imported", 17, [])
+    checker_factory = CheckerFactory()
     service = SsoReportService(
         SsoReportRepository(database),
         register_events=register_events,
-        checker_factory=CheckerFactory(),
+        checker_factory=checker_factory,
     )
     await service.start()
     try:
@@ -123,6 +130,7 @@ async def test_account_report_skips_accounts_without_stored_sso(tmp_path: Path) 
         assert report["total"] == 1
         assert report["results"][0]["expected_email"] == "alpha@example.test"
         assert "RAW-ALPHA" not in str(report)
+        assert checker_factory.tokens == ["RAW-ALPHA"]
     finally:
         await service.stop()
         database.dispose()

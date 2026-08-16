@@ -152,6 +152,10 @@ COMPATIBILITY_COLUMNS = {
             "sso",
             "ALTER TABLE register_webhook_events ADD COLUMN sso TEXT NOT NULL DEFAULT ''",
         ),
+        (
+            "sso_received_at",
+            "ALTER TABLE register_webhook_events ADD COLUMN sso_received_at DATETIME",
+        ),
     ],
 }
 COMPATIBILITY_INDEXES = {
@@ -177,7 +181,19 @@ COMPATIBILITY_INDEXES = {
             "ix_probe_run_created_at",
             "CREATE INDEX IF NOT EXISTS ix_probe_run_created_at ON probe_runs (created_at)",
         ),
-    ]
+    ],
+    "register_webhook_events": [
+        (
+            "ix_register_webhook_resolved_sso_received",
+            "CREATE INDEX IF NOT EXISTS ix_register_webhook_resolved_sso_received "
+            "ON register_webhook_events (resolved_account_id, sso_received_at)",
+        ),
+        (
+            "ix_register_webhook_upstream_sso_received",
+            "CREATE INDEX IF NOT EXISTS ix_register_webhook_upstream_sso_received "
+            "ON register_webhook_events (grok2api_account_id, sso_received_at)",
+        ),
+    ],
 }
 
 
@@ -192,13 +208,18 @@ class DatabaseSchemaMigrator:
         table_names = set(inspector.get_table_names())
         statements = self._missing_column_statements(inspector, table_names)
         statements.extend(self._missing_index_statements(inspector, table_names))
-        if not statements and not {"probe_plans", "sso_reports"} & table_names:
+        if not statements and not {
+            "probe_plans",
+            "register_webhook_events",
+            "sso_reports",
+        } & table_names:
             return
         with self.engine.begin() as connection:
             for statement in statements:
                 connection.exec_driver_sql(statement)
             self._backfill_sso_reports(connection, table_names)
             self._backfill_plan_profiles(connection, table_names)
+            self._backfill_register_sso_received_at(connection, table_names)
 
     @staticmethod
     def _missing_column_statements(inspector, table_names: set[str]) -> list[str]:  # type: ignore[no-untyped-def]
@@ -241,4 +262,14 @@ class DatabaseSchemaMigrator:
             connection.exec_driver_sql(
                 "UPDATE probe_plans SET profile_ids = ? WHERE id = ?",
                 (json.dumps([profile_id]), plan_id),
+            )
+
+    @staticmethod
+    def _backfill_register_sso_received_at(  # type: ignore[no-untyped-def]
+        connection, table_names: set[str]
+    ) -> None:
+        if "register_webhook_events" in table_names:
+            connection.exec_driver_sql(
+                "UPDATE register_webhook_events SET sso_received_at = updated_at "
+                "WHERE sso != '' AND sso_received_at IS NULL"
             )
