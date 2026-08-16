@@ -15,6 +15,7 @@ class RuntimeSettingsValidator:
     def validate(self, values: dict[str, object], fixed_strategy: dict[str, object]) -> Settings:
         candidate = Settings.model_validate(values | fixed_strategy)
         self._validate_risk(candidate)
+        self._validate_request_audit(candidate)
         self._validate_retry(candidate)
         self._validate_connection(candidate)
         self._validate_scheduler(candidate)
@@ -51,6 +52,15 @@ class RuntimeSettingsValidator:
     def _validate_retry(candidate: Settings) -> None:
         if candidate.probe_transient_retry_base_seconds > candidate.probe_transient_retry_max_seconds:
             raise ValueError("探针重试基础等待不能大于最大等待")
+
+    @staticmethod
+    def _validate_request_audit(candidate: Settings) -> None:
+        if not (
+            candidate.request_audit_busy_scan_interval_seconds
+            <= candidate.request_audit_normal_scan_interval_seconds
+            <= candidate.request_audit_idle_scan_interval_seconds
+        ):
+            raise ValueError("请求审计间隔必须满足忙时 ≤ 常态 ≤ 闲时")
 
     @staticmethod
     def _validate_connection(candidate: Settings) -> None:

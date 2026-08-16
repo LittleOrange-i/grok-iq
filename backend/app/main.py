@@ -16,6 +16,7 @@ from app.persistence.auth_repository import AuthRepository
 from app.persistence.chat_provider_repository import ChatProviderRepository
 from app.persistence.database import Database
 from app.persistence.probe_repository import ProbeRepository
+from app.persistence.request_audit_repository import RequestAuditRepository
 from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.settings_repository import SettingsRepository
 from app.persistence.sso_report_repository import SsoReportRepository
@@ -24,6 +25,7 @@ from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.egress_service import EgressService
 from app.services.probe_manager import ProbeManager
+from app.services.request_audit_service import RequestAuditService
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
@@ -64,6 +66,7 @@ account_repository = AccountRepository(database)
 auth_repository = AuthRepository(database)
 chat_provider_repository = ChatProviderRepository(database, settings)
 probe_repository = ProbeRepository(database)
+request_audit_repository = RequestAuditRepository(database)
 settings_repository = SettingsRepository(database, settings)
 register_event_repository = RegisterEventRepository(database)
 sso_report_repository = SsoReportRepository(database)
@@ -97,11 +100,18 @@ probe_manager = ProbeManager(
     log_path=probe_log_path,
 )
 egress_service = EgressService(client=grok_client, probes=probe_repository)
+request_audit_service = RequestAuditService(
+    settings=settings,
+    client=grok_client,
+    repository=request_audit_repository,
+    accounts=account_repository,
+)
 scheduler_service = SchedulerService(
     settings=settings,
     repository=probe_repository,
     probes=probe_manager,
     recovery_callback=account_service.recover_due_quarantines,
+    request_audit_callback=request_audit_service.scan_scheduled,
 )
 register_integration_service = RegisterIntegrationService(
     settings=settings,
@@ -169,6 +179,7 @@ app.include_router(
         account_service=account_service,
         egress_service=egress_service,
         probe_manager=probe_manager,
+        request_audits=request_audit_service,
         scheduler=scheduler_service,
         runtime_settings_service=runtime_settings_service,
         auth_service=auth_service,

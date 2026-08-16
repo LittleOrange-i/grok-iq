@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
-from app.core.clock import to_app_timezone
+from app.core.clock import to_app_timezone, utc_now
 from app.core.config import Settings
 from app.persistence.probe_repository import ProbeRepository
 
 from .probe_manager import ProbeManager
+
+RequestAuditCallback = Callable[[], Awaitable[dict[str, Any]]]
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +29,13 @@ class SchedulerService:
         repository: ProbeRepository,
         probes: ProbeManager,
         recovery_callback: Callable[[], Awaitable[dict[str, Any]]],
+        request_audit_callback: RequestAuditCallback | None = None,
     ):
         self.settings = settings
         self.repository = repository
         self.probes = probes
         self.recovery_callback = recovery_callback
+        self.request_audit_callback = request_audit_callback
         self.scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
 
     async def start(self) -> None:
@@ -81,6 +87,46 @@ class SchedulerService:
                 max_instances=1,
                 misfire_grace_time=self.settings.scheduler_misfire_grace_seconds,
             )
+        if self._request_audit_schedule_enabled():
+            # A one-shot job is re-armed after every scan.  The scan result
+            # carries a busy/normal/idle recommendation, so upstream traffic
+            # controls the next interval instead of a fixed five-minute cron.
+            self._schedule_request_audit(5)
+
+    def _request_audit_schedule_enabled(self) -> bool:
+        return bool(
+            self.settings.scheduler_enabled
+            and self.settings.request_audit_enabled
+            and self.settings.request_audit_auto_scan_enabled
+            and self.request_audit_callback is not None
+        )
+
+    def _schedule_request_audit(self, delay_seconds: int) -> None:
+        if not self.scheduler.running or not self._request_audit_schedule_enabled():
+            return
+        delay = max(5, min(int(delay_seconds), 24 * 60 * 60))
+        self.scheduler.add_job(
+            self._run_request_audit_scan,
+            DateTrigger(
+                run_date=utc_now() + timedelta(seconds=delay),
+                timezone=ZoneInfo(self.settings.scheduler_timezone),
+            ),
+            id="system:request-audit-scan",
+            name="请求审计风险扫描",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.settings.scheduler_misfire_grace_seconds,
+        )
+
+    def _request_audit_delay(self, result: dict[str, Any]) -> int:
+        if not self.settings.request_audit_adaptive_scan_enabled:
+            return self.settings.request_audit_scan_interval_minutes * 60
+        recommended = result.get("recommendedIntervalSeconds")
+        try:
+            return int(recommended)
+        except (TypeError, ValueError, OverflowError):
+            return self.settings.request_audit_normal_scan_interval_seconds
 
     def _add_plan_job(self, plan: dict[str, Any]) -> None:
         trigger = CronTrigger.from_crontab(
@@ -184,6 +230,63 @@ class SchedulerService:
                 execution_id, status="failed", message=str(exc), detail={}
             )
             logger.exception("quarantine recovery failed")
+
+    async def _run_request_audit_scan(self) -> None:
+        if self.request_audit_callback is None:
+            return
+        execution_id = self.repository.start_schedule_execution("system:request-audit-scan")
+        result: dict[str, Any] = {}
+        try:
+            result = await self.request_audit_callback()
+            ok = bool(result.get("ok", True))
+            skipped = bool(result.get("skipped"))
+            if skipped:
+                status = "skipped"
+                message = str(result.get("error") or "请求审计扫描已跳过")
+            elif ok:
+                status = "succeeded"
+                count = int(result.get("newRecords", 0))
+                scan_state = result.get("state") or {}
+                pending = isinstance(scan_state, dict) and not bool(
+                    scan_state.get("initialComplete", True)
+                )
+                message = (
+                    f"批量扫描读取 {count} 条，游标待续传"
+                    if pending
+                    else f"增量读取 {count} 条请求审计"
+                )
+            else:
+                status = "failed"
+                message = str(result.get("error") or "请求审计扫描失败")
+            activity = result.get("activity") or {}
+            if isinstance(activity, dict) and activity.get("label"):
+                message += f"，当前{activity['label']}"
+            next_seconds = result.get("recommendedIntervalSeconds")
+            if next_seconds is not None:
+                message += f"，{int(next_seconds)} 秒后再扫描"
+            self.repository.finish_schedule_execution(
+                execution_id,
+                status=status,
+                message=message,
+                detail=result,
+            )
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "error": str(exc),
+                "recommendedIntervalSeconds": (
+                    self.settings.request_audit_normal_scan_interval_seconds
+                ),
+            }
+            self.repository.finish_schedule_execution(
+                execution_id,
+                status="failed",
+                message=str(exc),
+                detail={},
+            )
+            logger.exception("request audit scan failed")
+        finally:
+            self._schedule_request_audit(self._request_audit_delay(result))
 
     def status(self) -> dict[str, Any]:
         jobs = {

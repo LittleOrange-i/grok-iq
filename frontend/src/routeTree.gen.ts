@@ -36,6 +36,7 @@ import { Route as AuthenticatedHelpCenterIndexRouteImport } from './routes/_auth
 import { Route as AuthenticatedPlansIndexRouteImport } from './routes/_authenticated/plans/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProbeProfilesIndexRouteImport } from './routes/_authenticated/probe-profiles/index'
+import { Route as AuthenticatedRequestAuditsIndexRouteImport } from './routes/_authenticated/request-audits/index'
 import { Route as AuthenticatedRunsIndexRouteImport } from './routes/_authenticated/runs/index'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_authenticated/settings/account'
@@ -189,6 +190,12 @@ const AuthenticatedProbeProfilesIndexRoute =
     path: '/probe-profiles/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedRequestAuditsIndexRoute =
+  AuthenticatedRequestAuditsIndexRouteImport.update({
+    id: '/request-audits/',
+    path: '/request-audits/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRunsIndexRoute = AuthenticatedRunsIndexRouteImport.update({
   id: '/runs/',
   path: '/runs/',
@@ -295,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/plans/': typeof AuthenticatedPlansIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
+  '/request-audits/': typeof AuthenticatedRequestAuditsIndexRoute
   '/runs/': typeof AuthenticatedRunsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
   '/sso-reports/': typeof AuthenticatedSsoReportsIndexRoute
@@ -333,6 +341,7 @@ export interface FileRoutesByTo {
   '/plans': typeof AuthenticatedPlansIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/probe-profiles': typeof AuthenticatedProbeProfilesIndexRoute
+  '/request-audits': typeof AuthenticatedRequestAuditsIndexRoute
   '/runs': typeof AuthenticatedRunsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
   '/sso-reports': typeof AuthenticatedSsoReportsIndexRoute
@@ -376,6 +385,7 @@ export interface FileRoutesById {
   '/_authenticated/plans/': typeof AuthenticatedPlansIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
+  '/_authenticated/request-audits/': typeof AuthenticatedRequestAuditsIndexRoute
   '/_authenticated/runs/': typeof AuthenticatedRunsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
   '/_authenticated/sso-reports/': typeof AuthenticatedSsoReportsIndexRoute
@@ -417,6 +427,7 @@ export interface FileRouteTypes {
     | '/plans/'
     | '/playground/'
     | '/probe-profiles/'
+    | '/request-audits/'
     | '/runs/'
     | '/settings/'
     | '/sso-reports/'
@@ -455,6 +466,7 @@ export interface FileRouteTypes {
     | '/plans'
     | '/playground'
     | '/probe-profiles'
+    | '/request-audits'
     | '/runs'
     | '/settings'
     | '/sso-reports'
@@ -497,6 +509,7 @@ export interface FileRouteTypes {
     | '/_authenticated/plans/'
     | '/_authenticated/playground/'
     | '/_authenticated/probe-profiles/'
+    | '/_authenticated/request-audits/'
     | '/_authenticated/runs/'
     | '/_authenticated/settings/'
     | '/_authenticated/sso-reports/'
@@ -712,6 +725,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProbeProfilesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/request-audits/': {
+      id: '/_authenticated/request-audits/'
+      path: '/request-audits'
+      fullPath: '/request-audits/'
+      preLoaderRoute: typeof AuthenticatedRequestAuditsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/runs/': {
       id: '/_authenticated/runs/'
       path: '/runs'
@@ -842,6 +862,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlansIndexRoute: typeof AuthenticatedPlansIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProbeProfilesIndexRoute: typeof AuthenticatedProbeProfilesIndexRoute
+  AuthenticatedRequestAuditsIndexRoute: typeof AuthenticatedRequestAuditsIndexRoute
   AuthenticatedRunsIndexRoute: typeof AuthenticatedRunsIndexRoute
   AuthenticatedSsoReportsIndexRoute: typeof AuthenticatedSsoReportsIndexRoute
   AuthenticatedTasksIndexRoute: typeof AuthenticatedTasksIndexRoute
@@ -862,6 +883,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPlansIndexRoute: AuthenticatedPlansIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProbeProfilesIndexRoute: AuthenticatedProbeProfilesIndexRoute,
+  AuthenticatedRequestAuditsIndexRoute: AuthenticatedRequestAuditsIndexRoute,
   AuthenticatedRunsIndexRoute: AuthenticatedRunsIndexRoute,
   AuthenticatedSsoReportsIndexRoute: AuthenticatedSsoReportsIndexRoute,
   AuthenticatedTasksIndexRoute: AuthenticatedTasksIndexRoute,

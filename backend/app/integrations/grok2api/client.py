@@ -460,6 +460,35 @@ class Grok2APIClient:
         query = {"scope": "grok_build", "page": 1, "pageSize": 100} | params
         return await self.admin_request("GET", "/api/admin/v1/egress-nodes", params=query)
 
+    async def list_request_audits(
+        self,
+        *,
+        cursor: str = "",
+        page_size: int = 200,
+        period: str = "24h",
+    ) -> dict[str, Any]:
+        """Read one cursor page from grok2api's request-audit ledger.
+
+        The upstream endpoint is cursor ordered (newest first).  The caller
+        persists the newest upstream boundary, even when that row is not a
+        grok_build request, so ordinary scans transfer only newly-arrived pages.
+        """
+
+        query: dict[str, Any] = {
+            "pagination": "cursor",
+            "period": period,
+            "pageSize": max(1, min(int(page_size), 500)),
+            "sortBy": "createdAt",
+            "sortOrder": "desc",
+        }
+        if cursor:
+            query["cursor"] = cursor
+        return await self.admin_request(
+            "GET",
+            "/api/admin/v1/request-audits",
+            params=query,
+        )
+
     async def set_egress_nodes_enabled(
         self,
         node_ids: list[int],

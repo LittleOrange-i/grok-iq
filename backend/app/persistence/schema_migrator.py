@@ -157,6 +157,13 @@ COMPATIBILITY_COLUMNS = {
             "ALTER TABLE register_webhook_events ADD COLUMN sso_received_at DATETIME",
         ),
     ],
+    "request_audit_scan_states": [
+        (
+            "initial_cursor",
+            "ALTER TABLE request_audit_scan_states ADD COLUMN initial_cursor "
+            "TEXT NOT NULL DEFAULT ''",
+        ),
+    ],
 }
 COMPATIBILITY_INDEXES = {
     "account_assessments": [

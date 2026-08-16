@@ -85,6 +85,23 @@ class Settings(BaseSettings):
         default=360, ge=0, le=7 * 24 * 60
     )
 
+    # Request-audit monitoring is independently switchable from probe plans.
+    # The scheduler only projects new rows; dashboards always query the local
+    # SQLite projection and can therefore refresh without hitting grok2api.
+    request_audit_enabled: bool = True
+    request_audit_auto_scan_enabled: bool = True
+    request_audit_adaptive_scan_enabled: bool = True
+    request_audit_scan_interval_minutes: int = Field(default=5, ge=1, le=24 * 60)
+    request_audit_busy_scan_interval_seconds: int = Field(default=30, ge=15, le=300)
+    request_audit_normal_scan_interval_seconds: int = Field(default=120, ge=30, le=1800)
+    request_audit_idle_scan_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    request_audit_busy_requests_per_minute: int = Field(default=20, ge=1, le=100_000)
+    request_audit_live_refresh_enabled: bool = True
+    request_audit_live_refresh_seconds: int = Field(default=30, ge=10, le=300)
+    request_audit_risk_enabled: bool = True
+    request_audit_isolation_enabled: bool = True
+    request_audit_retention_days: int = Field(default=90, ge=1, le=90)
+
     # Persistent probe queue. A short Cron interval therefore cannot create
     # unbounded asyncio tasks.
     probe_worker_concurrency: int = Field(default=2, ge=1, le=32)
@@ -153,6 +170,19 @@ class Settings(BaseSettings):
         "scheduler_misfire_grace_seconds",
         "recovery_cron",
         "scheduled_probe_register_cooldown_minutes",
+        "request_audit_enabled",
+        "request_audit_auto_scan_enabled",
+        "request_audit_adaptive_scan_enabled",
+        "request_audit_scan_interval_minutes",
+        "request_audit_busy_scan_interval_seconds",
+        "request_audit_normal_scan_interval_seconds",
+        "request_audit_idle_scan_interval_seconds",
+        "request_audit_busy_requests_per_minute",
+        "request_audit_live_refresh_enabled",
+        "request_audit_live_refresh_seconds",
+        "request_audit_risk_enabled",
+        "request_audit_isolation_enabled",
+        "request_audit_retention_days",
         "probe_worker_concurrency",
         "probe_queue_limit",
         "probe_step_delay_seconds",

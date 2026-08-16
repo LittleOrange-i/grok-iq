@@ -295,6 +295,84 @@ class ProbeSample(Base):
     run: Mapped[ProbeRun] = relationship(back_populates="samples")
 
 
+class RequestAuditRecord(Base):
+    """A compact local copy of one grok2api request audit.
+
+    grok2api remains the source of truth.  GrokIQ only keeps the fields needed
+    for configurable throughput windows so a refresh can read SQLite instead of
+    downloading the complete upstream audit ledger again.
+    """
+
+    __tablename__ = "request_audit_records"
+    __table_args__ = (
+        Index("ix_request_audit_created_at", "created_at"),
+        Index("ix_request_audit_day_created", "day_key", "created_at"),
+        Index("ix_request_audit_day_account", "day_key", "account_id"),
+        Index("ix_request_audit_day_tps", "day_key", "tps"),
+        Index("ix_request_audit_day_egress_node", "day_key", "egress_node_id"),
+        Index("ix_request_audit_day_egress_ip", "day_key", "egress_ip"),
+    )
+
+    # grok2api serializes uint64 IDs as strings.  Keeping the key textual also
+    # works with older deployments that returned a numeric JSON value.
+    upstream_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    day_key: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), default="grok_build", nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    model_public_id: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    model_upstream_model: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    account_id: Mapped[int | None] = mapped_column(Integer)
+    account_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    egress_node_id: Mapped[int | None] = mapped_column(Integer)
+    egress_node_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    egress_ip: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    egress_mode: Mapped[str] = mapped_column(String(24), default="", nullable=False)
+    egress_scope: Mapped[str] = mapped_column(String(48), default="", nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    streaming: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    reasoning_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    first_token_ms: Mapped[int | None] = mapped_column(BigInteger)
+    duration_ms: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    tps: Mapped[float | None] = mapped_column(Float)
+    risk_level: Mapped[str] = mapped_column(String(24), default="normal", nullable=False)
+    risk_reasons: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(AppDateTime(), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(AppDateTime(), default=utc_now, nullable=False)
+
+
+class RequestAuditScanState(Base):
+    """Durable cursor/boundary state for one audit window scope."""
+
+    __tablename__ = "request_audit_scan_states"
+
+    scope: Mapped[str] = mapped_column(String(80), primary_key=True)
+    day_key: Mapped[str] = mapped_column(String(16), default="", nullable=False)
+    # Incremental boundary from the newest upstream row, regardless of
+    # provider. This avoids re-reading a full day when grok_build traffic is
+    # sparse among other providers.
+    newest_upstream_id: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    newest_created_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    # A long first-day import or a large incremental catch-up can span more
+    # than one scheduled execution. The cursor is saved only after its page is
+    # committed locally, so a retry may replay a page but never skips one.
+    initial_cursor: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    initial_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_scan_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    last_success_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    last_pages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_new_records: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_seen_records: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class Alert(Base):
     __tablename__ = "alerts"
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -329,6 +330,66 @@ class RuntimeSettingsInput(BaseModel):
         ge=0,
         le=7 * 24 * 60,
     )
+    request_audit_enabled: bool | None = Field(
+        default=None, alias="requestAuditEnabled"
+    )
+    request_audit_auto_scan_enabled: bool | None = Field(
+        default=None, alias="requestAuditAutoScanEnabled"
+    )
+    request_audit_adaptive_scan_enabled: bool | None = Field(
+        default=None, alias="requestAuditAdaptiveScanEnabled"
+    )
+    request_audit_scan_interval_minutes: int | None = Field(
+        default=None,
+        alias="requestAuditScanIntervalMinutes",
+        ge=1,
+        le=24 * 60,
+    )
+    request_audit_busy_scan_interval_seconds: int | None = Field(
+        default=None,
+        alias="requestAuditBusyScanIntervalSeconds",
+        ge=15,
+        le=300,
+    )
+    request_audit_normal_scan_interval_seconds: int | None = Field(
+        default=None,
+        alias="requestAuditNormalScanIntervalSeconds",
+        ge=30,
+        le=1800,
+    )
+    request_audit_idle_scan_interval_seconds: int | None = Field(
+        default=None,
+        alias="requestAuditIdleScanIntervalSeconds",
+        ge=60,
+        le=3600,
+    )
+    request_audit_busy_requests_per_minute: int | None = Field(
+        default=None,
+        alias="requestAuditBusyRequestsPerMinute",
+        ge=1,
+        le=100_000,
+    )
+    request_audit_live_refresh_enabled: bool | None = Field(
+        default=None, alias="requestAuditLiveRefreshEnabled"
+    )
+    request_audit_live_refresh_seconds: int | None = Field(
+        default=None,
+        alias="requestAuditLiveRefreshSeconds",
+        ge=10,
+        le=300,
+    )
+    request_audit_risk_enabled: bool | None = Field(
+        default=None, alias="requestAuditRiskEnabled"
+    )
+    request_audit_isolation_enabled: bool | None = Field(
+        default=None, alias="requestAuditIsolationEnabled"
+    )
+    request_audit_retention_days: int | None = Field(
+        default=None,
+        alias="requestAuditRetentionDays",
+        ge=1,
+        le=90,
+    )
     probe_worker_concurrency: int | None = Field(default=None, alias="probeWorkerConcurrency", ge=1, le=32)
     probe_queue_limit: int | None = Field(default=None, alias="probeQueueLimit", ge=1, le=100_000)
     probe_step_delay_seconds: float | None = Field(default=None, alias="probeStepDelaySeconds", ge=0, le=60)
@@ -414,6 +475,24 @@ class RuntimeSettingsInput(BaseModel):
         for alias in self.clear_secrets:
             result[clear_mapping[alias]] = ""
         return result
+
+
+class RequestAuditScanInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    window_preset: Literal["today", "6h", "24h", "7d", "30d", "custom"] = Field(
+        default="today", alias="window"
+    )
+    start_at: datetime | None = Field(default=None, alias="startAt")
+    end_at: datetime | None = Field(default=None, alias="endAt")
+
+    @model_validator(mode="after")
+    def validate_window(self) -> RequestAuditScanInput:
+        if (self.start_at is None) != (self.end_at is None):
+            raise ValueError("自定义时间窗口需要完整的开始和结束时间")
+        if self.window_preset == "custom" and self.start_at is None:
+            raise ValueError("自定义时间窗口需要完整的开始和结束时间")
+        return self
 
 
 class ProfileInput(BaseModel):

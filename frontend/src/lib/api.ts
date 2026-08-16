@@ -371,6 +371,239 @@ export type EgressNodeProbeResult = {
   probeProvider?: string
 }
 
+export type RequestAuditRiskLevel = 'normal' | 'watch' | 'high'
+export type RequestAuditWindowPreset =
+  | 'today'
+  | '6h'
+  | '24h'
+  | '7d'
+  | '30d'
+  | 'custom'
+
+export type RequestAuditWindow = {
+  preset: RequestAuditWindowPreset
+  label: string
+  startAt: string
+  endAt: string
+  isToday: boolean
+}
+
+export type RequestAuditRecord = {
+  id: string
+  requestId: string
+  provider: 'grok_build' | string
+  operation: string
+  modelPublicId: string
+  modelUpstreamModel: string
+  accountId: number | null
+  accountName: string
+  egressNodeId: number | null
+  egressNodeName: string
+  egressIp: string
+  egressMode: string
+  egressScope: string
+  statusCode: number
+  streaming: boolean
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  totalTokens: number
+  firstTokenMs: number | null
+  durationMs: number
+  tps: number | null
+  riskLevel: RequestAuditRiskLevel
+  riskReasons: string[]
+  createdAt: string | null
+}
+
+export type RequestAuditAccountRisk = {
+  accountId: number | null
+  accountName: string
+  requests: number
+  measuredRequests: number
+  outputTokens: number
+  averageTps: number
+  p95Tps: number
+  maxTps: number
+  latestTps: number | null
+  watchCount: number
+  highRiskCount: number
+  riskLevel: RequestAuditRiskLevel
+  riskReasons: string[]
+  egressIps: string[]
+  egressNodes: string[]
+  monitorStatus: string
+  quarantined: boolean
+  quarantineUntil: string | null
+  lastSeenAt: string | null
+}
+
+export type RequestAuditEgressRisk = {
+  key: string
+  egressIp: string
+  egressNodeIds: number[]
+  egressNodes: string[]
+  requests: number
+  measuredRequests: number
+  outputTokens: number
+  averageTps: number
+  p95Tps: number
+  maxTps: number
+  watchCount: number
+  highRiskCount: number
+  riskLevel: RequestAuditRiskLevel
+  riskReasons: string[]
+  accountCount: number
+  riskAccountCount: number
+  accounts: RequestAuditAccountRisk[]
+  lastSeenAt: string | null
+}
+
+export type RequestAuditSummary = {
+  requests: number
+  measuredRequests: number
+  outputTokens: number
+  averageTps: number
+  p95Tps: number
+  maxTps: number
+  watchAccounts: number
+  highRiskAccounts: number
+  accountCount: number
+  lastSeenAt: string | null
+  day: string
+  window: RequestAuditWindow
+}
+
+export type RequestAuditThresholds = {
+  watch: number
+  high: number
+}
+
+export type RequestAuditScanState = {
+  day: string
+  initialComplete: boolean
+  initialResumePending: boolean
+  newestAuditId: string
+  newestCreatedAt: string | null
+  lastScanAt: string | null
+  lastSuccessAt: string | null
+  lastError: string
+  lastPages: number
+  lastNewRecords: number
+  lastSeenRecords: number
+  window?: RequestAuditWindow
+}
+
+export type RequestAuditActivityLevel = 'busy' | 'normal' | 'idle'
+
+export type RequestAuditActivity = {
+  level: RequestAuditActivityLevel
+  label: string
+  requests: number
+  requestsPerMinute: number
+  maxTps: number
+  sampleMinutes: number
+  reasons: string[]
+  recommendedIntervalSeconds: number
+}
+
+export type RequestAuditConfig = {
+  enabled: boolean
+  autoScanEnabled: boolean
+  adaptiveScanEnabled: boolean
+  fixedScanIntervalMinutes: number
+  busyScanIntervalSeconds: number
+  normalScanIntervalSeconds: number
+  idleScanIntervalSeconds: number
+  busyRequestsPerMinute: number
+  liveRefreshEnabled: boolean
+  liveRefreshSeconds: number
+  riskEnabled: boolean
+  isolationEnabled: boolean
+  retentionDays: number
+}
+
+export type RequestAuditStatus = {
+  day: string
+  provider: string
+  thresholds: RequestAuditThresholds
+  configured: boolean
+  config: RequestAuditConfig
+  scan: RequestAuditScanState
+  activity: RequestAuditActivity
+  localRecords: number
+  availableRange: {
+    startAt: string | null
+    endAt: string | null
+    records: number
+  }
+  schedule: {
+    enabled: boolean
+    adaptive: boolean
+    fixedIntervalMinutes: number
+    busyIntervalSeconds: number
+    normalIntervalSeconds: number
+    idleIntervalSeconds: number
+  }
+}
+
+export type RequestAuditWindowInput = {
+  window: RequestAuditWindowPreset
+  startAt?: string
+  endAt?: string
+}
+
+export type RequestAuditScanResult = {
+  ok: boolean
+  trigger: string
+  day: string
+  window?: RequestAuditWindow
+  mode?: 'initial' | 'initial_resume' | 'incremental'
+  pages?: number
+  newRecords?: number
+  seenRecords?: number
+  error?: string
+  state?: RequestAuditScanState
+  skipped?: boolean
+  activity?: RequestAuditActivity
+  recommendedIntervalSeconds?: number
+}
+
+export type RequestAuditPage = {
+  day: string
+  provider: string
+  window: RequestAuditWindow
+  items: RequestAuditRecord[]
+  total: number
+  page: number
+  pageSize: number
+  thresholds: RequestAuditThresholds
+}
+
+export type RequestAuditSummaryResponse = {
+  day: string
+  provider: string
+  window: RequestAuditWindow
+  thresholds: RequestAuditThresholds
+  summary: RequestAuditSummary
+  accounts: RequestAuditAccountRisk[]
+  egresses: RequestAuditEgressRisk[]
+  trend: Array<{
+    index: number
+    label: string
+    bucketStart: string
+    bucketEnd: string
+    granularity: 'hour' | '6hour' | 'day' | 'week'
+    requests: number
+    measuredRequests: number
+    averageTps: number
+    maxTps: number
+    watch: number
+    high: number
+  }>
+  scan: RequestAuditScanState
+}
+
 export type EgressNodeCreateInput = {
   name: string
   proxy_url: string
@@ -648,6 +881,19 @@ export type RuntimeSettings = {
   schedulerMisfireGraceSeconds: number
   recoveryCron: string
   scheduledProbeRegisterCooldownMinutes: number
+  requestAuditEnabled: boolean
+  requestAuditAutoScanEnabled: boolean
+  requestAuditAdaptiveScanEnabled: boolean
+  requestAuditScanIntervalMinutes: number
+  requestAuditBusyScanIntervalSeconds: number
+  requestAuditNormalScanIntervalSeconds: number
+  requestAuditIdleScanIntervalSeconds: number
+  requestAuditBusyRequestsPerMinute: number
+  requestAuditLiveRefreshEnabled: boolean
+  requestAuditLiveRefreshSeconds: number
+  requestAuditRiskEnabled: boolean
+  requestAuditIsolationEnabled: boolean
+  requestAuditRetentionDays: number
   probeWorkerConcurrency: number
   probeQueueLimit: number
   probeStepDelaySeconds: number
@@ -723,6 +969,19 @@ export type RuntimeSettingsUpdate = Partial<
     | 'schedulerMisfireGraceSeconds'
     | 'recoveryCron'
     | 'scheduledProbeRegisterCooldownMinutes'
+    | 'requestAuditEnabled'
+    | 'requestAuditAutoScanEnabled'
+    | 'requestAuditAdaptiveScanEnabled'
+    | 'requestAuditScanIntervalMinutes'
+    | 'requestAuditBusyScanIntervalSeconds'
+    | 'requestAuditNormalScanIntervalSeconds'
+    | 'requestAuditIdleScanIntervalSeconds'
+    | 'requestAuditBusyRequestsPerMinute'
+    | 'requestAuditLiveRefreshEnabled'
+    | 'requestAuditLiveRefreshSeconds'
+    | 'requestAuditRiskEnabled'
+    | 'requestAuditIsolationEnabled'
+    | 'requestAuditRetentionDays'
     | 'probeWorkerConcurrency'
     | 'probeQueueLimit'
     | 'probeStepDelaySeconds'
@@ -795,6 +1054,19 @@ type RuntimeSettingsWire = Omit<
   | 'registerProbeStabilizationSeconds'
   | 'registerProbeSwitchOnDegradation'
   | 'autoQuarantineRecoveryEnabled'
+  | 'requestAuditEnabled'
+  | 'requestAuditAutoScanEnabled'
+  | 'requestAuditAdaptiveScanEnabled'
+  | 'requestAuditScanIntervalMinutes'
+  | 'requestAuditBusyScanIntervalSeconds'
+  | 'requestAuditNormalScanIntervalSeconds'
+  | 'requestAuditIdleScanIntervalSeconds'
+  | 'requestAuditBusyRequestsPerMinute'
+  | 'requestAuditLiveRefreshEnabled'
+  | 'requestAuditLiveRefreshSeconds'
+  | 'requestAuditRiskEnabled'
+  | 'requestAuditIsolationEnabled'
+  | 'requestAuditRetentionDays'
 > & {
   degradationTps?: number
   strongDegradationTps?: number
@@ -826,6 +1098,19 @@ type RuntimeSettingsWire = Omit<
   registerProbeStabilizationSeconds?: number
   registerProbeSwitchOnDegradation?: boolean
   autoQuarantineRecoveryEnabled?: boolean
+  requestAuditEnabled?: boolean
+  requestAuditAutoScanEnabled?: boolean
+  requestAuditAdaptiveScanEnabled?: boolean
+  requestAuditScanIntervalMinutes?: number
+  requestAuditBusyScanIntervalSeconds?: number
+  requestAuditNormalScanIntervalSeconds?: number
+  requestAuditIdleScanIntervalSeconds?: number
+  requestAuditBusyRequestsPerMinute?: number
+  requestAuditLiveRefreshEnabled?: boolean
+  requestAuditLiveRefreshSeconds?: number
+  requestAuditRiskEnabled?: boolean
+  requestAuditIsolationEnabled?: boolean
+  requestAuditRetentionDays?: number
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -846,10 +1131,31 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
-    autoQuarantineRecoveryEnabled:
-      value.autoQuarantineRecoveryEnabled ?? true,
+    autoQuarantineRecoveryEnabled: value.autoQuarantineRecoveryEnabled ?? true,
     scheduledProbeRegisterCooldownMinutes:
       value.scheduledProbeRegisterCooldownMinutes ?? 360,
+    requestAuditEnabled: value.requestAuditEnabled ?? true,
+    requestAuditAutoScanEnabled: value.requestAuditAutoScanEnabled ?? true,
+    requestAuditAdaptiveScanEnabled:
+      value.requestAuditAdaptiveScanEnabled ?? true,
+    requestAuditScanIntervalMinutes:
+      value.requestAuditScanIntervalMinutes ?? 5,
+    requestAuditBusyScanIntervalSeconds:
+      value.requestAuditBusyScanIntervalSeconds ?? 30,
+    requestAuditNormalScanIntervalSeconds:
+      value.requestAuditNormalScanIntervalSeconds ?? 120,
+    requestAuditIdleScanIntervalSeconds:
+      value.requestAuditIdleScanIntervalSeconds ?? 300,
+    requestAuditBusyRequestsPerMinute:
+      value.requestAuditBusyRequestsPerMinute ?? 20,
+    requestAuditLiveRefreshEnabled:
+      value.requestAuditLiveRefreshEnabled ?? true,
+    requestAuditLiveRefreshSeconds:
+      value.requestAuditLiveRefreshSeconds ?? 30,
+    requestAuditRiskEnabled: value.requestAuditRiskEnabled ?? true,
+    requestAuditIsolationEnabled:
+      value.requestAuditIsolationEnabled ?? true,
+    requestAuditRetentionDays: value.requestAuditRetentionDays ?? 90,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',
     wechatAppSecretConfigured: value.wechatAppSecretConfigured ?? false,
@@ -1513,6 +1819,21 @@ export const api = {
     }),
   egress: (params: Record<string, string | number | undefined> = {}) =>
     request<Page<EgressNode>>(`/egress-nodes${query(params)}`),
+  requestAudits: (params: Record<string, string | number | undefined> = {}) =>
+    request<RequestAuditPage>(`/request-audits${query(params)}`),
+  requestAuditSummary: (
+    params: Record<string, string | number | undefined> = {}
+  ) =>
+    request<RequestAuditSummaryResponse>(
+      `/request-audits/summary${query(params)}`
+    ),
+  requestAuditStatus: () =>
+    request<RequestAuditStatus>('/request-audits/status'),
+  scanRequestAudits: (body: RequestAuditWindowInput = { window: 'today' }) =>
+    request<RequestAuditScanResult>('/request-audits/scan', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   createEgressNode: (body: EgressNodeCreateInput) =>
     request<EgressNode>('/egress-nodes', {
       method: 'POST',

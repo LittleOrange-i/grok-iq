@@ -11,6 +11,7 @@ from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.egress_service import EgressService
 from app.services.probe_manager import ProbeManager
+from app.services.request_audit_service import RequestAuditService
 from app.services.register_integration import RegisterIntegrationService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
@@ -29,6 +30,7 @@ from .routes.integrations import (
     build_register_events_router,
 )
 from .routes.probes import build_probes_router
+from .routes.request_audits import build_request_audits_router
 from .routes.settings import build_settings_router
 from .routes.sso_reports import build_sso_reports_router
 from .routes.system import build_system_router
@@ -51,6 +53,7 @@ def build_router(
     register_integration: RegisterIntegrationService,
     wechat_notifications: WeChatAccountNotificationService,
     updates: UpdateCheckService,
+    request_audits: RequestAuditService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
     require_admin = build_admin_auth_dependency(auth_service)
@@ -94,6 +97,8 @@ def build_router(
         )
     )
     protected.include_router(build_chat_router(chat_service))
+    if request_audits is not None:
+        protected.include_router(build_request_audits_router(request_audits))
     protected.include_router(build_sso_reports_router(sso_reports))
     protected.include_router(build_register_events_router(register_integration))
     protected.include_router(build_system_router(updates))

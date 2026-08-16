@@ -107,6 +107,35 @@ class RuntimeSettingsService:
             "scheduledProbeRegisterCooldownMinutes": (
                 s.scheduled_probe_register_cooldown_minutes
             ),
+            "requestAuditEnabled": s.request_audit_enabled,
+            "requestAuditAutoScanEnabled": s.request_audit_auto_scan_enabled,
+            "requestAuditAdaptiveScanEnabled": (
+                s.request_audit_adaptive_scan_enabled
+            ),
+            "requestAuditScanIntervalMinutes": (
+                s.request_audit_scan_interval_minutes
+            ),
+            "requestAuditBusyScanIntervalSeconds": (
+                s.request_audit_busy_scan_interval_seconds
+            ),
+            "requestAuditNormalScanIntervalSeconds": (
+                s.request_audit_normal_scan_interval_seconds
+            ),
+            "requestAuditIdleScanIntervalSeconds": (
+                s.request_audit_idle_scan_interval_seconds
+            ),
+            "requestAuditBusyRequestsPerMinute": (
+                s.request_audit_busy_requests_per_minute
+            ),
+            "requestAuditLiveRefreshEnabled": (
+                s.request_audit_live_refresh_enabled
+            ),
+            "requestAuditLiveRefreshSeconds": (
+                s.request_audit_live_refresh_seconds
+            ),
+            "requestAuditRiskEnabled": s.request_audit_risk_enabled,
+            "requestAuditIsolationEnabled": s.request_audit_isolation_enabled,
+            "requestAuditRetentionDays": s.request_audit_retention_days,
             "probeWorkerConcurrency": s.probe_worker_concurrency,
             "probeQueueLimit": s.probe_queue_limit,
             "probeStepDelaySeconds": s.probe_step_delay_seconds,
