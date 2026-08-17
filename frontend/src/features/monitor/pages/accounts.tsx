@@ -38,6 +38,7 @@ import {
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -75,6 +76,7 @@ import {
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
+import { PersistedViewNotice } from '@/components/persisted-view-notice'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
   ServerPagination,
@@ -102,18 +104,47 @@ import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 type AccountBatchAction = 'enable' | 'disable'
 type RecoveryGuardFilter = 'all' | 'true' | 'false'
 
+const ACCOUNTS_VIEW_STORAGE_KEY = 'grokiq.monitor.accounts-view.v1'
+const defaultAccountsView = {
+  page: 1,
+  pageSize: 50,
+  search: '',
+  status: 'all',
+  upstreamStatus: 'all',
+  recoveryGuarded: 'all',
+}
+
+const accountMonitorStatusLabels: Record<string, string> = {
+  all: '全部判定',
+  healthy: '正常',
+  watch: '观察',
+  suspect: '疑似降智',
+  high_risk: '高风险',
+  quarantined: '已停用',
+}
+
 export function AccountsPage() {
   const client = useQueryClient()
   const navigate = useNavigate()
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(50)
-  const [search, setSearch] = useState('')
-  const [deferredSearch, searchPending] = useDebouncedValue(search.trim())
-  const [status, setStatus] = useState('all')
-  const [upstreamStatus, setUpstreamStatus] =
-    useState<UpstreamStatusFilter>('all')
-  const [recoveryGuarded, setRecoveryGuarded] =
-    useState<RecoveryGuardFilter>('all')
+  const accountsView = usePersistedViewState(
+    ACCOUNTS_VIEW_STORAGE_KEY,
+    defaultAccountsView
+  )
+  const { page, pageSize, search, status, upstreamStatus, recoveryGuarded } =
+    accountsView.value
+  const updateAccountsView = (
+    patch: Partial<typeof defaultAccountsView>
+  ) => accountsView.setValue((current) => ({ ...current, ...patch }))
+  const setPage = (value: number) => updateAccountsView({ page: value })
+  const setPageSize = (value: number) =>
+    updateAccountsView({ pageSize: value })
+  const setSearch = (value: string) => updateAccountsView({ search: value })
+  const setStatus = (value: string) => updateAccountsView({ status: value })
+  const setUpstreamStatus = (value: UpstreamStatusFilter) =>
+    updateAccountsView({ upstreamStatus: value })
+  const setRecoveryGuarded = (value: RecoveryGuardFilter) =>
+    updateAccountsView({ recoveryGuarded: value })
+  const [deferredSearch] = useDebouncedValue(search.trim())
   const [selected, setSelected] = useState<number[]>([])
   const [selectedDisabled, setSelectedDisabled] = useState<number[]>([])
   const [allFilteredSelected, setAllFilteredSelected] = useState(false)
@@ -152,10 +183,16 @@ export function AccountsPage() {
       ),
     placeholderData: (previous) => previous,
   })
-  const profiles = useQuery({ queryKey: ['profiles'], queryFn: api.profiles })
+  const profiles = useQuery({
+    queryKey: ['profiles'],
+    queryFn: api.profiles,
+    enabled: probeOpen,
+    staleTime: 60_000,
+  })
   const egress = useQuery({
     queryKey: ['egress'],
     queryFn: () => api.egress({ pageSize: 500 }),
+    staleTime: 60_000,
   })
   const egressNodeNames = useMemo(
     () => buildEgressNodeNameMap(egress.data?.items),
@@ -189,7 +226,6 @@ export function AccountsPage() {
   const { beginTableInteraction, tableLoading: showTableLoading } =
     useServerTableLoading({
       isFetching: query.isFetching,
-      inputPending: searchPending,
     })
   const openAccountDetail = (id: number) => {
     setDetailId(id)
@@ -400,6 +436,28 @@ export function AccountsPage() {
   const bindableEgress = (egress.data?.items ?? []).filter(
     (node) => node.enabled && node.proxyConfigured
   )
+  const clearAccountsView = () => {
+    beginTableInteraction()
+    accountsView.clear()
+    setSelected([])
+    setSelectedDisabled([])
+    setAllFilteredSelected(false)
+  }
+  const upstreamStatusLabel =
+    ACCOUNT_UPSTREAM_STATUS_OPTIONS.find(
+      (option) => option.value === upstreamStatus
+    )?.label ?? '全部上游状态'
+  const accountsViewSummary = [
+    search.trim() ? `搜索“${search.trim()}”` : '',
+    accountMonitorStatusLabels[status] ?? `判定 ${status}`,
+    upstreamStatusLabel,
+    recoveryGuarded === 'all'
+      ? '全部恢复状态'
+      : recoveryGuarded === 'true'
+        ? '恢复保护'
+        : '未标记恢复保护',
+    `第 ${page} 页 · 每页 ${pageSize} 条`,
+  ].join(' · ')
 
   return (
     <Page>
@@ -541,7 +599,6 @@ export function AccountsPage() {
               <Input
                 value={search}
                 onChange={(event) => {
-                  beginTableInteraction()
                   setSearch(event.target.value)
                   setPage(1)
                   setSelected([])
@@ -624,6 +681,13 @@ export function AccountsPage() {
               </SelectContent>
             </Select>
           </div>
+          {accountsView.active && (
+            <PersistedViewNotice
+              restored={accountsView.restored}
+              summary={accountsViewSummary}
+              onClear={clearAccountsView}
+            />
+          )}
           {query.isLoading && !query.data ? (
             <LoadingState />
           ) : accounts.length ? (
@@ -893,6 +957,11 @@ export function AccountsPage() {
         accountIds={selected}
         disabledAccountCount={selectedDisabledCount}
         profiles={profiles.data ?? []}
+        profilesLoading={profiles.isFetching && !profiles.data}
+        profilesError={
+          profiles.isError ? getErrorMessage(profiles.error) : ''
+        }
+        onRefreshProfiles={() => void profiles.refetch()}
         egress={egress.data?.items ?? []}
         egressLoading={egress.isFetching}
         egressError={egress.isError ? getErrorMessage(egress.error) : ''}

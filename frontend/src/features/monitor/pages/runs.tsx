@@ -12,6 +12,7 @@ import {
   Activity,
   ArrowUp,
   Ban,
+  CalendarDays,
   ChevronDown,
   ChevronUp,
   Clock3,
@@ -50,6 +51,7 @@ import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
+import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -101,6 +103,7 @@ import {
   SourceCodeView,
 } from '@/components/formatted-content'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
+import { PersistedViewNotice } from '@/components/persisted-view-notice'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
   ServerPagination,
@@ -173,15 +176,35 @@ const degradationClassifications = new Set([
   'marker_miss',
 ])
 
+const RUNS_VIEW_STORAGE_KEY = 'grokiq.monitor.runs-view.v1'
+const defaultRunsView = {
+  status: 'all',
+  search: '',
+  createdFrom: '',
+  createdTo: '',
+  page: 1,
+  pageSize: 50,
+}
+
 export function RunsPage() {
   const client = useQueryClient()
-  const [status, setStatus] = useState('all')
-  const [search, setSearch] = useState('')
-  const [createdFrom, setCreatedFrom] = useState('')
-  const [createdTo, setCreatedTo] = useState('')
-  const [deferredSearch, searchPending] = useDebouncedValue(search.trim())
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(50)
+  const runsView = usePersistedViewState(
+    RUNS_VIEW_STORAGE_KEY,
+    defaultRunsView
+  )
+  const { status, search, createdFrom, createdTo, page, pageSize } =
+    runsView.value
+  const updateRunsView = (
+    patch: Partial<typeof defaultRunsView>
+  ) => runsView.setValue((current) => ({ ...current, ...patch }))
+  const setStatus = (value: string) => updateRunsView({ status: value })
+  const setSearch = (value: string) => updateRunsView({ search: value })
+  const setCreatedFrom = (value: string) =>
+    updateRunsView({ createdFrom: value })
+  const setCreatedTo = (value: string) => updateRunsView({ createdTo: value })
+  const setPage = (value: number) => updateRunsView({ page: value })
+  const setPageSize = (value: number) => updateRunsView({ pageSize: value })
+  const [deferredSearch] = useDebouncedValue(search.trim())
   const [selection, setSelection] = useState<Map<string, RunSelectionItem>>(
     () => new Map()
   )
@@ -253,6 +276,7 @@ export function RunsPage() {
     queryKey: ['profiles'],
     queryFn: api.profiles,
     staleTime: 60_000,
+    enabled: probeSelection != null,
   })
   const egressNodeNames = useMemo(
     () => buildEgressNodeNameMap(egress.data?.items),
@@ -270,7 +294,6 @@ export function RunsPage() {
   const { beginTableInteraction, tableLoading: showTableLoading } =
     useServerTableLoading({
       isFetching: query.isFetching,
-      inputPending: searchPending,
     })
   const currentPageRuns = useMemo(
     () => query.data?.items ?? [],
@@ -561,7 +584,6 @@ export function RunsPage() {
           taskCount: selectedRunIds.length,
         })
         void egress.refetch()
-        void profiles.refetch()
       }
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -576,6 +598,28 @@ export function RunsPage() {
     setSelection(new Map())
     setAllFilteredSelected(false)
   }
+
+  const clearRunsView = () => {
+    beginTableInteraction()
+    runsView.clear()
+    clearSelection()
+  }
+
+  const todayRange = localDayRange(new Date())
+  const todayActive =
+    createdFrom === todayRange.from && createdTo === todayRange.to
+  const runsViewSummary = [
+    search.trim() ? `搜索“${search.trim()}”` : '',
+    status !== 'all'
+      ? (runStatusMeta[status]?.label ?? `状态 ${status}`)
+      : '全部状态',
+    createdFrom || createdTo
+      ? `${createdFrom ? formatDateTimeInput(createdFrom) : '不限'} 至 ${createdTo ? formatDateTimeInput(createdTo) : '不限'}`
+      : '',
+    `第 ${page} 页 · 每页 ${pageSize} 条`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   const toggleRunSelection = (run: ProbeRun, checked: boolean) => {
     setAllFilteredSelected(false)
@@ -677,7 +721,6 @@ export function RunsPage() {
                     taskCount: selectedRunIds.length,
                   })
                   void egress.refetch()
-                  void profiles.refetch()
                 }}
               >
                 <Play />
@@ -758,7 +801,6 @@ export function RunsPage() {
               <Input
                 value={search}
                 onChange={(event) => {
-                  beginTableInteraction()
                   setSearch(event.target.value)
                   setPage(1)
                   clearSelection()
@@ -828,8 +870,33 @@ export function RunsPage() {
                   <SelectItem value='cancelled'>任务已取消</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                type='button'
+                size='sm'
+                variant={todayActive ? 'secondary' : 'outline'}
+                className='h-9'
+                onClick={() => {
+                  beginTableInteraction()
+                  updateRunsView({
+                    createdFrom: todayRange.from,
+                    createdTo: todayRange.to,
+                    page: 1,
+                  })
+                  clearSelection()
+                }}
+              >
+                <CalendarDays />
+                今天
+              </Button>
             </div>
           </div>
+          {runsView.active && (
+            <PersistedViewNotice
+              restored={runsView.restored}
+              summary={runsViewSummary}
+              onClear={clearRunsView}
+            />
+          )}
           {invalidTimeRange && (
             <p className='mb-4 text-xs text-destructive'>
               开始时间需要早于或等于结束时间。
@@ -947,6 +1014,11 @@ export function RunsPage() {
         accountIds={probeSelection?.accountIds ?? []}
         sourceTaskCount={probeSelection?.taskCount ?? 0}
         profiles={profiles.data ?? []}
+        profilesLoading={profiles.isFetching && !profiles.data}
+        profilesError={
+          profiles.isError ? getErrorMessage(profiles.error) : ''
+        }
+        onRefreshProfiles={() => void profiles.refetch()}
         egress={egress.data?.items ?? []}
         egressLoading={egress.isFetching}
         egressError={egress.isError ? getErrorMessage(egress.error) : ''}
@@ -1964,6 +2036,18 @@ function toIsoDateTime(value: string) {
   if (!value) return ''
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? '' : date.toISOString()
+}
+
+function localDayRange(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const prefix = `${year}-${month}-${day}`
+  return { from: `${prefix}T00:00`, to: `${prefix}T23:59` }
+}
+
+function formatDateTimeInput(value: string) {
+  return value.replace('T', ' ')
 }
 
 function RestoreFact({
