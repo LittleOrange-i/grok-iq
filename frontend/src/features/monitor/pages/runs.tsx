@@ -1,6 +1,7 @@
 import {
   type ReactNode,
   type ComponentType,
+  memo,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -595,6 +596,7 @@ export function RunsPage() {
   })
 
   const clearSelection = () => {
+    if (selection.size === 0 && !allFilteredSelected) return
     setSelection(new Map())
     setAllFilteredSelected(false)
   }
@@ -1301,16 +1303,7 @@ export function RunsPage() {
   )
 }
 
-function RunRow({
-  run,
-  egressNodeNames,
-  selected,
-  selectable,
-  onSelectedChange,
-  onDetail,
-  onAction,
-  pending,
-}: {
+type RunRowProps = {
   run: ProbeRun
   egressNodeNames: EgressNodeNameMap
   selected: boolean
@@ -1319,7 +1312,18 @@ function RunRow({
   onDetail: () => void
   onAction: (action: 'cancel' | 'retry' | 'delete' | 'restore') => void
   pending: boolean
-}) {
+}
+
+const RunRow = memo(function RunRow({
+  run,
+  egressNodeNames,
+  selected,
+  selectable,
+  onSelectedChange,
+  onDetail,
+  onAction,
+  pending,
+}: RunRowProps) {
   const progress = run.total_steps
     ? Math.round((run.completed_steps / run.total_steps) * 100)
     : 0
@@ -1457,6 +1461,16 @@ function RunRow({
         </div>
       </TableCell>
     </TableRow>
+  )
+}, areRunRowPropsEqual)
+
+function areRunRowPropsEqual(previous: RunRowProps, next: RunRowProps) {
+  return (
+    previous.run === next.run &&
+    previous.egressNodeNames === next.egressNodeNames &&
+    previous.selected === next.selected &&
+    previous.selectable === next.selectable &&
+    previous.pending === next.pending
   )
 }
 
