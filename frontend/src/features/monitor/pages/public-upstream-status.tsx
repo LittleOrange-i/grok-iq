@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
 import {
   Activity,
   AlertTriangle,
@@ -91,12 +90,7 @@ export function PublicUpstreamStatusPage() {
               </span>
             </span>
           </div>
-          <div className='flex items-center gap-1 sm:gap-2'>
-            <ThemeSwitch />
-            <Button asChild size='sm' variant='outline'>
-              <Link to='/sign-in'>管理登录</Link>
-            </Button>
-          </div>
+          <ThemeSwitch />
         </div>
       </header>
 
