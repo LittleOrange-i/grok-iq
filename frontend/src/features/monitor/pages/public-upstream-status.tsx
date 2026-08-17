@@ -18,9 +18,15 @@ import {
   type PublicUpstreamProvider,
 } from '@/lib/api'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { IconGithub } from '@/assets/brand-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 const providerMeta: Record<
@@ -90,7 +96,29 @@ export function PublicUpstreamStatusPage() {
               </span>
             </span>
           </div>
-          <ThemeSwitch />
+          <div className='flex items-center gap-1'>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='bg-foreground text-background shadow-xs hover:bg-foreground/85 hover:text-background'
+                  asChild
+                >
+                  <a
+                    href='https://github.com/kaibush/grok-iq'
+                    target='_blank'
+                    rel='noreferrer'
+                    aria-label='查看 GrokIQ GitHub 仓库'
+                  >
+                    <IconGithub className='size-5' />
+                  </a>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>GitHub 仓库</TooltipContent>
+            </Tooltip>
+            <ThemeSwitch />
+          </div>
         </div>
       </header>
 
