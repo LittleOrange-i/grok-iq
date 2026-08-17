@@ -16,8 +16,8 @@ from app.persistence.auth_repository import AuthRepository
 from app.persistence.chat_provider_repository import ChatProviderRepository
 from app.persistence.database import Database
 from app.persistence.probe_repository import ProbeRepository
-from app.persistence.request_audit_repository import RequestAuditRepository
 from app.persistence.register_event_repository import RegisterEventRepository
+from app.persistence.request_audit_repository import RequestAuditRepository
 from app.persistence.settings_repository import SettingsRepository
 from app.persistence.sso_report_repository import SsoReportRepository
 from app.services.account_service import AccountService
@@ -25,8 +25,8 @@ from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.egress_service import EgressService
 from app.services.probe_manager import ProbeManager
-from app.services.request_audit_service import RequestAuditService
 from app.services.register_integration import RegisterIntegrationService
+from app.services.request_audit_service import RequestAuditService
 from app.services.scheduler import SchedulerService
 from app.services.settings_service import RuntimeSettingsService
 from app.services.sso_report_service import SsoReportService
