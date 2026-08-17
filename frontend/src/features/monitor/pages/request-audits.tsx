@@ -1163,7 +1163,6 @@ export function RequestAuditsPage() {
 
   const deferredWorkspaceSearch = useDeferredValue(workspaceSearch)
   const deferredAuditSearch = useDeferredValue(auditSearch)
-  const windowKey = `${selectedWindow.window}:${selectedWindow.startAt ?? ''}:${selectedWindow.endAt ?? ''}`
   const windowParams = useMemo(
     () => ({
       window: selectedWindow.window,
@@ -1227,7 +1226,7 @@ export function RequestAuditsPage() {
   )
 
   const summaryQuery = useQuery({
-    queryKey: ['request-audits', 'summary', windowKey],
+    queryKey: ['request-audits', 'summary', windowParams],
     queryFn: () => api.requestAuditSummary(windowParams),
     placeholderData: keepPreviousData,
     refetchInterval: liveRefreshInterval,
@@ -1237,7 +1236,7 @@ export function RequestAuditsPage() {
     queryKey: [
       'request-audits',
       'records',
-      windowKey,
+      windowParams,
       page,
       pageSize,
       deferredAuditSearch,

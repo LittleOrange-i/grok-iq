@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -33,11 +33,13 @@ import {
   api,
   type AccountDetailResponse,
   type ProbeSample,
+  type UpstreamAccount,
   type UpstreamQuota,
 } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { Badge } from '@/components/ui/badge'
@@ -135,16 +137,20 @@ export function AccountsPage() {
   const updateAccountsView = (
     patch: Partial<typeof defaultAccountsView>
   ) => accountsView.setValue((current) => ({ ...current, ...patch }))
-  const setPage = (value: number) => updateAccountsView({ page: value })
-  const setPageSize = (value: number) =>
-    updateAccountsView({ pageSize: value })
-  const setSearch = (value: string) => updateAccountsView({ search: value })
-  const setStatus = (value: string) => updateAccountsView({ status: value })
-  const setUpstreamStatus = (value: UpstreamStatusFilter) =>
-    updateAccountsView({ upstreamStatus: value })
-  const setRecoveryGuarded = (value: RecoveryGuardFilter) =>
-    updateAccountsView({ recoveryGuarded: value })
   const [deferredSearch] = useDebouncedValue(search.trim())
+  const committedQuery = useMemo(
+    () => ({
+      page,
+      pageSize,
+      search: deferredSearch,
+      status,
+      upstreamStatus,
+      recoveryGuarded,
+    }),
+    [deferredSearch, page, pageSize, recoveryGuarded, status, upstreamStatus]
+  )
+  // Apply filter/page query after the overlay and select close have painted.
+  const tableQuery = usePaintDeferredValue(committedQuery)
   const [selected, setSelected] = useState<number[]>([])
   const [selectedDisabled, setSelectedDisabled] = useState<number[]>([])
   const [allFilteredSelected, setAllFilteredSelected] = useState(false)
@@ -159,25 +165,38 @@ export function AccountsPage() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [sampleToDelete, setSampleToDelete] = useState<ProbeSample | null>(null)
+  const tableQueryPending =
+    tableQuery.page !== committedQuery.page ||
+    tableQuery.pageSize !== committedQuery.pageSize ||
+    tableQuery.search !== committedQuery.search ||
+    tableQuery.status !== committedQuery.status ||
+    tableQuery.upstreamStatus !== committedQuery.upstreamStatus ||
+    tableQuery.recoveryGuarded !== committedQuery.recoveryGuarded
   const query = useQuery({
     queryKey: [
       'accounts',
-      page,
-      pageSize,
-      deferredSearch,
-      status,
-      upstreamStatus,
-      recoveryGuarded,
+      tableQuery.page,
+      tableQuery.pageSize,
+      tableQuery.search,
+      tableQuery.status,
+      tableQuery.upstreamStatus,
+      tableQuery.recoveryGuarded,
     ],
     queryFn: ({ signal }) =>
       api.accounts(
         {
-          page,
-          pageSize,
-          search: deferredSearch,
-          monitorStatus: status === 'all' ? '' : status,
-          status: upstreamStatus === 'all' ? '' : upstreamStatus,
-          recoveryGuarded: recoveryGuarded === 'all' ? '' : recoveryGuarded,
+          page: tableQuery.page,
+          pageSize: tableQuery.pageSize,
+          search: tableQuery.search,
+          monitorStatus: tableQuery.status === 'all' ? '' : tableQuery.status,
+          status:
+            tableQuery.upstreamStatus === 'all'
+              ? ''
+              : tableQuery.upstreamStatus,
+          recoveryGuarded:
+            tableQuery.recoveryGuarded === 'all'
+              ? ''
+              : tableQuery.recoveryGuarded,
         },
         signal
       ),
@@ -203,9 +222,16 @@ export function AccountsPage() {
     queryFn: () => api.account(detailId!),
     enabled: detailOpen && detailId != null,
   })
-  const accounts = query.data?.items ?? []
-  const selectableAccounts = accounts.filter(
-    (item) => !item.authStatus || item.authStatus === 'active'
+  const accounts = useMemo(
+    () => query.data?.items ?? [],
+    [query.data?.items]
+  )
+  const selectableAccounts = useMemo(
+    () =>
+      accounts.filter(
+        (item) => !item.authStatus || item.authStatus === 'active'
+      ),
+    [accounts]
   )
   const selectedDisabledIdSet = useMemo(
     () => new Set(selectedDisabled),
@@ -226,11 +252,32 @@ export function AccountsPage() {
   const { beginTableInteraction, tableLoading: showTableLoading } =
     useServerTableLoading({
       isFetching: query.isFetching,
+      inputPending: tableQueryPending,
     })
-  const openAccountDetail = (id: number) => {
+  const tableFilterKey = [
+    tableQuery.search,
+    tableQuery.status,
+    tableQuery.upstreamStatus,
+    tableQuery.recoveryGuarded,
+  ].join('|')
+  const appliedFilterKeyRef = useRef(tableFilterKey)
+  useEffect(() => {
+    if (tableQueryPending) {
+      beginTableInteraction()
+      return
+    }
+    if (appliedFilterKeyRef.current === tableFilterKey) return
+    appliedFilterKeyRef.current = tableFilterKey
+    // Wait until the overlay has painted before dropping checkboxes, so the
+    // first filter frame only updates the controls and loading state.
+    setSelected((current) => (current.length === 0 ? current : []))
+    setSelectedDisabled((current) => (current.length === 0 ? current : []))
+    setAllFilteredSelected(false)
+  }, [beginTableInteraction, tableFilterKey, tableQueryPending])
+  const openAccountDetail = useCallback((id: number) => {
     setDetailId(id)
     setDetailOpen(true)
-  }
+  }, [])
 
   const actionMutation = useMutation({
     mutationFn: ({ id, action }: { id: number; action: string }) =>
@@ -245,10 +292,14 @@ export function AccountsPage() {
   const selectionMutation = useMutation({
     mutationFn: () =>
       api.accountSelection({
-        search: deferredSearch,
-        monitorStatus: status === 'all' ? '' : status,
-        status: upstreamStatus === 'all' ? '' : upstreamStatus,
-        recoveryGuarded: recoveryGuarded === 'all' ? '' : recoveryGuarded,
+        search: tableQuery.search,
+        monitorStatus: tableQuery.status === 'all' ? '' : tableQuery.status,
+        status:
+          tableQuery.upstreamStatus === 'all' ? '' : tableQuery.upstreamStatus,
+        recoveryGuarded:
+          tableQuery.recoveryGuarded === 'all'
+            ? ''
+            : tableQuery.recoveryGuarded,
       }),
     onSuccess: (result) => {
       setSelected(result.accountIds)
@@ -439,10 +490,55 @@ export function AccountsPage() {
   const clearAccountsView = () => {
     beginTableInteraction()
     accountsView.clear()
-    setSelected([])
-    setSelectedDisabled([])
-    setAllFilteredSelected(false)
   }
+
+  const toggleCurrentPageSelection = useCallback(
+    (checked: boolean) => {
+      setAllFilteredSelected(false)
+      setSelected((current) =>
+        checked
+          ? Array.from(
+              new Set([
+                ...current,
+                ...selectableAccounts.map((item) => Number(item.id)),
+              ])
+            )
+          : current.filter(
+              (id) =>
+                !selectableAccounts.some((item) => Number(item.id) === id)
+            )
+      )
+      const disabledIds = selectableAccounts
+        .filter((item) => !item.enabled)
+        .map((item) => Number(item.id))
+      setSelectedDisabled((current) =>
+        checked
+          ? Array.from(new Set([...current, ...disabledIds]))
+          : current.filter(
+              (id) =>
+                !selectableAccounts.some((item) => Number(item.id) === id)
+            )
+      )
+    },
+    [selectableAccounts]
+  )
+
+  const toggleAccountSelection = useCallback(
+    (id: number, enabled: boolean, checked: boolean) => {
+      setAllFilteredSelected(false)
+      setSelected((current) =>
+        checked
+          ? [...new Set([...current, id])]
+          : current.filter((item) => item !== id)
+      )
+      setSelectedDisabled((current) =>
+        checked && !enabled
+          ? [...new Set([...current, id])]
+          : current.filter((item) => item !== id)
+      )
+    },
+    []
+  )
   const upstreamStatusLabel =
     ACCOUNT_UPSTREAM_STATUS_OPTIONS.find(
       (option) => option.value === upstreamStatus
@@ -599,11 +695,7 @@ export function AccountsPage() {
               <Input
                 value={search}
                 onChange={(event) => {
-                  setSearch(event.target.value)
-                  setPage(1)
-                  setSelected([])
-                  setSelectedDisabled([])
-                  setAllFilteredSelected(false)
+                  updateAccountsView({ search: event.target.value, page: 1 })
                 }}
                 placeholder='搜索名称、邮箱或账号 ID'
                 className='pr-9 pl-9'
@@ -616,11 +708,7 @@ export function AccountsPage() {
               value={status}
               onValueChange={(value) => {
                 beginTableInteraction()
-                setStatus(value)
-                setPage(1)
-                setSelected([])
-                setSelectedDisabled([])
-                setAllFilteredSelected(false)
+                updateAccountsView({ status: value, page: 1 })
               }}
             >
               <SelectTrigger className='w-full md:w-44'>
@@ -640,11 +728,10 @@ export function AccountsPage() {
               value={upstreamStatus}
               onValueChange={(value) => {
                 beginTableInteraction()
-                setUpstreamStatus(value as UpstreamStatusFilter)
-                setPage(1)
-                setSelected([])
-                setSelectedDisabled([])
-                setAllFilteredSelected(false)
+                updateAccountsView({
+                  upstreamStatus: value as UpstreamStatusFilter,
+                  page: 1,
+                })
               }}
             >
               <SelectTrigger className='w-full md:w-44'>
@@ -663,11 +750,10 @@ export function AccountsPage() {
               value={recoveryGuarded}
               onValueChange={(value) => {
                 beginTableInteraction()
-                setRecoveryGuarded(value as RecoveryGuardFilter)
-                setPage(1)
-                setSelected([])
-                setSelectedDisabled([])
-                setAllFilteredSelected(false)
+                updateAccountsView({
+                  recoveryGuarded: value as RecoveryGuardFilter,
+                  page: 1,
+                })
               }}
             >
               <SelectTrigger className='w-full md:w-44'>
@@ -693,220 +779,15 @@ export function AccountsPage() {
           ) : accounts.length ? (
             <>
               <div className='relative min-h-40' aria-busy={showTableLoading}>
-                <Table rememberRowKey='monitor-accounts'>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className='w-10'>
-                        <Checkbox
-                          checked={allChecked}
-                          onCheckedChange={(value) => {
-                            const checked = value === true
-                            setAllFilteredSelected(false)
-                            setSelected(
-                              checked
-                                ? Array.from(
-                                    new Set([
-                                      ...selected,
-                                      ...selectableAccounts.map((item) =>
-                                        Number(item.id)
-                                      ),
-                                    ])
-                                  )
-                                : selected.filter(
-                                    (id) =>
-                                      !selectableAccounts.some(
-                                        (item) => Number(item.id) === id
-                                      )
-                                  )
-                            )
-                            const disabledIds = selectableAccounts
-                              .filter((item) => !item.enabled)
-                              .map((item) => Number(item.id))
-                            setSelectedDisabled((current) =>
-                              checked
-                                ? Array.from(
-                                    new Set([...current, ...disabledIds])
-                                  )
-                                : current.filter(
-                                    (id) =>
-                                      !selectableAccounts.some(
-                                        (item) => Number(item.id) === id
-                                      )
-                                  )
-                            )
-                          }}
-                          aria-label='选择当前页可检测账号'
-                        />
-                      </TableHead>
-                      <TableHead>账号</TableHead>
-                      <TableHead className='w-16 text-center'>SSO</TableHead>
-                      <TableHead>上游状态</TableHead>
-                      <TableHead>监控判定</TableHead>
-                      <TableHead>周期样本 / 信号</TableHead>
-                      <TableHead>TPS</TableHead>
-                      <TableHead className='w-24'>额度</TableHead>
-                      <TableHead>出口绑定</TableHead>
-                      <TableHead className='text-right'>操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {accounts.map((account) => {
-                      const id = Number(account.id)
-                      const assessment = account.assessment
-                      const accountLabel =
-                        account.name || account.email || `账号 ${id}`
-                      const secondaryAccountLabel = formatAccountSecondaryLabel(
-                        {
-                          id: account.id,
-                          email: account.email,
-                          createdAt: account.createdAt,
-                          accountLabel,
-                        }
-                      )
-                      return (
-                        <TableRow key={account.id} rowId={id}>
-                          <TableCell>
-                            <Checkbox
-                              checked={selected.includes(id)}
-                              disabled={
-                                Boolean(account.authStatus) &&
-                                account.authStatus !== 'active'
-                              }
-                              onCheckedChange={(value) => {
-                                const checked = value === true
-                                setAllFilteredSelected(false)
-                                setSelected((current) =>
-                                  checked
-                                    ? [...new Set([...current, id])]
-                                    : current.filter((item) => item !== id)
-                                )
-                                setSelectedDisabled((current) =>
-                                  checked && !account.enabled
-                                    ? [...new Set([...current, id])]
-                                    : current.filter((item) => item !== id)
-                                )
-                              }}
-                              aria-label={`选择账号 ${account.name}`}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <div className='font-medium'>{accountLabel}</div>
-                            <div
-                              className='max-w-80 text-xs text-muted-foreground'
-                              title={secondaryAccountLabel}
-                            >
-                              {secondaryAccountLabel}
-                            </div>
-                          </TableCell>
-                          <TableCell className='text-center'>
-                            <SsoAvailabilityIndicator
-                              available={account.ssoAvailable}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <div className='flex items-center gap-2'>
-                              <span
-                                className={`size-2 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
-                              />
-                              {account.enabled ? '启用' : '停用'}
-                              <AuthStatusIndicator
-                                status={account.authStatus}
-                              />
-                              {assessment.recovery_guarded && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge
-                                      variant='outline'
-                                      className='gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-                                    >
-                                      <ShieldCheck className='size-3' />
-                                      恢复保护
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent className='max-w-72'>
-                                    隔离到期后由系统恢复，恢复时已降至最低优先级；当前优先级为{' '}
-                                    {account.priority ?? '未知'}。
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                              {!account.enabled && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span
-                                      className='inline-flex size-6 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                                      tabIndex={0}
-                                      aria-label='探针诊断激活'
-                                    >
-                                      <RefreshCw className='size-3.5' />
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent className='max-w-72'>
-                                    探针请求前短时激活，单次请求后及任务结束时恢复原设置。
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className='flex items-center gap-2 whitespace-nowrap'>
-                              <StatusBadge value={assessment.monitor_status} />
-                              <span className='text-xs text-muted-foreground tabular-nums'>
-                                {formatNumber(assessment.risk_score)} 分
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <span className='tabular-nums'>
-                              {assessment.sample_count ?? 0}
-                            </span>
-                            <span className='mx-1 text-muted-foreground'>
-                              /
-                            </span>
-                            <span className='text-amber-600 tabular-nums'>
-                              {assessment.anomaly_count ?? 0}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <div className='tabular-nums'>
-                              {formatNumber(assessment.latest_tps)}
-                            </div>
-                            <div className='text-xs text-muted-foreground'>
-                              max {formatNumber(assessment.max_tps)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <QuotaRemainingIndicator quota={account.quota} />
-                          </TableCell>
-                          <TableCell>
-                            <EgressBindingIndicator
-                              nodeId={account.egressNodeId}
-                              nodeName={getEgressNodeName(
-                                egressNodeNames,
-                                account.egressNodeId
-                              )}
-                              assignmentMode={account.egressAssignmentMode}
-                            />
-                          </TableCell>
-                          <TableCell className='text-right'>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size='icon'
-                                  variant='ghost'
-                                  onClick={() => openAccountDetail(id)}
-                                  aria-label='查看账号详情'
-                                >
-                                  <Eye />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>查看详情</TooltipContent>
-                            </Tooltip>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+                <AccountsTable
+                  accounts={accounts}
+                  egressNodeNames={egressNodeNames}
+                  selected={selected}
+                  allChecked={allChecked}
+                  onToggleCurrentPage={toggleCurrentPageSelection}
+                  onToggleAccount={toggleAccountSelection}
+                  onDetail={openAccountDetail}
+                />
                 {showTableLoading && (
                   <ServerTableLoadingOverlay
                     page={page}
@@ -924,12 +805,11 @@ export function AccountsPage() {
                 itemLabel='账号'
                 onPageChange={(value) => {
                   beginTableInteraction()
-                  setPage(value)
+                  updateAccountsView({ page: value })
                 }}
                 onPageSizeChange={(value) => {
                   beginTableInteraction()
-                  setPageSize(value)
-                  setPage(1)
+                  updateAccountsView({ pageSize: value, page: 1 })
                 }}
               />
             </>
@@ -1315,6 +1195,220 @@ export function AccountsPage() {
         }}
       />
     </Page>
+  )
+}
+
+type AccountsTableProps = {
+  accounts: UpstreamAccount[]
+  egressNodeNames: EgressNodeNameMap
+  selected: number[]
+  allChecked: boolean
+  onToggleCurrentPage: (checked: boolean) => void
+  onToggleAccount: (id: number, enabled: boolean, checked: boolean) => void
+  onDetail: (id: number) => void
+}
+
+const AccountsTable = memo(function AccountsTable({
+  accounts,
+  egressNodeNames,
+  selected,
+  allChecked,
+  onToggleCurrentPage,
+  onToggleAccount,
+  onDetail,
+}: AccountsTableProps) {
+  const selectedIdSet = useMemo(() => new Set(selected), [selected])
+  return (
+    <Table rememberRowKey='monitor-accounts'>
+      <TableHeader>
+        <TableRow>
+          <TableHead className='w-10'>
+            <Checkbox
+              checked={allChecked}
+              onCheckedChange={(value) => onToggleCurrentPage(value === true)}
+              aria-label='选择当前页可检测账号'
+            />
+          </TableHead>
+          <TableHead>账号</TableHead>
+          <TableHead className='w-16 text-center'>SSO</TableHead>
+          <TableHead>上游状态</TableHead>
+          <TableHead>监控判定</TableHead>
+          <TableHead>周期样本 / 信号</TableHead>
+          <TableHead>TPS</TableHead>
+          <TableHead className='w-24'>额度</TableHead>
+          <TableHead>出口绑定</TableHead>
+          <TableHead className='text-right'>操作</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {accounts.map((account) => {
+          const id = Number(account.id)
+          return (
+            <AccountRow
+              key={account.id}
+              account={account}
+              egressNodeNames={egressNodeNames}
+              selected={selectedIdSet.has(id)}
+              onSelectedChange={(checked) =>
+                onToggleAccount(id, account.enabled, checked)
+              }
+              onDetail={() => onDetail(id)}
+            />
+          )
+        })}
+      </TableBody>
+    </Table>
+  )
+})
+
+type AccountRowProps = {
+  account: UpstreamAccount
+  egressNodeNames: EgressNodeNameMap
+  selected: boolean
+  onSelectedChange: (checked: boolean) => void
+  onDetail: () => void
+}
+
+const AccountRow = memo(function AccountRow({
+  account,
+  egressNodeNames,
+  selected,
+  onSelectedChange,
+  onDetail,
+}: AccountRowProps) {
+  const id = Number(account.id)
+  const assessment = account.assessment
+  const accountLabel = account.name || account.email || `账号 ${id}`
+  const secondaryAccountLabel = formatAccountSecondaryLabel({
+    id: account.id,
+    email: account.email,
+    createdAt: account.createdAt,
+    accountLabel,
+  })
+  return (
+    <TableRow rowId={id}>
+      <TableCell>
+        <Checkbox
+          checked={selected}
+          disabled={
+            Boolean(account.authStatus) && account.authStatus !== 'active'
+          }
+          onCheckedChange={(value) => onSelectedChange(value === true)}
+          aria-label={`选择账号 ${account.name}`}
+        />
+      </TableCell>
+      <TableCell>
+        <div className='font-medium'>{accountLabel}</div>
+        <div
+          className='max-w-80 text-xs text-muted-foreground'
+          title={secondaryAccountLabel}
+        >
+          {secondaryAccountLabel}
+        </div>
+      </TableCell>
+      <TableCell className='text-center'>
+        <SsoAvailabilityIndicator available={account.ssoAvailable} />
+      </TableCell>
+      <TableCell>
+        <div className='flex items-center gap-2'>
+          <span
+            className={`size-2 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
+          />
+          {account.enabled ? '启用' : '停用'}
+          <AuthStatusIndicator status={account.authStatus} />
+          {assessment.recovery_guarded && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant='outline'
+                  className='gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                >
+                  <ShieldCheck className='size-3' />
+                  恢复保护
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent className='max-w-72'>
+                隔离到期后由系统恢复，恢复时已降至最低优先级；当前优先级为{' '}
+                {account.priority ?? '未知'}。
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {!account.enabled && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className='inline-flex size-6 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  tabIndex={0}
+                  aria-label='探针诊断激活'
+                >
+                  <RefreshCw className='size-3.5' />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className='max-w-72'>
+                探针请求前短时激活，单次请求后及任务结束时恢复原设置。
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className='flex items-center gap-2 whitespace-nowrap'>
+          <StatusBadge value={assessment.monitor_status} />
+          <span className='text-xs text-muted-foreground tabular-nums'>
+            {formatNumber(assessment.risk_score)} 分
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <span className='tabular-nums'>{assessment.sample_count ?? 0}</span>
+        <span className='mx-1 text-muted-foreground'>/</span>
+        <span className='text-amber-600 tabular-nums'>
+          {assessment.anomaly_count ?? 0}
+        </span>
+      </TableCell>
+      <TableCell>
+        <div className='tabular-nums'>{formatNumber(assessment.latest_tps)}</div>
+        <div className='text-xs text-muted-foreground'>
+          max {formatNumber(assessment.max_tps)}
+        </div>
+      </TableCell>
+      <TableCell>
+        <QuotaRemainingIndicator quota={account.quota} />
+      </TableCell>
+      <TableCell>
+        <EgressBindingIndicator
+          nodeId={account.egressNodeId}
+          nodeName={getEgressNodeName(egressNodeNames, account.egressNodeId)}
+          assignmentMode={account.egressAssignmentMode}
+        />
+      </TableCell>
+      <TableCell className='text-right'>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size='icon'
+              variant='ghost'
+              onClick={onDetail}
+              aria-label='查看账号详情'
+            >
+              <Eye />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>查看详情</TooltipContent>
+        </Tooltip>
+      </TableCell>
+    </TableRow>
+  )
+}, areAccountRowPropsEqual)
+
+function areAccountRowPropsEqual(
+  previous: AccountRowProps,
+  next: AccountRowProps
+) {
+  return (
+    previous.account === next.account &&
+    previous.egressNodeNames === next.egressNodeNames &&
+    previous.selected === next.selected
   )
 }
 

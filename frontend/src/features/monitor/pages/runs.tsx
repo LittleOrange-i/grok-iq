@@ -2,6 +2,7 @@ import {
   type ReactNode,
   type ComponentType,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -51,6 +52,7 @@ import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import {
@@ -198,14 +200,22 @@ export function RunsPage() {
   const updateRunsView = (
     patch: Partial<typeof defaultRunsView>
   ) => runsView.setValue((current) => ({ ...current, ...patch }))
-  const setStatus = (value: string) => updateRunsView({ status: value })
-  const setSearch = (value: string) => updateRunsView({ search: value })
-  const setCreatedFrom = (value: string) =>
-    updateRunsView({ createdFrom: value })
-  const setCreatedTo = (value: string) => updateRunsView({ createdTo: value })
-  const setPage = (value: number) => updateRunsView({ page: value })
-  const setPageSize = (value: number) => updateRunsView({ pageSize: value })
   const [deferredSearch] = useDebouncedValue(search.trim())
+  const createdFromIso = toIsoDateTime(createdFrom)
+  const createdToIso = toIsoDateTime(createdTo)
+  const committedQuery = useMemo(
+    () => ({
+      status,
+      search: deferredSearch,
+      createdFrom: createdFromIso,
+      createdTo: createdToIso,
+      page,
+      pageSize,
+    }),
+    [createdFromIso, createdToIso, deferredSearch, page, pageSize, status]
+  )
+  // Apply filter/page query after the overlay and select close have painted.
+  const tableQuery = usePaintDeferredValue(committedQuery)
   const [selection, setSelection] = useState<Map<string, RunSelectionItem>>(
     () => new Map()
   )
@@ -222,34 +232,39 @@ export function RunsPage() {
   const [detailId, setDetailId] = useState<string | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollTopRef = useRef(0)
-  const openDetail = (id: string) => {
+  const openDetail = useCallback((id: string) => {
     detailScrollTopRef.current = 0
     setDetailId(id)
-  }
-  const createdFromIso = toIsoDateTime(createdFrom)
-  const createdToIso = toIsoDateTime(createdTo)
+  }, [])
   const invalidTimeRange = Boolean(
     createdFromIso && createdToIso && createdFromIso > createdToIso
   )
+  const tableQueryPending =
+    tableQuery.status !== committedQuery.status ||
+    tableQuery.search !== committedQuery.search ||
+    tableQuery.createdFrom !== committedQuery.createdFrom ||
+    tableQuery.createdTo !== committedQuery.createdTo ||
+    tableQuery.page !== committedQuery.page ||
+    tableQuery.pageSize !== committedQuery.pageSize
   const query = useQuery({
     queryKey: [
       'runs',
-      status,
-      deferredSearch,
-      createdFromIso,
-      createdToIso,
-      page,
-      pageSize,
+      tableQuery.status,
+      tableQuery.search,
+      tableQuery.createdFrom,
+      tableQuery.createdTo,
+      tableQuery.page,
+      tableQuery.pageSize,
     ],
     queryFn: ({ signal }) =>
       api.runs(
         {
-          page,
-          pageSize,
-          status: status === 'all' ? '' : status,
-          search: deferredSearch,
-          createdFrom: createdFromIso,
-          createdTo: createdToIso,
+          page: tableQuery.page,
+          pageSize: tableQuery.pageSize,
+          status: tableQuery.status === 'all' ? '' : tableQuery.status,
+          search: tableQuery.search,
+          createdFrom: tableQuery.createdFrom,
+          createdTo: tableQuery.createdTo,
         },
         signal
       ),
@@ -295,7 +310,27 @@ export function RunsPage() {
   const { beginTableInteraction, tableLoading: showTableLoading } =
     useServerTableLoading({
       isFetching: query.isFetching,
+      inputPending: tableQueryPending,
     })
+  const tableFilterKey = [
+    tableQuery.status,
+    tableQuery.search,
+    tableQuery.createdFrom,
+    tableQuery.createdTo,
+  ].join('|')
+  const appliedFilterKeyRef = useRef(tableFilterKey)
+  useEffect(() => {
+    if (tableQueryPending) {
+      beginTableInteraction()
+      return
+    }
+    if (appliedFilterKeyRef.current === tableFilterKey) return
+    appliedFilterKeyRef.current = tableFilterKey
+    // Wait until the overlay has painted before dropping checkboxes, so the
+    // first filter frame only updates the controls and loading state.
+    setSelection((current) => (current.size === 0 ? current : new Map()))
+    setAllFilteredSelected(false)
+  }, [beginTableInteraction, tableFilterKey, tableQueryPending])
   const currentPageRuns = useMemo(
     () => query.data?.items ?? [],
     [query.data?.items]
@@ -524,10 +559,10 @@ export function RunsPage() {
   const selectionMutation = useMutation({
     mutationFn: () =>
       api.runSelection({
-        status: status === 'all' ? '' : status,
-        search: deferredSearch,
-        createdFrom: createdFromIso,
-        createdTo: createdToIso,
+        status: tableQuery.status === 'all' ? '' : tableQuery.status,
+        search: tableQuery.search,
+        createdFrom: tableQuery.createdFrom,
+        createdTo: tableQuery.createdTo,
       }),
     onSuccess: (result) => {
       setSelection(new Map(result.items.map((item) => [item.id, item])))
@@ -596,15 +631,13 @@ export function RunsPage() {
   })
 
   const clearSelection = () => {
-    if (selection.size === 0 && !allFilteredSelected) return
-    setSelection(new Map())
+    setSelection((current) => (current.size === 0 ? current : new Map()))
     setAllFilteredSelected(false)
   }
 
   const clearRunsView = () => {
     beginTableInteraction()
     runsView.clear()
-    clearSelection()
   }
 
   const todayRange = localDayRange(new Date())
@@ -623,7 +656,7 @@ export function RunsPage() {
     .filter(Boolean)
     .join(' · ')
 
-  const toggleRunSelection = (run: ProbeRun, checked: boolean) => {
+  const toggleRunSelection = useCallback((run: ProbeRun, checked: boolean) => {
     setAllFilteredSelected(false)
     setSelection((current) => {
       const next = new Map(current)
@@ -635,20 +668,31 @@ export function RunsPage() {
       }
       return next
     })
-  }
+  }, [])
 
-  const toggleCurrentPageSelection = (checked: boolean) => {
-    setAllFilteredSelected(false)
-    setSelection((current) => {
-      const next = new Map(current)
-      if (checked) {
-        for (const item of currentPageActionable) next.set(item.id, item)
-      } else {
-        for (const run of currentPageRuns) next.delete(run.id)
-      }
-      return next
-    })
-  }
+  const toggleCurrentPageSelection = useCallback(
+    (checked: boolean) => {
+      setAllFilteredSelected(false)
+      setSelection((current) => {
+        const next = new Map(current)
+        if (checked) {
+          for (const item of currentPageActionable) next.set(item.id, item)
+        } else {
+          for (const run of currentPageRuns) next.delete(run.id)
+        }
+        return next
+      })
+    },
+    [currentPageActionable, currentPageRuns]
+  )
+
+  const mutateRun = mutate.mutate
+  const handleRunAction = useCallback(
+    (action: 'cancel' | 'retry' | 'delete' | 'restore', id: string) => {
+      mutateRun({ action, id })
+    },
+    [mutateRun]
+  )
 
   const bulkPending =
     bulkCancel.isPending || bulkDelete.isPending || bulkRestore.isPending
@@ -803,9 +847,7 @@ export function RunsPage() {
               <Input
                 value={search}
                 onChange={(event) => {
-                  setSearch(event.target.value)
-                  setPage(1)
-                  clearSelection()
+                  updateRunsView({ search: event.target.value, page: 1 })
                 }}
                 placeholder='搜索账号名称、邮箱或账号 ID'
                 className='pr-9 pl-9'
@@ -823,9 +865,7 @@ export function RunsPage() {
                   max={createdTo || undefined}
                   onChange={(event) => {
                     beginTableInteraction()
-                    setCreatedFrom(event.target.value)
-                    setPage(1)
-                    clearSelection()
+                    updateRunsView({ createdFrom: event.target.value, page: 1 })
                   }}
                   className='h-9 w-auto min-w-44 text-xs'
                   aria-label='任务创建开始时间'
@@ -839,9 +879,7 @@ export function RunsPage() {
                   min={createdFrom || undefined}
                   onChange={(event) => {
                     beginTableInteraction()
-                    setCreatedTo(event.target.value)
-                    setPage(1)
-                    clearSelection()
+                    updateRunsView({ createdTo: event.target.value, page: 1 })
                   }}
                   className='h-9 w-auto min-w-44 text-xs'
                   aria-label='任务创建结束时间'
@@ -851,9 +889,7 @@ export function RunsPage() {
                 value={status}
                 onValueChange={(value) => {
                   beginTableInteraction()
-                  setStatus(value)
-                  setPage(1)
-                  clearSelection()
+                  updateRunsView({ status: value, page: 1 })
                 }}
               >
                 <SelectTrigger className='w-48'>
@@ -884,7 +920,6 @@ export function RunsPage() {
                     createdTo: todayRange.to,
                     page: 1,
                   })
-                  clearSelection()
                 }}
               >
                 <CalendarDays />
@@ -910,53 +945,19 @@ export function RunsPage() {
             <>
               <div className='relative min-h-48' aria-busy={showTableLoading}>
                 {currentPageRuns.length ? (
-                  <Table rememberRowKey='monitor-runs'>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className='w-10'>
-                          <Checkbox
-                            checked={selectAllChecked}
-                            onCheckedChange={(value) =>
-                              toggleCurrentPageSelection(value === true)
-                            }
-                            disabled={
-                              currentPageActionable.length === 0 ||
-                              selectionActionPending
-                            }
-                            aria-label='选择当前页全部任务'
-                          />
-                        </TableHead>
-                        <TableHead>账号</TableHead>
-                        <TableHead>来源</TableHead>
-                        <TableHead>模式</TableHead>
-                        <TableHead>任务状态</TableHead>
-                        <TableHead>探针统计</TableHead>
-                        <TableHead>进度 / 预计耗时</TableHead>
-                        <TableHead>当前步骤</TableHead>
-                        <TableHead>创建时间</TableHead>
-                        <TableHead className='text-right'>操作</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {currentPageRuns.map((run) => (
-                        <RunRow
-                          key={run.id}
-                          run={run}
-                          egressNodeNames={egressNodeNames}
-                          selected={selection.has(run.id)}
-                          selectable={runSelectionAction(run) != null}
-                          onSelectedChange={(checked) =>
-                            toggleRunSelection(run, checked)
-                          }
-                          onDetail={() => openDetail(run.id)}
-                          onAction={(action) =>
-                            mutate.mutate({ action, id: run.id })
-                          }
-                          pending={mutate.isPending || selectionActionPending}
-                        />
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <RunsTable
+                    runs={currentPageRuns}
+                    egressNodeNames={egressNodeNames}
+                    selection={selection}
+                    selectAllChecked={selectAllChecked}
+                    currentPageActionableCount={currentPageActionable.length}
+                    selectionActionPending={selectionActionPending}
+                    actionPending={mutate.isPending || selectionActionPending}
+                    onToggleCurrentPage={toggleCurrentPageSelection}
+                    onToggleRun={toggleRunSelection}
+                    onDetail={openDetail}
+                    onAction={handleRunAction}
+                  />
                 ) : (
                   <EmptyState
                     title={
@@ -995,12 +996,11 @@ export function RunsPage() {
                   itemLabel='任务'
                   onPageChange={(value) => {
                     beginTableInteraction()
-                    setPage(value)
+                    updateRunsView({ page: value })
                   }}
                   onPageSizeChange={(value) => {
                     beginTableInteraction()
-                    setPageSize(value)
-                    setPage(1)
+                    updateRunsView({ pageSize: value, page: 1 })
                   }}
                 />
               )}
@@ -1302,6 +1302,80 @@ export function RunsPage() {
     </Page>
   )
 }
+
+type RunsTableProps = {
+  runs: ProbeRun[]
+  egressNodeNames: EgressNodeNameMap
+  selection: Map<string, RunSelectionItem>
+  selectAllChecked: boolean | 'indeterminate'
+  currentPageActionableCount: number
+  selectionActionPending: boolean
+  actionPending: boolean
+  onToggleCurrentPage: (checked: boolean) => void
+  onToggleRun: (run: ProbeRun, checked: boolean) => void
+  onDetail: (id: string) => void
+  onAction: (
+    action: 'cancel' | 'retry' | 'delete' | 'restore',
+    id: string
+  ) => void
+}
+
+const RunsTable = memo(function RunsTable({
+  runs,
+  egressNodeNames,
+  selection,
+  selectAllChecked,
+  currentPageActionableCount,
+  selectionActionPending,
+  actionPending,
+  onToggleCurrentPage,
+  onToggleRun,
+  onDetail,
+  onAction,
+}: RunsTableProps) {
+  return (
+    <Table rememberRowKey='monitor-runs'>
+      <TableHeader>
+        <TableRow>
+          <TableHead className='w-10'>
+            <Checkbox
+              checked={selectAllChecked}
+              onCheckedChange={(value) => onToggleCurrentPage(value === true)}
+              disabled={
+                currentPageActionableCount === 0 || selectionActionPending
+              }
+              aria-label='选择当前页全部任务'
+            />
+          </TableHead>
+          <TableHead>账号</TableHead>
+          <TableHead>来源</TableHead>
+          <TableHead>模式</TableHead>
+          <TableHead>任务状态</TableHead>
+          <TableHead>探针统计</TableHead>
+          <TableHead>进度 / 预计耗时</TableHead>
+          <TableHead>当前步骤</TableHead>
+          <TableHead>创建时间</TableHead>
+          <TableHead className='text-right'>操作</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {runs.map((run) => (
+          <RunRow
+            key={run.id}
+            run={run}
+            egressNodeNames={egressNodeNames}
+            selected={selection.has(run.id)}
+            selectable={runSelectionAction(run) != null}
+            onSelectedChange={(checked) => onToggleRun(run, checked)}
+            onDetail={() => onDetail(run.id)}
+            onAction={(action) => onAction(action, run.id)}
+            pending={actionPending}
+          />
+        ))}
+      </TableBody>
+    </Table>
+  )
+})
 
 type RunRowProps = {
   run: ProbeRun
