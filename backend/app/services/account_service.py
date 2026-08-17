@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -41,7 +42,11 @@ class AccountService:
         recovery_guarded: str = "",
     ) -> dict[str, Any]:
         upstream_filters = self._upstream_status_filter(upstream_status)
-        if monitor_status or recovery_guarded in {"true", "false"} or enabled in {"true", "false"}:
+        if (
+            monitor_status
+            or recovery_guarded in {"true", "false"}
+            or enabled in {"true", "false"}
+        ):
             upstream = await self.client.list_all_accounts(**upstream_filters)
             account_ids = [int(item.get("id") or 0) for item in upstream]
             assessments = self.accounts.get_assessments(account_ids)
@@ -103,6 +108,19 @@ class AccountService:
             "history": self.probes.account_history(account_id, limit),
         }
 
+    def samples(
+        self,
+        account_id: int,
+        *,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        return self.probes.account_samples(
+            account_id,
+            page=page,
+            page_size=page_size,
+        )
+
     async def select_account_ids(
         self,
         *,
@@ -119,7 +137,9 @@ class AccountService:
             upstream_params["search"] = search.strip()
         upstream = await self.client.list_all_accounts(**upstream_params)
         assessments = (
-            self.accounts.get_assessments([int(item.get("id") or 0) for item in upstream])
+            self.accounts.get_assessments(
+                [int(item.get("id") or 0) for item in upstream]
+            )
             if monitor_status or recovery_guarded in {"true", "false"}
             else {}
         )
@@ -136,7 +156,9 @@ class AccountService:
         selectable = [item for item in matched if self._is_probe_selectable(item)]
         return {
             "accountIds": [int(item["id"]) for item in selectable],
-            "disabledAccountIds": [int(item["id"]) for item in selectable if not bool(item.get("enabled"))],
+            "disabledAccountIds": [
+                int(item["id"]) for item in selectable if not bool(item.get("enabled"))
+            ],
             "matched": len(matched),
             "selectable": len(selectable),
             "excluded": len(matched) - len(selectable),
@@ -173,7 +195,9 @@ class AccountService:
                 "enabled": bool(item.get("enabled")),
                 "authStatus": str(item.get("authStatus") or ""),
                 "egressNodeId": (
-                    str(item.get("egressNodeId")) if int(item.get("egressNodeId") or 0) > 0 else None
+                    str(item.get("egressNodeId"))
+                    if int(item.get("egressNodeId") or 0) > 0
+                    else None
                 ),
                 "egressAssignmentMode": str(item.get("egressAssignmentMode") or ""),
             }
@@ -188,16 +212,25 @@ class AccountService:
         }
 
     async def dashboard(self, hours: int) -> dict[str, Any]:
-        upstream = await self.client.admin_request("GET", "/api/admin/v1/accounts/summary")
+        upstream = await self.client.admin_request(
+            "GET", "/api/admin/v1/accounts/summary"
+        )
         metrics = self.accounts.dashboard_metrics(hours)
         assessments = self.accounts.list_assessments(limit=8)
-        labels = await self.client.list_all_accounts({int(item["account_id"]) for item in assessments})
+        labels = await self.client.list_all_accounts(
+            {int(item["account_id"]) for item in assessments}
+        )
         labels_by_id = {int(item.get("id") or 0): item for item in labels}
         return {
             "upstream": upstream.get("providers", {}).get("grok_build", {}),
             **metrics,
             "riskyAccounts": [
-                self._overlay(labels_by_id.get(int(item["account_id"]), {"id": item["account_id"]}), item)
+                self._overlay(
+                    labels_by_id.get(
+                        int(item["account_id"]), {"id": item["account_id"]}
+                    ),
+                    item,
+                )
                 for item in assessments
             ],
             "alerts": self.accounts.list_alerts(limit=8),
@@ -271,19 +304,91 @@ class AccountService:
             "assessment": assessment,
         }
 
+    async def action_many(
+        self,
+        *,
+        account_ids: list[int],
+        action: str,
+        note: str,
+        propagate: bool,
+        quarantine_minutes: int | None,
+    ) -> dict[str, Any]:
+        """Apply one account-level risk action with bounded concurrency."""
+
+        if action != "quarantine":
+            raise ValueError("批量账号动作无效")
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
+        if not unique_ids:
+            raise ValueError("至少选择一个账号")
+
+        locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
+        assessments = self.accounts.get_assessments(unique_ids)
+        already_quarantined_ids = {
+            account_id
+            for account_id, assessment in assessments.items()
+            if str(assessment.get("monitor_status") or "") == "quarantined"
+        } - locked_ids
+        eligible_ids = [
+            account_id
+            for account_id in unique_ids
+            if account_id not in locked_ids
+            and account_id not in already_quarantined_ids
+        ]
+        semaphore = asyncio.Semaphore(6)
+
+        async def apply(account_id: int) -> tuple[int, str]:
+            async with semaphore:
+                try:
+                    await self.action(
+                        account_id=account_id,
+                        action=action,
+                        note=note,
+                        propagate=propagate,
+                        quarantine_minutes=quarantine_minutes,
+                    )
+                except Exception as exc:
+                    return account_id, str(exc)
+            return account_id, ""
+
+        values = await asyncio.gather(
+            *(apply(account_id) for account_id in eligible_ids)
+        )
+        failures = [
+            {"id": account_id, "error": error} for account_id, error in values if error
+        ]
+        failed_ids = [int(value["id"]) for value in failures]
+        return {
+            "requested": len(unique_ids),
+            "eligible": len(eligible_ids),
+            "updated": len(eligible_ids) - len(failures),
+            "action": action,
+            "skippedAccountIds": sorted(locked_ids),
+            "alreadyQuarantinedAccountIds": sorted(already_quarantined_ids),
+            "failedAccountIds": sorted(failed_ids),
+            "failures": failures,
+        }
+
     async def set_accounts_enabled(
         self,
         *,
         account_ids: list[int],
         enabled: bool,
     ) -> dict[str, Any]:
-        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
         if not unique_ids:
             raise ValueError("至少选择一个账号")
         locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
-        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
+        eligible_ids = [
+            account_id for account_id in unique_ids if account_id not in locked_ids
+        ]
         update_result = (
-            await self.client.set_accounts_enabled(eligible_ids, enabled) if eligible_ids else None
+            await self.client.set_accounts_enabled(eligible_ids, enabled)
+            if eligible_ids
+            else None
         )
         failures = list(update_result.failures) if update_result else []
         return {
@@ -293,7 +398,10 @@ class AccountService:
             "enabled": enabled,
             "skippedAccountIds": sorted(locked_ids),
             "failedAccountIds": sorted(failure.account_id for failure in failures),
-            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
+            "failures": [
+                {"id": failure.account_id, "error": failure.error}
+                for failure in failures
+            ],
         }
 
     async def set_accounts_egress(
@@ -302,11 +410,15 @@ class AccountService:
         account_ids: list[int],
         egress_node_id: int | None,
     ) -> dict[str, Any]:
-        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
         if not unique_ids:
             raise ValueError("至少选择一个账号")
         locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
-        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
+        eligible_ids = [
+            account_id for account_id in unique_ids if account_id not in locked_ids
+        ]
         update_result = (
             await self.client.set_accounts_egress(
                 eligible_ids,
@@ -325,7 +437,10 @@ class AccountService:
             "assignmentMode": "manual" if egress_node_id is not None else "",
             "skippedAccountIds": sorted(locked_ids),
             "failedAccountIds": sorted(failure.account_id for failure in failures),
-            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
+            "failures": [
+                {"id": failure.account_id, "error": failure.error}
+                for failure in failures
+            ],
         }
 
     async def ensure_account_egress(self, account: dict[str, Any]) -> dict[str, Any]:
@@ -368,7 +483,9 @@ class AccountService:
             mode="manual",
         )
         if result.updated != 1:
-            reason = result.failures[0].error if result.failures else "上游未更新账号绑定"
+            reason = (
+                result.failures[0].error if result.failures else "上游未更新账号绑定"
+            )
             raise ValueError(f"Webhook 账号自动绑定出口失败：{reason}")
         return await self.client.get_account(account_id)
 
@@ -418,12 +535,18 @@ class AccountService:
         *,
         account_ids: list[int],
     ) -> dict[str, Any]:
-        unique_ids = list(dict.fromkeys(account_id for account_id in account_ids if account_id > 0))
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
         if not unique_ids:
             raise ValueError("至少选择一个账号")
         locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
-        eligible_ids = [account_id for account_id in unique_ids if account_id not in locked_ids]
-        delete_result = await self.client.delete_accounts(eligible_ids) if eligible_ids else None
+        eligible_ids = [
+            account_id for account_id in unique_ids if account_id not in locked_ids
+        ]
+        delete_result = (
+            await self.client.delete_accounts(eligible_ids) if eligible_ids else None
+        )
         failures = list(delete_result.failures) if delete_result else []
         failed_account_ids = {failure.account_id for failure in failures}
         for account_id in eligible_ids:
@@ -442,7 +565,10 @@ class AccountService:
             "deleted": delete_result.deleted if delete_result else 0,
             "skippedAccountIds": sorted(locked_ids),
             "failedAccountIds": sorted(failed_account_ids),
-            "failures": [{"id": failure.account_id, "error": failure.error} for failure in failures],
+            "failures": [
+                {"id": failure.account_id, "error": failure.error}
+                for failure in failures
+            ],
         }
 
     async def recover_due_quarantines(self) -> dict[str, Any]:
@@ -471,7 +597,9 @@ class AccountService:
             "failed": failed,
         }
 
-    async def find_registered_account(self, account_id: int | None, email: str) -> dict[str, Any] | None:
+    async def find_registered_account(
+        self, account_id: int | None, email: str
+    ) -> dict[str, Any] | None:
         if account_id:
             try:
                 return await self.client.get_account(account_id)
@@ -489,7 +617,9 @@ class AccountService:
 
     @staticmethod
     def _matches(item: dict[str, Any], *, search: str, enabled: str) -> bool:
-        if enabled in {"true", "false"} and bool(item.get("enabled")) != (enabled == "true"):
+        if enabled in {"true", "false"} and bool(item.get("enabled")) != (
+            enabled == "true"
+        ):
             return False
         if not search.strip():
             return True

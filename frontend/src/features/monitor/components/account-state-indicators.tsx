@@ -153,26 +153,59 @@ export function EgressBindingIndicator({
   )
 }
 
-export function AuthStatusIndicator({ status }: { status?: string | null }) {
+export function AuthStatusIndicator({
+  status,
+  compact = false,
+}: {
+  status?: string | null
+  compact?: boolean
+}) {
   const active = status === 'active'
   const needsAuth = status === 'reauthRequired'
+  const coolingDown = status === 'cooldown'
+  const waitingReset = status === 'waitingReset'
+  const probing = status === 'probing'
   const label = active
     ? '鉴权有效'
     : needsAuth
       ? '需要重新授权'
-      : '鉴权状态未知'
+      : coolingDown
+        ? '账号冷却中'
+        : waitingReset
+          ? '等待额度重置'
+          : probing
+            ? '上游检测中'
+            : '鉴权状态未知'
   const description = active
     ? 'grok2api 当前认为账号凭据有效；这与账号启停和模型质量是不同状态。'
     : needsAuth
       ? '账号凭据已失效或需要重新授权，当前不适合执行探针。'
-      : 'grok2api 未返回明确的 authStatus。'
+      : coolingDown
+        ? 'grok2api 当前将账号置于冷却状态，暂不适合执行探针。'
+        : waitingReset
+          ? '账号正在等待上游额度重置，暂不适合执行探针。'
+          : probing
+            ? 'grok2api 正在检测该账号的当前可用状态。'
+            : 'grok2api 未返回明确的 authStatus。'
+  const variant = active
+    ? 'success'
+    : needsAuth
+      ? 'destructive'
+      : coolingDown || waitingReset
+        ? 'warning'
+        : probing
+          ? 'info'
+          : 'outline'
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Badge
-          variant={active ? 'success' : needsAuth ? 'destructive' : 'outline'}
-          className='size-7 rounded-full p-0'
+          variant={variant}
+          className={cn(
+            'rounded-full p-0',
+            compact ? 'size-5 [&>svg]:size-3' : 'size-7'
+          )}
           tabIndex={0}
           aria-label={label}
         >

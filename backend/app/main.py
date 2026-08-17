@@ -105,6 +105,7 @@ request_audit_service = RequestAuditService(
     client=grok_client,
     repository=request_audit_repository,
     accounts=account_repository,
+    probes=probe_repository,
 )
 scheduler_service = SchedulerService(
     settings=settings,

@@ -10,6 +10,7 @@ from app.web.schemas import (
     EgressNodeBatchDeleteInput,
     EgressNodeBatchUpdateInput,
     EgressNodeCreateInput,
+    EgressNodeUpdateInput,
 )
 
 
@@ -55,6 +56,19 @@ def build_egress_router(
             proxy_pool=payload.proxy_pool,
             account_capacity=payload.account_capacity,
             enabled=payload.enabled,
+        )
+
+    @router.put("/egress-nodes/{node_id}")
+    async def update_egress_node(
+        node_id: int,
+        payload: EgressNodeUpdateInput,
+    ) -> dict[str, Any]:
+        return await service.update(
+            node_id=node_id,
+            name=payload.name,
+            proxy_url=payload.proxy_url,
+            proxy_pool=payload.proxy_pool,
+            account_capacity=payload.account_capacity,
         )
 
     @router.delete("/egress-nodes")

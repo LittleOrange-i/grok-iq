@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import case, func, or_, select
@@ -8,7 +9,14 @@ from sqlalchemy.orm import Session
 from app.core.clock import utc_now
 
 from .database import Database
-from .models import ProbeDurationEstimate, ProbeProfile, ProbeRun, ProbeSample, model_dict
+from .models import (
+    ProbeDurationEstimate,
+    ProbePlan,
+    ProbeProfile,
+    ProbeRun,
+    ProbeSample,
+    model_dict,
+)
 
 
 class ProbeRunReader:
@@ -66,8 +74,16 @@ class ProbeRunReader:
                 ).where(*filters)
             ).all()
         items: list[dict[str, Any]] = []
-        for run_id, account_id_value, run_status, restore_status, diagnostic_active in values:
-            restore_pending = restore_status in self.restore_statuses or bool(diagnostic_active)
+        for (
+            run_id,
+            account_id_value,
+            run_status,
+            restore_status,
+            diagnostic_active,
+        ) in values:
+            restore_pending = restore_status in self.restore_statuses or bool(
+                diagnostic_active
+            )
             if run_status in self.cancellable_statuses:
                 action = "cancel"
             elif run_status in self.terminal_statuses:
@@ -112,7 +128,9 @@ class ProbeRunReader:
             total, active_count = session.execute(
                 select(
                     func.count(ProbeRun.id),
-                    func.count(ProbeRun.id).filter(ProbeRun.status.in_(self.active_statuses)),
+                    func.count(ProbeRun.id).filter(
+                        ProbeRun.status.in_(self.active_statuses)
+                    ),
                 ).where(*filters)
             ).one()
             values = session.scalars(
@@ -162,6 +180,78 @@ class ProbeRunReader:
                 "samples": [model_dict(value) for value in samples],
             }
 
+    def samples_for_audits(
+        self,
+        *,
+        request_ids: Iterable[str] = (),
+        audit_ids: Iterable[int] = (),
+        include_response: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Join local probe evidence to upstream request-audit identifiers."""
+
+        normalized_requests = {
+            str(value).strip()
+            for value in request_ids
+            if value is not None and str(value).strip()
+        }
+        normalized_audits: set[int] = set()
+        for value in audit_ids:
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if parsed > 0:
+                normalized_audits.add(parsed)
+        conditions = []
+        if normalized_requests:
+            conditions.append(ProbeSample.request_id.in_(normalized_requests))
+        if normalized_audits:
+            conditions.append(ProbeSample.audit_id.in_(normalized_audits))
+        if not conditions:
+            return []
+
+        with self.database.session() as session:
+            rows = session.execute(
+                select(ProbeSample, ProbeRun, ProbeProfile, ProbePlan)
+                .join(ProbeRun, ProbeRun.id == ProbeSample.run_id)
+                .join(ProbeProfile, ProbeProfile.id == ProbeRun.profile_id)
+                .outerjoin(ProbePlan, ProbePlan.id == ProbeRun.plan_id)
+                .where(or_(*conditions))
+                .order_by(ProbeSample.created_at.desc(), ProbeSample.id.desc())
+            ).all()
+
+        result: list[dict[str, Any]] = []
+        for sample, run, profile, plan in rows:
+            sample_value = model_dict(sample)
+            response_text = str(sample_value.get("response_text") or "")
+            if not include_response:
+                sample_value.pop("response_text", None)
+            sample_value["responseLength"] = len(response_text)
+            sample_value["responsePreview"] = (
+                " ".join(response_text.split())[:320] if response_text else ""
+            )
+            result.append(
+                {
+                    "sample": sample_value,
+                    "run": {
+                        "id": run.id,
+                        "status": run.status,
+                        "trigger": run.trigger,
+                        "automatic": run.automatic,
+                        "planId": run.plan_id,
+                        "planName": plan.name if plan else "",
+                        "profileId": run.profile_id,
+                        "profileName": profile.name,
+                        "executionMode": run.execution_mode,
+                        "rounds": run.rounds,
+                        "createdAt": run.created_at,
+                        "startedAt": run.started_at,
+                        "completedAt": run.completed_at,
+                    },
+                }
+            )
+        return result
+
     def account_history(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         with self.database.session() as session:
             samples = session.scalars(
@@ -190,12 +280,40 @@ class ProbeRunReader:
             ],
         }
 
+    def account_samples(
+        self,
+        account_id: int,
+        *,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        filters = (ProbeSample.account_id == account_id,)
+        with self.database.session() as session:
+            total = int(
+                session.scalar(select(func.count(ProbeSample.id)).where(*filters)) or 0
+            )
+            samples = session.scalars(
+                select(ProbeSample)
+                .where(*filters)
+                .order_by(ProbeSample.created_at.desc(), ProbeSample.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).all()
+        return {
+            "items": [model_dict(value) for value in samples],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
+        }
+
     def queue_stats(self) -> dict[str, int]:
         with self.database.session() as session:
             return {
                 status: int(count)
                 for status, count in session.execute(
-                    select(ProbeRun.status, func.count(ProbeRun.id)).group_by(ProbeRun.status)
+                    select(ProbeRun.status, func.count(ProbeRun.id)).group_by(
+                        ProbeRun.status
+                    )
                 )
             }
 
@@ -355,7 +473,9 @@ class ProbeRunReader:
             or estimate.total_duration_ms <= 0
         ):
             return None
-        average_sample_ms = max(1, round(estimate.total_duration_ms / estimate.sample_count))
+        average_sample_ms = max(
+            1, round(estimate.total_duration_ms / estimate.sample_count)
+        )
         remaining_steps = max(run.total_steps - run.completed_steps, 0)
         return {
             "average_sample_ms": average_sample_ms,
@@ -376,7 +496,9 @@ class ProbeRunReader:
                 func.sum(
                     case(
                         (
-                            ProbeSample.classification.in_(self.degradation_classifications),
+                            ProbeSample.classification.in_(
+                                self.degradation_classifications
+                            ),
                             1,
                         ),
                         else_=0,

@@ -373,12 +373,7 @@ export type EgressNodeProbeResult = {
 
 export type RequestAuditRiskLevel = 'normal' | 'watch' | 'high'
 export type RequestAuditWindowPreset =
-  | 'today'
-  | '6h'
-  | '24h'
-  | '7d'
-  | '30d'
-  | 'custom'
+  'today' | '6h' | '24h' | '7d' | '30d' | 'custom'
 
 export type RequestAuditWindow = {
   preset: RequestAuditWindowPreset
@@ -397,9 +392,11 @@ export type RequestAuditRecord = {
   modelUpstreamModel: string
   accountId: number | null
   accountName: string
+  upstreamAccountFound: boolean
+  upstreamEnabled: boolean | null
+  upstreamAuthStatus: string
   egressNodeId: number | null
   egressNodeName: string
-  egressIp: string
   egressMode: string
   egressScope: string
   statusCode: number
@@ -413,7 +410,34 @@ export type RequestAuditRecord = {
   tps: number | null
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
+  probeSampleCount: number
+  probeSamples: RequestAuditProbeContext[]
   createdAt: string | null
+}
+
+export type RequestAuditProbeSample = Omit<ProbeSample, 'response_text'> & {
+  response_text?: string
+  responseLength?: number
+  responsePreview?: string
+}
+
+export type RequestAuditProbeContext = {
+  sample: RequestAuditProbeSample
+  run: {
+    id: string
+    status: string
+    trigger: string
+    automatic: boolean
+    planId?: string | null
+    planName?: string
+    profileId: string
+    profileName: string
+    executionMode: string
+    rounds: number
+    createdAt: string | null
+    startedAt?: string | null
+    completedAt?: string | null
+  }
 }
 
 export type RequestAuditAccountRisk = {
@@ -430,19 +454,28 @@ export type RequestAuditAccountRisk = {
   highRiskCount: number
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
-  egressIps: string[]
+  egressNodeIds: number[]
   egressNodes: string[]
   monitorStatus: string
   quarantined: boolean
   quarantineUntil: string | null
+  probeSampleCount: number
+  probeAnomalyCount: number
+  latestProbeSampleAt: string | null
+  upstreamAccountFound: boolean
+  upstreamEnabled: boolean | null
+  upstreamAuthStatus: string
   lastSeenAt: string | null
 }
 
-export type RequestAuditEgressRisk = {
+export type RequestAuditNodeRisk = {
   key: string
-  egressIp: string
-  egressNodeIds: number[]
-  egressNodes: string[]
+  egressNodeId: number | null
+  egressNodeName: string
+  mapped: boolean
+  latestProbeIp: string
+  proxyPool: boolean | null
+  enabled: boolean | null
   requests: number
   measuredRequests: number
   outputTokens: number
@@ -573,6 +606,7 @@ export type RequestAuditPage = {
   day: string
   provider: string
   window: RequestAuditWindow
+  upstreamAccountSnapshotAt: string | null
   items: RequestAuditRecord[]
   total: number
   page: number
@@ -584,10 +618,11 @@ export type RequestAuditSummaryResponse = {
   day: string
   provider: string
   window: RequestAuditWindow
+  upstreamAccountSnapshotAt: string | null
   thresholds: RequestAuditThresholds
   summary: RequestAuditSummary
   accounts: RequestAuditAccountRisk[]
-  egresses: RequestAuditEgressRisk[]
+  nodes: RequestAuditNodeRisk[]
   trend: Array<{
     index: number
     label: string
@@ -604,12 +639,25 @@ export type RequestAuditSummaryResponse = {
   scan: RequestAuditScanState
 }
 
+export type RequestAuditProbeContextResponse = {
+  requestId: string
+  auditId: number | null
+  samples: RequestAuditProbeContext[]
+}
+
 export type EgressNodeCreateInput = {
   name: string
   proxy_url: string
   proxy_pool: boolean
   account_capacity: number
   enabled: boolean
+}
+
+export type EgressNodeUpdateInput = {
+  name: string
+  proxy_url?: string
+  proxy_pool: boolean
+  account_capacity: number
 }
 
 export type ProbeProfile = {
@@ -1138,8 +1186,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     requestAuditAutoScanEnabled: value.requestAuditAutoScanEnabled ?? true,
     requestAuditAdaptiveScanEnabled:
       value.requestAuditAdaptiveScanEnabled ?? true,
-    requestAuditScanIntervalMinutes:
-      value.requestAuditScanIntervalMinutes ?? 5,
+    requestAuditScanIntervalMinutes: value.requestAuditScanIntervalMinutes ?? 5,
     requestAuditBusyScanIntervalSeconds:
       value.requestAuditBusyScanIntervalSeconds ?? 30,
     requestAuditNormalScanIntervalSeconds:
@@ -1150,11 +1197,9 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       value.requestAuditBusyRequestsPerMinute ?? 20,
     requestAuditLiveRefreshEnabled:
       value.requestAuditLiveRefreshEnabled ?? true,
-    requestAuditLiveRefreshSeconds:
-      value.requestAuditLiveRefreshSeconds ?? 30,
+    requestAuditLiveRefreshSeconds: value.requestAuditLiveRefreshSeconds ?? 30,
     requestAuditRiskEnabled: value.requestAuditRiskEnabled ?? true,
-    requestAuditIsolationEnabled:
-      value.requestAuditIsolationEnabled ?? true,
+    requestAuditIsolationEnabled: value.requestAuditIsolationEnabled ?? true,
     requestAuditRetentionDays: value.requestAuditRetentionDays ?? 90,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',
@@ -1233,6 +1278,17 @@ type AccountBatchUpdateResult = {
   updated: number
   enabled: boolean
   skippedAccountIds: number[]
+  failedAccountIds: number[]
+  failures: { id: number; error: string }[]
+}
+
+export type AccountBatchActionResult = {
+  requested: number
+  eligible: number
+  updated: number
+  action: 'quarantine'
+  skippedAccountIds: number[]
+  alreadyQuarantinedAccountIds: number[]
   failedAccountIds: number[]
   failures: { id: number; error: string }[]
 }
@@ -1776,10 +1832,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  createAccountSsoReport: (accountIds: number[]) =>
+  createAccountSsoReport: (accountIds: number[], name = '') =>
     request<AccountSsoReportResult>('/sso-reports/accounts', {
       method: 'POST',
-      body: JSON.stringify({ account_ids: accountIds }),
+      body: JSON.stringify({ account_ids: accountIds, name }),
     }),
   deleteSsoReports: (ids: string[]) =>
     request<{
@@ -1805,8 +1861,23 @@ export const api = {
     }),
   account: (id: number, limit = 30) =>
     request<AccountDetailResponse>(`/accounts/${id}${query({ limit })}`),
+  accountSamples: (
+    id: number,
+    params: { page?: number; pageSize?: number } = {}
+  ) => request<Page<ProbeSample>>(`/accounts/${id}/samples${query(params)}`),
   accountAction: (id: number, body: Record<string, unknown>) =>
     request<Record<string, unknown>>(`/accounts/${id}/action`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  accountBatchAction: (body: {
+    account_ids: number[]
+    action: 'quarantine'
+    note?: string
+    propagate?: boolean
+    quarantine_minutes?: number
+  }) =>
+    request<AccountBatchActionResult>('/accounts/batch/action', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -1829,6 +1900,12 @@ export const api = {
     ),
   requestAuditStatus: () =>
     request<RequestAuditStatus>('/request-audits/status'),
+  requestAuditProbeContext: (
+    params: { requestId?: string; auditId?: string | number } = {}
+  ) =>
+    request<RequestAuditProbeContextResponse>(
+      `/request-audits/probe-context${query(params)}`
+    ),
   scanRequestAudits: (body: RequestAuditWindowInput = { window: 'today' }) =>
     request<RequestAuditScanResult>('/request-audits/scan', {
       method: 'POST',
@@ -1837,6 +1914,11 @@ export const api = {
   createEgressNode: (body: EgressNodeCreateInput) =>
     request<EgressNode>('/egress-nodes', {
       method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateEgressNode: (nodeId: number, body: EgressNodeUpdateInput) =>
+    request<EgressNode>(`/egress-nodes/${nodeId}`, {
+      method: 'PUT',
       body: JSON.stringify(body),
     }),
   updateEgressNodes: (nodeIds: number[], enabled: boolean) =>

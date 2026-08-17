@@ -11,6 +11,7 @@ from app.core.clock import APP_TIMEZONE, app_now, ensure_utc, to_app_timezone, u
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
+from app.persistence.probe_repository import ProbeRepository
 from app.persistence.request_audit_repository import RequestAuditRepository
 
 REQUEST_AUDIT_SCOPE = "grok_build_today"
@@ -23,6 +24,7 @@ REQUEST_AUDIT_MAX_PAGES = 200
 REQUEST_AUDIT_SCAN_CRON = "*/5 * * * *"
 REQUEST_AUDIT_WINDOW_PRESETS = frozenset({"today", "6h", "24h", "7d", "30d"})
 REQUEST_AUDIT_ACTIVITY_MINUTES = 5
+REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS = 120
 
 
 def _finite_float(value: Any) -> float | None:
@@ -71,7 +73,9 @@ def _parse_datetime(value: Any) -> datetime | None:
 def _day_bounds(day_key: str) -> tuple[datetime, datetime]:
     value = date.fromisoformat(day_key)
     start = datetime.combine(value, time.min, tzinfo=APP_TIMEZONE).astimezone(UTC)
-    end = (datetime.combine(value, time.min, tzinfo=APP_TIMEZONE) + timedelta(days=1)).astimezone(UTC)
+    end = (
+        datetime.combine(value, time.min, tzinfo=APP_TIMEZONE) + timedelta(days=1)
+    ).astimezone(UTC)
     return start, end
 
 
@@ -148,7 +152,7 @@ def _p95(values: list[float]) -> float:
 
 
 class RequestAuditService:
-    """Projects grok_build audit windows and scores throughput by account/IP."""
+    """Projects grok_build audit windows and scores throughput by account/node."""
 
     def __init__(
         self,
@@ -157,14 +161,22 @@ class RequestAuditService:
         client: Grok2APIClient,
         repository: RequestAuditRepository,
         accounts: AccountRepository | None = None,
+        probes: ProbeRepository | None = None,
     ):
         self.settings = settings
         self.client = client
         self.repository = repository
         self.accounts = accounts
+        self.probes = probes
         self._scan_lock = asyncio.Lock()
+        self._egress_cache_lock = asyncio.Lock()
+        self._account_cache_lock = asyncio.Lock()
         self._egress_cache: dict[int, dict[str, Any]] = {}
         self._egress_cache_at = 0.0
+        self._account_cache: dict[int, dict[str, Any]] = {}
+        self._account_cache_known_ids: set[int] = set()
+        self._account_cache_at = 0.0
+        self._account_cache_checked_at: datetime | None = None
 
     @property
     def thresholds(self) -> dict[str, float]:
@@ -329,7 +341,10 @@ class RequestAuditService:
             state = self.repository.reset_day(scope, identity)
 
         started_at = utc_now()
-        if not self.settings.grok2api_admin_username or not self.settings.grok2api_admin_password:
+        if (
+            not self.settings.grok2api_admin_username
+            or not self.settings.grok2api_admin_password
+        ):
             result = self._skipped_scan(
                 trigger=trigger,
                 window=window,
@@ -378,14 +393,20 @@ class RequestAuditService:
         try:
             try:
                 egress_map = await self._egress_map()
-                egress_updated = self.repository.backfill_egress_details(
+            except Exception as exc:  # node labels are supplemental
+                egress_map = self._egress_cache
+                egress_error = str(exc)
+            try:
+                egress_updated = self.repository.refresh_egress_node_details(
                     start=start,
                     end=end,
                     nodes=egress_map,
                 )
-            except Exception as exc:  # egress labels are supplemental
-                egress_map = {}
-                egress_error = str(exc)
+            except Exception as exc:  # legacy cleanup must not block scanning
+                detail_error = str(exc)
+                egress_error = (
+                    f"{egress_error}；{detail_error}" if egress_error else detail_error
+                )
 
             while pages < REQUEST_AUDIT_MAX_PAGES:
                 payload = await self.client.list_request_audits(
@@ -497,14 +518,10 @@ class RequestAuditService:
                     )
 
             all_records = self.repository.records_for_range(start, end)
-            complete = bool(
-                reached_day_start or not has_more or reached_overlap
-            )
+            complete = bool(reached_day_start or not has_more or reached_overlap)
             boundary_id = scan_head_id or previous_boundary_id
             boundary_created_at = (
-                scan_head_created_at
-                if scan_head_id
-                else state.get("newest_created_at")
+                scan_head_created_at if scan_head_id else state.get("newest_created_at")
             )
             state_values = {
                 "day_key": identity,
@@ -547,9 +564,7 @@ class RequestAuditService:
                 "egressWarning": egress_error,
                 "state": self._state_payload(saved_state, window=window),
                 "activity": activity,
-                "recommendedIntervalSeconds": activity[
-                    "recommendedIntervalSeconds"
-                ],
+                "recommendedIntervalSeconds": activity["recommendedIntervalSeconds"],
                 "summary": summary,
             }
         except Exception as exc:
@@ -563,7 +578,10 @@ class RequestAuditService:
                 "last_new_records": inserted,
                 "last_seen_records": seen_records,
             }
-            if not initial_complete and getattr(exc, "error_code", "") == "invalidCursor":
+            if (
+                not initial_complete
+                and getattr(exc, "error_code", "") == "invalidCursor"
+            ):
                 state_error = f"{error}；首次扫描游标已重置"
                 state_values["initial_cursor"] = ""
                 state_values["last_error"] = state_error
@@ -583,9 +601,7 @@ class RequestAuditService:
                 "newRecords": inserted,
                 "error": state_error,
                 "activity": activity,
-                "recommendedIntervalSeconds": activity[
-                    "recommendedIntervalSeconds"
-                ],
+                "recommendedIntervalSeconds": activity["recommendedIntervalSeconds"],
             }
 
     @staticmethod
@@ -606,9 +622,7 @@ class RequestAuditService:
         scan_failed: bool = False,
     ) -> dict[str, Any]:
         sample_end = utc_now() + timedelta(seconds=1)
-        sample_start = sample_end - timedelta(
-            minutes=REQUEST_AUDIT_ACTIVITY_MINUTES
-        )
+        sample_start = sample_end - timedelta(minutes=REQUEST_AUDIT_ACTIVITY_MINUTES)
         recent = self.repository.records_for_range(sample_start, sample_end)
         measured = [
             float(row["tps"])
@@ -629,9 +643,7 @@ class RequestAuditService:
             reasons.append("审计分页仍有积压")
         elif request_rate >= self.settings.request_audit_busy_requests_per_minute:
             level = "busy"
-            reasons.append(
-                f"最近请求速率 {request_rate:.1f}/分钟达到忙时阈值"
-            )
+            reasons.append(f"最近请求速率 {request_rate:.1f}/分钟达到忙时阈值")
         elif (
             self.settings.request_audit_risk_enabled
             and max_tps >= self.settings.degradation_tps
@@ -657,9 +669,7 @@ class RequestAuditService:
         )
         return {
             "level": level,
-            "label": {"busy": "忙时", "normal": "常态", "idle": "闲时"}[
-                level
-            ],
+            "label": {"busy": "忙时", "normal": "常态", "idle": "闲时"}[level],
             "requests": requests,
             "requestsPerMinute": round(request_rate, 1),
             "maxTps": round(max_tps, 1),
@@ -668,33 +678,104 @@ class RequestAuditService:
             "recommendedIntervalSeconds": int(recommended),
         }
 
+    @staticmethod
+    def _record_account_ids(records: list[dict[str, Any]]) -> set[int]:
+        return {
+            int(row["account_id"])
+            for row in records
+            if _positive_int(row.get("account_id")) is not None
+        }
+
+    def _cached_account_map(
+        self,
+        account_ids: set[int],
+    ) -> dict[int, dict[str, Any]]:
+        return {
+            account_id: self._account_cache[account_id]
+            for account_id in account_ids
+            if account_id in self._account_cache
+        }
+
+    async def _upstream_account_map(
+        self,
+        account_ids: set[int],
+    ) -> dict[int, dict[str, Any]]:
+        requested_ids = {account_id for account_id in account_ids if account_id > 0}
+        if not requested_ids:
+            return {}
+        now = asyncio.get_running_loop().time()
+        fresh = (
+            self._account_cache_at > 0
+            and now - self._account_cache_at < REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS
+        )
+        if fresh and requested_ids.issubset(self._account_cache_known_ids):
+            return self._cached_account_map(requested_ids)
+
+        async with self._account_cache_lock:
+            now = asyncio.get_running_loop().time()
+            fresh = (
+                self._account_cache_at > 0
+                and now - self._account_cache_at < REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS
+            )
+            if not fresh:
+                self._account_cache = {}
+                self._account_cache_known_ids = set()
+                self._account_cache_checked_at = None
+            missing_ids = requested_ids - self._account_cache_known_ids
+            if not missing_ids:
+                return self._cached_account_map(requested_ids)
+            try:
+                values = (
+                    await self.client.get_accounts_by_ids(missing_ids)
+                    if len(missing_ids) <= 50
+                    else await self.client.list_all_accounts(missing_ids)
+                )
+            except Exception:
+                # Cache the failed lookup briefly so simultaneous table and
+                # summary refreshes do not fan out duplicate upstream calls.
+                self._account_cache_known_ids.update(missing_ids)
+                self._account_cache_at = now
+                raise
+            for value in values:
+                account_id = _positive_int(value.get("id"))
+                if account_id is not None:
+                    self._account_cache[account_id] = value
+            self._account_cache_known_ids.update(missing_ids)
+            self._account_cache_at = now
+            self._account_cache_checked_at = utc_now()
+            return self._cached_account_map(requested_ids)
+
     async def _egress_map(self) -> dict[int, dict[str, Any]]:
         now = asyncio.get_running_loop().time()
         if self._egress_cache_at > 0 and now - self._egress_cache_at < 240:
             return self._egress_cache
-        result: dict[int, dict[str, Any]] = {}
-        page = 1
-        while page <= 100:
-            payload = await self.client.list_egress_nodes(
-                scope="grok_build", page=page, pageSize=500
-            )
-            items = payload.get("items", [])
-            if not isinstance(items, list) or not items:
-                break
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                node_id = _positive_int(item.get("id"))
-                if node_id:
-                    result[node_id] = item
-            total = int(payload.get("total") or 0)
-            size = int(payload.get("pageSize") or len(items) or 500)
-            if (total > 0 and page * size >= total) or len(items) < size:
-                break
-            page += 1
-        self._egress_cache = result
-        self._egress_cache_at = now
-        return result
+        async with self._egress_cache_lock:
+            now = asyncio.get_running_loop().time()
+            if self._egress_cache_at > 0 and now - self._egress_cache_at < 240:
+                return self._egress_cache
+            result: dict[int, dict[str, Any]] = {}
+            page = 1
+            while page <= 100:
+                payload = await self.client.list_egress_nodes(
+                    scope="grok_build", page=page, pageSize=500
+                )
+                items = payload.get("items", [])
+                if not isinstance(items, list) or not items:
+                    break
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    node_id = _positive_int(item.get("id"))
+                    if node_id:
+                        result[node_id] = item
+                total = int(payload.get("total") or 0)
+                size = int(payload.get("pageSize") or len(items) or 500)
+                if (total > 0 and page * size >= total) or len(items) < size:
+                    break
+                page += 1
+            self._egress_cache = result
+            self._egress_cache_at = now
+            return result
 
     def _normalize_record(
         self,
@@ -706,12 +787,6 @@ class RequestAuditService:
     ) -> dict[str, Any]:
         egress_node_id = _positive_int(item.get("egressNodeId"))
         egress = egress_map.get(egress_node_id or 0, {})
-        egress_ip = str(
-            item.get("egressIp")
-            or item.get("exitIp")
-            or egress.get("exitIp")
-            or ""
-        )
         tps = calculate_audit_tps(item)
         risk_level, reasons = (
             classify_audit_tps(
@@ -759,8 +834,12 @@ class RequestAuditService:
             "account_id": _positive_int(item.get("accountId")),
             "account_name": str(item.get("accountName") or ""),
             "egress_node_id": egress_node_id,
-            "egress_node_name": str(item.get("egressNodeName") or egress.get("name") or ""),
-            "egress_ip": egress_ip,
+            "egress_node_name": str(
+                item.get("egressNodeName") or egress.get("name") or ""
+            ),
+            # Kept as an empty compatibility column. A node's current exitIp
+            # is a probe snapshot, not the IP used by this historical request.
+            "egress_ip": "",
             "egress_mode": str(item.get("egressMode") or ""),
             "egress_scope": str(item.get("egressScope") or ""),
             "status_code": _int_or_zero(item.get("statusCode")),
@@ -842,14 +921,14 @@ class RequestAuditService:
             },
         }
 
-    def list_page(
+    async def list_page(
         self,
         *,
         page: int,
         page_size: int,
         account: str = "",
         risk: str = "",
-        egress_ip: str = "",
+        egress_node_id: int | None = None,
         window_preset: str = "today",
         start_at: Any = None,
         end_at: Any = None,
@@ -866,23 +945,151 @@ class RequestAuditService:
             page_size=page_size,
             account=account,
             risk=risk,
-            egress_ip=egress_ip,
+            egress_node_id=egress_node_id,
             watch_threshold=self.settings.degradation_tps,
             high_threshold=self.settings.strong_degradation_tps,
             risk_enabled=self.settings.request_audit_risk_enabled,
         )
+        probe_map = self._probe_sample_map(page_value["items"])
+        account_ids = self._record_account_ids(page_value["items"])
+        try:
+            upstream_accounts = await self._upstream_account_map(account_ids)
+        except Exception:
+            upstream_accounts = self._cached_account_map(account_ids)
         return {
             "day": current_day_key(),
             "provider": "grok_build",
             "window": self._window_payload(window),
-            "items": [self._record_payload(item) for item in page_value["items"]],
+            "upstreamAccountSnapshotAt": (
+                _iso(self._account_cache_checked_at) if account_ids else None
+            ),
+            "items": [
+                self._record_payload(
+                    item,
+                    probe_samples=self._probe_samples_for_record(item, probe_map),
+                    upstream_account=upstream_accounts.get(int(item["account_id"]))
+                    if item.get("account_id")
+                    else None,
+                )
+                for item in page_value["items"]
+            ],
             "total": page_value["total"],
             "page": page_value["page"],
             "pageSize": page_value["page_size"],
             "thresholds": self.thresholds,
         }
 
-    def summary(
+    @staticmethod
+    def _record_lookup_keys(row: dict[str, Any]) -> tuple[str, ...]:
+        keys: list[str] = []
+        request_id = str(row.get("request_id") or "").strip()
+        if request_id:
+            keys.append(f"request:{request_id}")
+        audit_id = _positive_int(row.get("upstream_id"))
+        if audit_id is not None:
+            keys.append(f"audit:{audit_id}")
+        return tuple(keys)
+
+    @classmethod
+    def _probe_samples_for_record(
+        cls,
+        row: dict[str, Any],
+        probe_map: dict[str, list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for key in cls._record_lookup_keys(row):
+            for context in probe_map.get(key, []):
+                sample_id = str((context.get("sample") or {}).get("id") or "")
+                if sample_id and sample_id in seen:
+                    continue
+                if sample_id:
+                    seen.add(sample_id)
+                values.append(context)
+        return values
+
+    def _probe_sample_map(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        include_response: bool = False,
+        ignore_errors: bool = True,
+    ) -> dict[str, list[dict[str, Any]]]:
+        if self.probes is None or not records:
+            return {}
+        request_ids = {
+            str(row.get("request_id") or "").strip()
+            for row in records
+            if str(row.get("request_id") or "").strip()
+        }
+        audit_ids = {
+            int(row["upstream_id"])
+            for row in records
+            if _positive_int(row.get("upstream_id")) is not None
+        }
+        try:
+            contexts = self.probes.samples_for_audits(
+                request_ids=request_ids,
+                audit_ids=audit_ids,
+                include_response=include_response,
+            )
+        except Exception:
+            if ignore_errors:
+                return {}
+            raise
+        result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        seen: dict[str, set[str]] = defaultdict(set)
+        for context in contexts:
+            sample = context.get("sample") or {}
+            sample_id = str(sample.get("id") or "")
+            keys: list[str] = []
+            request_id = str(sample.get("request_id") or "").strip()
+            audit_id = _positive_int(sample.get("audit_id"))
+            if request_id:
+                keys.append(f"request:{request_id}")
+            if audit_id is not None:
+                keys.append(f"audit:{audit_id}")
+            for key in keys:
+                if sample_id and sample_id in seen[key]:
+                    continue
+                if sample_id:
+                    seen[key].add(sample_id)
+                result[key].append(context)
+        return result
+
+    def probe_context(
+        self,
+        *,
+        request_id: str = "",
+        audit_id: int | None = None,
+    ) -> dict[str, Any]:
+        contexts = self._probe_sample_map(
+            [
+                {
+                    "request_id": request_id,
+                    "upstream_id": str(audit_id or ""),
+                }
+            ],
+            include_response=True,
+            ignore_errors=False,
+        )
+        flattened: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for values in contexts.values():
+            for value in values:
+                sample_id = str((value.get("sample") or {}).get("id") or "")
+                if sample_id and sample_id in seen:
+                    continue
+                if sample_id:
+                    seen.add(sample_id)
+                flattened.append(value)
+        return {
+            "requestId": request_id,
+            "auditId": audit_id,
+            "samples": flattened,
+        }
+
+    async def summary(
         self,
         *,
         window_preset: str = "today",
@@ -896,7 +1103,27 @@ class RequestAuditService:
         )
         records = self.repository.records_for_range(window["start"], window["end"])
         assessments = self._assessment_payloads(records)
-        accounts = self._account_payloads(records, assessments=assessments)
+        account_ids = self._record_account_ids(records)
+        upstream_result, nodes_result = await asyncio.gather(
+            self._upstream_account_map(account_ids),
+            self._egress_map(),
+            return_exceptions=True,
+        )
+        if isinstance(upstream_result, BaseException):
+            upstream_accounts = self._cached_account_map(account_ids)
+        else:
+            upstream_accounts = upstream_result
+        accounts = self._account_payloads(
+            records,
+            assessments=assessments,
+            upstream_accounts=upstream_accounts,
+        )
+        if isinstance(nodes_result, BaseException):
+            # Node metadata is supplemental. Retain the last good snapshot and
+            # keep the local audit projection available if upstream is busy.
+            nodes = self._egress_cache
+        else:
+            nodes = nodes_result
         scope, identity = self._window_scope(window)
         state = self.repository.ensure_state(scope)
         if state.get("day_key") != identity:
@@ -907,9 +1134,17 @@ class RequestAuditService:
             "provider": "grok_build",
             "window": self._window_payload(window),
             "thresholds": self.thresholds,
+            "upstreamAccountSnapshotAt": (
+                _iso(self._account_cache_checked_at) if account_ids else None
+            ),
             "summary": self._summary_payload(window, records, accounts),
             "accounts": accounts,
-            "egresses": self._egress_payloads(records, assessments=assessments),
+            "nodes": self._node_payloads(
+                records,
+                assessments=assessments,
+                nodes=nodes,
+                upstream_accounts=upstream_accounts,
+            ),
             "trend": self._trend_payload(window, records),
             "scan": self._state_payload(state, window=window),
         }
@@ -973,6 +1208,7 @@ class RequestAuditService:
         records: list[dict[str, Any]],
         *,
         assessments: dict[int, dict[str, Any]] | None = None,
+        upstream_accounts: dict[int, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
@@ -985,11 +1221,17 @@ class RequestAuditService:
             groups[key].append(row)
         if assessments is None:
             assessments = self._assessment_payloads(records)
+        upstream_accounts = upstream_accounts or {}
         result = [
             self._account_payload(
                 rows,
                 assessment=(
                     assessments.get(int(rows[0]["account_id"]), {})
+                    if rows[0].get("account_id")
+                    else {}
+                ),
+                upstream_account=(
+                    upstream_accounts.get(int(rows[0]["account_id"]), {})
                     if rows[0].get("account_id")
                     else {}
                 ),
@@ -1007,6 +1249,7 @@ class RequestAuditService:
         rows: list[dict[str, Any]],
         *,
         assessment: dict[str, Any],
+        upstream_account: dict[str, Any],
     ) -> dict[str, Any]:
         speeds = [
             float(row["tps"])
@@ -1018,17 +1261,14 @@ class RequestAuditService:
         risk_level, _ = self._classify(max_tps)
         latest = max(
             rows,
-            key=lambda row: ensure_utc(row.get("created_at"))
-            or datetime.min.replace(tzinfo=UTC),
+            key=lambda row: (
+                ensure_utc(row.get("created_at")) or datetime.min.replace(tzinfo=UTC)
+            ),
         )
         account_id = int(rows[0]["account_id"]) if rows[0].get("account_id") else None
         monitor_status = str(assessment.get("monitor_status") or "")
-        ips = sorted(
-            {
-                str(row.get("egress_ip") or "")
-                for row in rows
-                if str(row.get("egress_ip") or "")
-            }
+        node_ids = sorted(
+            {int(row["egress_node_id"]) for row in rows if row.get("egress_node_id")}
         )
         nodes = sorted(
             {
@@ -1043,11 +1283,7 @@ class RequestAuditService:
             else 0
         )
         high_count = (
-            sum(
-                1
-                for value in speeds
-                if value >= self.settings.strong_degradation_tps
-            )
+            sum(1 for value in speeds if value >= self.settings.strong_degradation_tps)
             if self.settings.request_audit_risk_enabled
             else 0
         )
@@ -1061,38 +1297,56 @@ class RequestAuditService:
             "p95Tps": round(_p95(speeds), 1),
             "maxTps": round(max_tps, 1),
             "latestTps": (
-                round(float(latest.get("tps") or 0), 1)
-                if latest.get("tps")
-                else None
+                round(float(latest.get("tps") or 0), 1) if latest.get("tps") else None
             ),
             "watchCount": watch_count,
             "highRiskCount": high_count,
             "riskLevel": risk_level,
             "riskReasons": self._risk_reasons(max_tps),
-            "egressIps": ips,
+            "egressNodeIds": node_ids,
             "egressNodes": nodes,
             "monitorStatus": monitor_status,
             "quarantined": monitor_status == "quarantined",
             "quarantineUntil": _iso(assessment.get("quarantine_until")),
+            "probeSampleCount": _int_or_zero(assessment.get("sample_count")),
+            "probeAnomalyCount": _int_or_zero(assessment.get("anomaly_count")),
+            "latestProbeSampleAt": _iso(assessment.get("latest_sample_at")),
+            "upstreamAccountFound": bool(upstream_account),
+            "upstreamEnabled": (
+                bool(upstream_account.get("enabled"))
+                if "enabled" in upstream_account
+                else None
+            ),
+            "upstreamAuthStatus": str(upstream_account.get("authStatus") or ""),
             "lastSeenAt": _iso(latest.get("created_at")),
         }
 
-    def _egress_payloads(
+    def _node_payloads(
         self,
         records: list[dict[str, Any]],
         *,
         assessments: dict[int, dict[str, Any]],
+        nodes: dict[int, dict[str, Any]],
+        upstream_accounts: dict[int, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
-            ip = str(row.get("egress_ip") or "").strip()
             node_id = _positive_int(row.get("egress_node_id"))
-            key = f"ip:{ip}" if ip else f"node:{node_id or 'unknown'}"
+            if node_id:
+                key = f"node:{node_id}"
+            else:
+                scope = str(row.get("egress_scope") or "unknown").strip() or "unknown"
+                mode = str(row.get("egress_mode") or "unknown").strip() or "unknown"
+                key = f"unmapped:{scope}:{mode}"
             groups[key].append(row)
 
         result: list[dict[str, Any]] = []
         for key, rows in groups.items():
-            account_values = self._account_payloads(rows, assessments=assessments)
+            account_values = self._account_payloads(
+                rows,
+                assessments=assessments,
+                upstream_accounts=upstream_accounts,
+            )
             risky_accounts = [
                 value for value in account_values if value["riskLevel"] != "normal"
             ]
@@ -1106,27 +1360,25 @@ class RequestAuditService:
             risk_level, _ = self._classify(max_tps)
             latest = max(
                 rows,
-                key=lambda row: ensure_utc(row.get("created_at"))
-                or datetime.min.replace(tzinfo=UTC),
+                key=lambda row: (
+                    ensure_utc(row.get("created_at"))
+                    or datetime.min.replace(tzinfo=UTC)
+                ),
             )
+            node_id = _positive_int(latest.get("egress_node_id"))
+            node = nodes.get(node_id or 0, {})
+            node_name = str(node.get("name") or latest.get("egress_node_name") or "")
+            proxy_pool = bool(node.get("proxyPool")) if "proxyPool" in node else None
+            enabled = bool(node.get("enabled")) if "enabled" in node else None
             result.append(
                 {
                     "key": key,
-                    "egressIp": str(latest.get("egress_ip") or ""),
-                    "egressNodeIds": sorted(
-                        {
-                            int(row["egress_node_id"])
-                            for row in rows
-                            if row.get("egress_node_id")
-                        }
-                    ),
-                    "egressNodes": sorted(
-                        {
-                            str(row.get("egress_node_name") or "")
-                            for row in rows
-                            if str(row.get("egress_node_name") or "")
-                        }
-                    ),
+                    "egressNodeId": node_id,
+                    "egressNodeName": node_name,
+                    "mapped": node_id is not None,
+                    "latestProbeIp": str(node.get("exitIp") or ""),
+                    "proxyPool": proxy_pool,
+                    "enabled": enabled,
                     "requests": len(rows),
                     "measuredRequests": len(speeds),
                     "outputTokens": sum(
@@ -1191,9 +1443,7 @@ class RequestAuditService:
                 f"峰值 {tps:.1f} Token/s ≥ {self.settings.strong_degradation_tps:g} TPS"
             ]
         if tps >= self.settings.degradation_tps:
-            return [
-                f"峰值 {tps:.1f} Token/s ≥ {self.settings.degradation_tps:g} TPS"
-            ]
+            return [f"峰值 {tps:.1f} Token/s ≥ {self.settings.degradation_tps:g} TPS"]
         return []
 
     def _trend_payload(
@@ -1267,13 +1517,18 @@ class RequestAuditService:
                         bucket["high"] += 1
         for bucket in buckets:
             values = bucket.pop("_values")
-            bucket["averageTps"] = (
-                round(sum(values) / len(values), 1) if values else 0
-            )
+            bucket["averageTps"] = round(sum(values) / len(values), 1) if values else 0
         return buckets
 
-    def _record_payload(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _record_payload(
+        self,
+        row: dict[str, Any],
+        *,
+        probe_samples: list[dict[str, Any]] | None = None,
+        upstream_account: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         risk_level, risk_reasons = self._classify(_finite_float(row.get("tps")))
+        upstream_account = upstream_account or {}
         return {
             "id": str(row.get("upstream_id") or ""),
             "requestId": str(row.get("request_id") or ""),
@@ -1283,9 +1538,17 @@ class RequestAuditService:
             "modelUpstreamModel": str(row.get("model_upstream_model") or ""),
             "accountId": int(row["account_id"]) if row.get("account_id") else None,
             "accountName": str(row.get("account_name") or ""),
-            "egressNodeId": int(row["egress_node_id"]) if row.get("egress_node_id") else None,
+            "upstreamAccountFound": bool(upstream_account),
+            "upstreamEnabled": (
+                bool(upstream_account.get("enabled"))
+                if "enabled" in upstream_account
+                else None
+            ),
+            "upstreamAuthStatus": str(upstream_account.get("authStatus") or ""),
+            "egressNodeId": int(row["egress_node_id"])
+            if row.get("egress_node_id")
+            else None,
             "egressNodeName": str(row.get("egress_node_name") or ""),
-            "egressIp": str(row.get("egress_ip") or ""),
             "egressMode": str(row.get("egress_mode") or ""),
             "egressScope": str(row.get("egress_scope") or ""),
             "statusCode": int(row.get("status_code") or 0),
@@ -1303,6 +1566,8 @@ class RequestAuditService:
             "tps": round(float(row["tps"]), 2) if row.get("tps") is not None else None,
             "riskLevel": risk_level,
             "riskReasons": risk_reasons,
+            "probeSampleCount": len(probe_samples or []),
+            "probeSamples": probe_samples or [],
             "createdAt": _iso(row.get("created_at")),
         }
 

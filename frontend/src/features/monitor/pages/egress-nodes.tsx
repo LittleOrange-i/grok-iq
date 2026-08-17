@@ -6,6 +6,7 @@ import {
   FlaskConical,
   Loader2,
   Network,
+  Pencil,
   Plus,
   Power,
   PowerOff,
@@ -64,7 +65,7 @@ type NodeAction = {
   nodes: EgressNode[]
 }
 
-const emptyCreateForm = {
+const emptyNodeForm = {
   name: '',
   proxyUrl: '',
   proxyPool: true,
@@ -82,8 +83,9 @@ export function EgressNodesPage() {
   const [probe, setProbe] = useState('all')
   const [selected, setSelected] = useState<number[]>([])
   const [action, setAction] = useState<NodeAction | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [createForm, setCreateForm] = useState(emptyCreateForm)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editingNode, setEditingNode] = useState<EgressNode | null>(null)
+  const [nodeForm, setNodeForm] = useState(emptyNodeForm)
 
   const query = useQuery({
     queryKey: ['egress-nodes', page, pageSize, deferredSearch, enabled, probe],
@@ -107,18 +109,42 @@ export function EgressNodesPage() {
   const createMutation = useMutation({
     mutationFn: () =>
       api.createEgressNode({
-        name: createForm.name.trim(),
-        proxy_url: createForm.proxyUrl.trim(),
-        proxy_pool: createForm.proxyPool,
-        account_capacity: createForm.accountCapacity,
-        enabled: createForm.enabled,
+        name: nodeForm.name.trim(),
+        proxy_url: nodeForm.proxyUrl.trim(),
+        proxy_pool: nodeForm.proxyPool,
+        account_capacity: nodeForm.accountCapacity,
+        enabled: nodeForm.enabled,
       }),
     onSuccess: (node) => {
-      setCreateOpen(false)
-      setCreateForm(emptyCreateForm)
+      setEditorOpen(false)
+      setEditingNode(null)
+      setNodeForm(emptyNodeForm)
       toast.success(`已新增上游节点 ${node.name}`)
       void queryClient.invalidateQueries({ queryKey: ['egress-nodes'] })
       void queryClient.invalidateQueries({ queryKey: ['egress'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
+  const editMutation = useMutation({
+    mutationFn: () => {
+      if (!editingNode) throw new Error('请选择要编辑的上游节点')
+      return api.updateEgressNode(Number(editingNode.id), {
+        name: nodeForm.name.trim(),
+        proxy_url: nodeForm.proxyUrl.trim() || undefined,
+        proxy_pool: nodeForm.proxyPool,
+        account_capacity: nodeForm.accountCapacity,
+      })
+    },
+    onSuccess: (node) => {
+      setEditorOpen(false)
+      setEditingNode(null)
+      setNodeForm(emptyNodeForm)
+      toast.success(`已更新上游节点 ${node.name}`)
+      void queryClient.invalidateQueries({ queryKey: ['egress-nodes'] })
+      void queryClient.invalidateQueries({ queryKey: ['egress'] })
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -193,6 +219,7 @@ export function EgressNodesPage() {
 
   const actionPending =
     createMutation.isPending ||
+    editMutation.isPending ||
     updateMutation.isPending ||
     deleteMutation.isPending
   const assignedAccounts = action?.nodes.reduce(
@@ -212,8 +239,9 @@ export function EgressNodesPage() {
               label='新增 Grok Build 节点'
               disabled={actionPending}
               onClick={() => {
-                setCreateForm(emptyCreateForm)
-                setCreateOpen(true)
+                setEditingNode(null)
+                setNodeForm(emptyNodeForm)
+                setEditorOpen(true)
               }}
             >
               <Plus />
@@ -420,6 +448,31 @@ export function EgressNodesPage() {
                                 <Button
                                   size='icon'
                                   variant='ghost'
+                                  disabled={actionPending}
+                                  onClick={() => {
+                                    setEditingNode(node)
+                                    setNodeForm({
+                                      name: node.name,
+                                      proxyUrl: '',
+                                      proxyPool: node.proxyPool ?? false,
+                                      accountCapacity:
+                                        node.accountCapacity ?? 0,
+                                      enabled: node.enabled,
+                                    })
+                                    setEditorOpen(true)
+                                  }}
+                                  aria-label={`编辑节点 ${node.name}`}
+                                >
+                                  <Pencil />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>编辑节点</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size='icon'
+                                  variant='ghost'
                                   disabled={testing || actionPending}
                                   onClick={() => testMutation.mutate(node)}
                                   aria-label={`探测节点 ${node.name}`}
@@ -506,17 +559,24 @@ export function EgressNodesPage() {
       </Card>
 
       <Dialog
-        open={createOpen}
+        open={editorOpen}
         onOpenChange={(open) => {
-          if (createMutation.isPending) return
-          setCreateOpen(open)
+          if (createMutation.isPending || editMutation.isPending) return
+          setEditorOpen(open)
+          if (!open) setEditingNode(null)
         }}
       >
         <DialogContent className='sm:max-w-lg'>
           <DialogHeader>
-            <DialogTitle>新增 Grok Build 节点</DialogTitle>
+            <DialogTitle>
+              {editingNode ? '编辑 Grok Build 节点' : '新增 Grok Build 节点'}
+            </DialogTitle>
             <DialogDescription>
-              代理凭据只发送给 grok2api，不在 GrokIQ 数据库保存或回显。
+              {editingNode
+                ? '代理地址为只写字段，留空会保留当前配置。节点启停请使用列表中的独立操作。'
+                : '代理凭据只发送给 grok2api，不在 GrokIQ 数据库保存或回显。'}
+              {editingNode?.sourceId &&
+                ' 该节点来自订阅，后续同步可能覆盖部分配置。'}
             </DialogDescription>
           </DialogHeader>
           <div className='space-y-4'>
@@ -524,9 +584,9 @@ export function EgressNodesPage() {
               <Label htmlFor='egress-node-name'>节点名称</Label>
               <Input
                 id='egress-node-name'
-                value={createForm.name}
+                value={nodeForm.name}
                 onChange={(event) =>
-                  setCreateForm((current) => ({
+                  setNodeForm((current) => ({
                     ...current,
                     name: event.target.value,
                   }))
@@ -552,14 +612,18 @@ export function EgressNodesPage() {
                 id='egress-node-proxy'
                 type='password'
                 autoComplete='new-password'
-                value={createForm.proxyUrl}
+                value={nodeForm.proxyUrl}
                 onChange={(event) =>
-                  setCreateForm((current) => ({
+                  setNodeForm((current) => ({
                     ...current,
                     proxyUrl: event.target.value,
                   }))
                 }
-                placeholder='socks5h://pool.{account}:token@resin:2260'
+                placeholder={
+                  editingNode && editingNode.proxyConfigured
+                    ? '已配置，留空保持不变'
+                    : 'socks5h://pool.{account}:token@resin:2260'
+                }
               />
             </div>
             <div className='space-y-2'>
@@ -569,9 +633,9 @@ export function EgressNodesPage() {
                 type='number'
                 min={0}
                 max={100000}
-                value={createForm.accountCapacity || ''}
+                value={nodeForm.accountCapacity || ''}
                 onChange={(event) =>
-                  setCreateForm((current) => ({
+                  setNodeForm((current) => ({
                     ...current,
                     accountCapacity: Math.max(
                       0,
@@ -586,27 +650,29 @@ export function EgressNodesPage() {
               <CreateSwitchRow
                 label='代理池节点'
                 description='同一逻辑节点可按账号映射到不同实际出口。'
-                checked={createForm.proxyPool}
+                checked={nodeForm.proxyPool}
                 onCheckedChange={(proxyPool) =>
-                  setCreateForm((current) => ({ ...current, proxyPool }))
+                  setNodeForm((current) => ({ ...current, proxyPool }))
                 }
               />
-              <CreateSwitchRow
-                label='创建后立即启用'
-                description='启用后可参与新请求调度和账号绑定。'
-                checked={createForm.enabled}
-                onCheckedChange={(value) =>
-                  setCreateForm((current) => ({ ...current, enabled: value }))
-                }
-              />
+              {!editingNode && (
+                <CreateSwitchRow
+                  label='创建后立即启用'
+                  description='启用后可参与新请求调度和账号绑定。'
+                  checked={nodeForm.enabled}
+                  onCheckedChange={(value) =>
+                    setNodeForm((current) => ({ ...current, enabled: value }))
+                  }
+                />
+              )}
             </div>
           </div>
           <DialogFooter>
             <Button
               type='button'
               variant='outline'
-              disabled={createMutation.isPending}
-              onClick={() => setCreateOpen(false)}
+              disabled={createMutation.isPending || editMutation.isPending}
+              onClick={() => setEditorOpen(false)}
             >
               取消
             </Button>
@@ -614,17 +680,24 @@ export function EgressNodesPage() {
               type='button'
               disabled={
                 createMutation.isPending ||
-                !createForm.name.trim() ||
-                !createForm.proxyUrl.trim()
+                editMutation.isPending ||
+                !nodeForm.name.trim() ||
+                (!editingNode && !nodeForm.proxyUrl.trim())
               }
-              onClick={() => createMutation.mutate()}
+              onClick={() =>
+                editingNode
+                  ? editMutation.mutate()
+                  : createMutation.mutate()
+              }
             >
-              {createMutation.isPending ? (
+              {createMutation.isPending || editMutation.isPending ? (
                 <Loader2 className='animate-spin' />
+              ) : editingNode ? (
+                <Pencil />
               ) : (
                 <Plus />
               )}
-              新增节点
+              {editingNode ? '保存修改' : '新增节点'}
             </Button>
           </DialogFooter>
         </DialogContent>

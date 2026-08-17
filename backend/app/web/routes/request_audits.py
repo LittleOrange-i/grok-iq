@@ -14,13 +14,20 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
     router = APIRouter()
 
     @router.get("/request-audits")
-    def request_audits(
+    async def request_audits(
         response: Response,
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
         account: str = "",
-        risk: str = Query(default="", pattern="^(|normal|watch|high)$"),
-        egress_ip: str = Query(default="", alias="egressIp"),
+        risk: str = Query(
+            default="",
+            pattern="^(|risky|normal|watch|high)$",
+        ),
+        egress_node_id: int | None = Query(
+            default=None,
+            ge=1,
+            alias="egressNodeId",
+        ),
         window_preset: str = Query(
             default="today",
             alias="window",
@@ -30,19 +37,19 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
         end_at: str | None = Query(default=None, alias="endAt"),
     ) -> dict[str, Any]:
         disable_client_cache(response)
-        return service.list_page(
+        return await service.list_page(
             page=page,
             page_size=page_size,
             account=account,
             risk=risk,
-            egress_ip=egress_ip,
+            egress_node_id=egress_node_id,
             window_preset=window_preset,
             start_at=start_at,
             end_at=end_at,
         )
 
     @router.get("/request-audits/summary")
-    def request_audit_summary(
+    async def request_audit_summary(
         response: Response,
         window_preset: str = Query(
             default="today",
@@ -53,7 +60,7 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
         end_at: str | None = Query(default=None, alias="endAt"),
     ) -> dict[str, Any]:
         disable_client_cache(response)
-        return service.summary(
+        return await service.summary(
             window_preset=window_preset,
             start_at=start_at,
             end_at=end_at,
@@ -63,6 +70,15 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
     def request_audit_status(response: Response) -> dict[str, Any]:
         disable_client_cache(response)
         return service.status()
+
+    @router.get("/request-audits/probe-context")
+    def request_audit_probe_context(
+        response: Response,
+        request_id: str = Query(default="", alias="requestId"),
+        audit_id: int | None = Query(default=None, ge=1, alias="auditId"),
+    ) -> dict[str, Any]:
+        disable_client_cache(response)
+        return service.probe_context(request_id=request_id, audit_id=audit_id)
 
     @router.post("/request-audits/scan")
     async def scan_request_audits(

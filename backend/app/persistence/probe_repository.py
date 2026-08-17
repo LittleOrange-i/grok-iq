@@ -47,7 +47,9 @@ SAFE_CURRENT_EGRESS_MIGRATION_KEY = _SAFE_CURRENT_EGRESS_MIGRATION_KEY
 
 
 def _profile_ids(profile_ids: Any, profile_id: Any = "") -> list[str]:
-    values = profile_ids if isinstance(profile_ids, list) and profile_ids else [profile_id]
+    values = (
+        profile_ids if isinstance(profile_ids, list) and profile_ids else [profile_id]
+    )
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -260,7 +262,9 @@ class ProbeRepository:
             select(ProbeProfile).where(ProbeProfile.id.in_(selected_profile_ids))
         ).all()
         by_id = {profile.id: profile for profile in profiles}
-        missing = [profile_id for profile_id in selected_profile_ids if profile_id not in by_id]
+        missing = [
+            profile_id for profile_id in selected_profile_ids if profile_id not in by_id
+        ]
         if missing:
             raise ValueError(f"探针方案不存在: {', '.join(missing)}")
         disabled = [
@@ -276,7 +280,9 @@ class ProbeRepository:
     def list_plans(self) -> list[dict[str, Any]]:
         with self.database.session() as session:
             values = session.scalars(
-                select(ProbePlan).order_by(ProbePlan.enabled.desc(), ProbePlan.name.asc())
+                select(ProbePlan).order_by(
+                    ProbePlan.enabled.desc(), ProbePlan.name.asc()
+                )
             ).all()
             return [self._plan_dict(value) for value in values]
 
@@ -333,7 +339,8 @@ class ProbeRepository:
                 raise ValueError("Cron 探针计划不存在")
             active = session.scalar(
                 select(func.count(ProbeRun.id)).where(
-                    ProbeRun.plan_id == plan_id, ProbeRun.status.in_(ACTIVE_RUN_STATUSES)
+                    ProbeRun.plan_id == plan_id,
+                    ProbeRun.status.in_(ACTIVE_RUN_STATUSES),
                 )
             )
             if active:
@@ -367,12 +374,8 @@ class ProbeRepository:
             for plan_id in deleted_ids:
                 session.delete(plans_by_id[plan_id])
 
-        missing_ids = [
-            plan_id for plan_id in unique_ids if plan_id not in plans_by_id
-        ]
-        active_in_request = [
-            plan_id for plan_id in unique_ids if plan_id in active_ids
-        ]
+        missing_ids = [plan_id for plan_id in unique_ids if plan_id not in plans_by_id]
+        active_in_request = [plan_id for plan_id in unique_ids if plan_id in active_ids]
         return {
             "requested": len(unique_ids),
             "deleted": len(deleted_ids),
@@ -500,7 +503,9 @@ class ProbeRepository:
                 statement = statement.where(ProbeRun.plan_id == plan_id)
             return bool(session.scalar(statement))
 
-    def has_executing_run(self, *, account_id: int, exclude_run_id: str | None = None) -> bool:
+    def has_executing_run(
+        self, *, account_id: int, exclude_run_id: str | None = None
+    ) -> bool:
         """Return whether an account currently has an executing worker lease."""
 
         with self.database.session() as session:
@@ -583,7 +588,9 @@ class ProbeRepository:
             statement = select(func.count(ProbeRun.id)).where(
                 ProbeRun.account_id == account_id,
                 (
-                    ProbeRun.account_restore_status.in_(BLOCKING_ACCOUNT_RESTORE_STATUSES)
+                    ProbeRun.account_restore_status.in_(
+                        BLOCKING_ACCOUNT_RESTORE_STATUSES
+                    )
                     | ProbeRun.diagnostic_activation_active.is_(True)
                 ),
             )
@@ -615,7 +622,9 @@ class ProbeRepository:
             restore_blocked_accounts = (
                 select(ProbeRun.account_id.label("account_id"))
                 .where(
-                    ProbeRun.account_restore_status.in_(BLOCKING_ACCOUNT_RESTORE_STATUSES)
+                    ProbeRun.account_restore_status.in_(
+                        BLOCKING_ACCOUNT_RESTORE_STATUSES
+                    )
                     | ProbeRun.diagnostic_activation_active.is_(True)
                 )
                 .distinct()
@@ -842,7 +851,14 @@ class ProbeRepository:
             )
             if existing:
                 return
-            session.add(ProbeSample(id=uuid.uuid4().hex, run_id=run_id, account_id=run.account_id, **values))
+            session.add(
+                ProbeSample(
+                    id=uuid.uuid4().hex,
+                    run_id=run_id,
+                    account_id=run.account_id,
+                    **values,
+                )
+            )
             duration_ms = int(values.get("duration_ms") or 0)
             if duration_ms > 0:
                 now = utc_now()
@@ -889,7 +905,9 @@ class ProbeRepository:
                     "completed": run.completed_steps,
                     "errors": run.error_count,
                     "sample_count": run.completed_steps,
-                    "anomaly_count": sum(int(counts.get(name, 0)) for name in DEGRADATION_CLASSIFICATIONS),
+                    "anomaly_count": sum(
+                        int(counts.get(name, 0)) for name in DEGRADATION_CLASSIFICATIONS
+                    ),
                     "classifications": counts,
                     "max_tps": max_tps,
                     "avg_tps": (tps_sum / tps_count) if tps_count else None,
@@ -901,9 +919,7 @@ class ProbeRepository:
             run.heartbeat_at = utc_now()
 
     @staticmethod
-    def _build_run_summary(
-        run: ProbeRun, sample_values: list[Any]
-    ) -> dict[str, Any]:
+    def _build_run_summary(run: ProbeRun, sample_values: list[Any]) -> dict[str, Any]:
         counts: dict[str, int] = {}
         tps_values: list[float] = []
         for classification, raw_tps in sample_values:
@@ -939,7 +955,9 @@ class ProbeRepository:
         ).all()
         run.summary = self._build_run_summary(run, sample_values)
 
-    def finish_run(self, run_id: str, status: str | None = None, error: str = "") -> dict[str, Any]:
+    def finish_run(
+        self, run_id: str, status: str | None = None, error: str = ""
+    ) -> dict[str, Any]:
         now = utc_now()
         with self.database.transaction() as session:
             run = session.get(ProbeRun, run_id)
@@ -947,7 +965,9 @@ class ProbeRepository:
                 raise ValueError("探针任务不存在")
             self._refresh_run_summary(session, run)
             if status is None:
-                status = "completed" if run.error_count == 0 else "completed_with_errors"
+                status = (
+                    "completed" if run.error_count == 0 else "completed_with_errors"
+                )
             run.status = status
             run.error = error[:4000]
             run.cancel_requested = status == "cancelled"
@@ -1055,9 +1075,13 @@ class ProbeRepository:
         account_ids: set[int] = set()
         skipped: list[str] = []
         with self.database.transaction() as session:
-            values = session.scalars(select(ProbeRun).where(ProbeRun.id.in_(run_ids))).all()
+            values = session.scalars(
+                select(ProbeRun).where(ProbeRun.id.in_(run_ids))
+            ).all()
             for value in values:
-                if value.status not in TERMINAL_RUN_STATUSES or self._restore_pending(value):
+                if value.status not in TERMINAL_RUN_STATUSES or self._restore_pending(
+                    value
+                ):
                     skipped.append(value.id)
                     continue
                 account_ids.add(value.account_id)
@@ -1090,7 +1114,9 @@ class ProbeRepository:
         with self.database.session() as session:
             return (
                 session.scalar(
-                    select(func.count(ProbeRun.id)).where(ProbeRun.parent_run_id == run_id)
+                    select(func.count(ProbeRun.id)).where(
+                        ProbeRun.parent_run_id == run_id
+                    )
                 )
                 or 0
             ) > 0
@@ -1122,9 +1148,9 @@ class ProbeRepository:
                 if int(node_id or 0) > 0
             }
             sample_nodes = session.execute(
-                select(ProbeSample.egress_node_id, ProbeSample.verified_egress_node_id).where(
-                    ProbeSample.run_id.in_(run_ids)
-                )
+                select(
+                    ProbeSample.egress_node_id, ProbeSample.verified_egress_node_id
+                ).where(ProbeSample.run_id.in_(run_ids))
             ).all()
         for egress_node_id, verified_node_id in sample_nodes:
             for node_id in (egress_node_id, verified_node_id):
@@ -1160,7 +1186,9 @@ class ProbeRepository:
     def interrupted_runs(self) -> list[dict[str, Any]]:
         with self.database.transaction() as session:
             runs = session.scalars(
-                select(ProbeRun).where(ProbeRun.status.in_({"running", "cancel_requested", "recovering"}))
+                select(ProbeRun).where(
+                    ProbeRun.status.in_({"running", "cancel_requested", "recovering"})
+                )
             ).all()
             result = []
             for run in runs:
@@ -1240,9 +1268,20 @@ class ProbeRepository:
     def run_detail(self, run_id: str) -> dict[str, Any] | None:
         return self._run_reader.run_detail(run_id)
 
-    def persist_account_created_at(
-        self, values: dict[int, datetime | None]
-    ) -> None:
+    def samples_for_audits(
+        self,
+        *,
+        request_ids: list[str] | set[str] = (),
+        audit_ids: list[int] | set[int] = (),
+        include_response: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self._run_reader.samples_for_audits(
+            request_ids=request_ids,
+            audit_ids=audit_ids,
+            include_response=include_response,
+        )
+
+    def persist_account_created_at(self, values: dict[int, datetime | None]) -> None:
         updates = {
             account_id: created_at
             for account_id, created_at in values.items()
@@ -1263,6 +1302,19 @@ class ProbeRepository:
     def account_history(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         return self._run_reader.account_history(account_id, limit)
 
+    def account_samples(
+        self,
+        account_id: int,
+        *,
+        page: int,
+        page_size: int,
+    ) -> dict[str, Any]:
+        return self._run_reader.account_samples(
+            account_id,
+            page=page,
+            page_size=page_size,
+        )
+
     def queue_stats(self) -> dict[str, int]:
         return self._run_reader.queue_stats()
 
@@ -1273,7 +1325,11 @@ class ProbeRepository:
     def start_schedule_execution(self, schedule_key: str) -> str:
         execution_id = uuid.uuid4().hex
         with self.database.transaction() as session:
-            session.add(ScheduleExecution(id=execution_id, schedule_key=schedule_key, status="running"))
+            session.add(
+                ScheduleExecution(
+                    id=execution_id, schedule_key=schedule_key, status="running"
+                )
+            )
         return execution_id
 
     def finish_schedule_execution(
@@ -1296,7 +1352,9 @@ class ProbeRepository:
     def list_schedule_executions(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.database.session() as session:
             values = session.scalars(
-                select(ScheduleExecution).order_by(ScheduleExecution.started_at.desc()).limit(limit)
+                select(ScheduleExecution)
+                .order_by(ScheduleExecution.started_at.desc())
+                .limit(limit)
             ).all()
             return [model_dict(value) for value in values]
 
@@ -1309,9 +1367,7 @@ class ProbeRepository:
                 raise RunStateError("执行中的调度记录不能删除")
             session.delete(execution)
 
-    def delete_schedule_executions(
-        self, execution_ids: list[str]
-    ) -> dict[str, Any]:
+    def delete_schedule_executions(self, execution_ids: list[str]) -> dict[str, Any]:
         unique_ids = list(dict.fromkeys(value for value in execution_ids if value))
         with self.database.transaction() as session:
             executions_by_id = {
@@ -1330,8 +1386,7 @@ class ProbeRepository:
             deleted_ids = [
                 execution_id
                 for execution_id in unique_ids
-                if execution_id in executions_by_id
-                and execution_id not in running_ids
+                if execution_id in executions_by_id and execution_id not in running_ids
             ]
             for execution_id in deleted_ids:
                 session.delete(executions_by_id[execution_id])
@@ -1342,9 +1397,7 @@ class ProbeRepository:
             if execution_id not in executions_by_id
         ]
         running_in_request = [
-            execution_id
-            for execution_id in unique_ids
-            if execution_id in running_ids
+            execution_id for execution_id in unique_ids if execution_id in running_ids
         ]
         return {
             "requested": len(unique_ids),

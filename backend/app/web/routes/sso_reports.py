@@ -29,7 +29,7 @@ def build_sso_reports_router(service: SsoReportService) -> APIRouter:
     async def create_account_report(
         payload: AccountSsoReportInput,
     ) -> dict[str, Any]:
-        return service.create_for_accounts(payload.account_ids)
+        return service.create_for_accounts(payload.account_ids, name=payload.name)
 
     @router.get("/{report_id}")
     def report_detail(report_id: str) -> dict[str, Any]:

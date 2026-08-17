@@ -326,6 +326,8 @@ class RequestAuditRecord(Base):
     account_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     egress_node_id: Mapped[int | None] = mapped_column(Integer)
     egress_node_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    # Compatibility-only. grok2api audits do not retain a per-request dynamic
+    # exit IP, so new projections keep this empty and risk grouping uses node ID.
     egress_ip: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     egress_mode: Mapped[str] = mapped_column(String(24), default="", nullable=False)
     egress_scope: Mapped[str] = mapped_column(String(48), default="", nullable=False)

@@ -523,6 +523,32 @@ class Grok2APIClient:
             },
         )
 
+    async def update_egress_node(
+        self,
+        node_id: int,
+        *,
+        name: str,
+        proxy_pool: bool,
+        account_capacity: int,
+        enabled: bool,
+        proxy_url: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": name,
+            "scope": "grok_build",
+            "enabled": enabled,
+            "proxyPool": proxy_pool,
+            "accountCapacity": account_capacity,
+            "userAgent": "",
+        }
+        if proxy_url is not None:
+            payload["proxyURL"] = proxy_url
+        return await self.admin_request(
+            "PUT",
+            f"/api/admin/v1/egress-nodes/{node_id}",
+            json=payload,
+        )
+
     async def delete_egress_nodes(self, node_ids: list[int]) -> dict[str, Any]:
         return await self.admin_request(
             "DELETE",

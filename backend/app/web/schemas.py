@@ -92,6 +92,14 @@ class AccountBatchUpdateInput(BaseModel):
     enabled: bool
 
 
+class AccountBatchActionInput(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=1000)
+    action: Literal["quarantine"]
+    note: str = Field(default="", max_length=2000)
+    propagate: bool = True
+    quarantine_minutes: int | None = Field(default=None, ge=1, le=10080)
+
+
 class AccountBatchEgressInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=100_000)
     egress_node_id: int | None = Field(default=None, ge=1)
@@ -116,6 +124,13 @@ class EgressNodeCreateInput(BaseModel):
     proxy_pool: bool = False
     account_capacity: int = Field(default=0, ge=0, le=100_000)
     enabled: bool = True
+
+
+class EgressNodeUpdateInput(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    proxy_url: str = Field(default="", max_length=8000)
+    proxy_pool: bool = False
+    account_capacity: int = Field(default=0, ge=0, le=100_000)
 
 
 class ProxyTargetInput(BaseModel):
@@ -570,6 +585,7 @@ class SsoReportCreateInput(BaseModel):
 
 class AccountSsoReportInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=1000)
+    name: str = Field(default="", max_length=160)
 
 
 class RegisterAccountEvent(BaseModel):

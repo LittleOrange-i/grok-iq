@@ -54,7 +54,11 @@ type ProbeDialogProps = {
   accountIds: number[]
   disabledAccountCount?: number
   sourceTaskCount?: number
+  sourceAuditCount?: number
   profiles: ProbeProfile[]
+  profilesLoading?: boolean
+  profilesError?: string
+  onRefreshProfiles?: () => void
   egress: EgressNode[]
   egressLoading: boolean
   egressError: string
@@ -68,7 +72,11 @@ export function ProbeDialog({
   accountIds,
   disabledAccountCount = 0,
   sourceTaskCount = 0,
+  sourceAuditCount = 0,
   profiles,
+  profilesLoading = false,
+  profilesError = '',
+  onRefreshProfiles,
   egress,
   egressLoading,
   egressError,
@@ -267,9 +275,36 @@ export function ProbeDialog({
                 profiles={profiles}
                 value={selectedProfileIds}
                 onChange={setProfileIds}
+                disabled={profilesLoading}
                 enabledOnly
                 invalid={!selectedProfileIds.length}
+                placeholder={
+                  profilesLoading ? '正在读取探针方案…' : '选择探针方案'
+                }
               />
+              {profilesError && (
+                <div className='flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive'>
+                  <TriangleAlert className='mt-0.5 size-4 shrink-0' />
+                  <span className='min-w-0 flex-1'>
+                    探针方案读取异常：{profilesError}
+                  </span>
+                  {onRefreshProfiles && (
+                    <Button
+                      type='button'
+                      size='sm'
+                      variant='outline'
+                      className='h-7 shrink-0 px-2 text-xs'
+                      disabled={profilesLoading}
+                      onClick={onRefreshProfiles}
+                    >
+                      <RefreshCw
+                        className={profilesLoading ? 'animate-spin' : undefined}
+                      />
+                      重试
+                    </Button>
+                  )}
+                </div>
+              )}
               <p className='text-xs leading-5 text-muted-foreground'>
                 多选后按账号与方案组合拆分为独立任务，检测结果仍分别归属到具体方案。
               </p>
@@ -462,6 +497,13 @@ export function ProbeDialog({
                 tooltip='已选任务数；其中重复账号已按账号 ID 合并'
               />
             )}
+            {sourceAuditCount > 0 && (
+              <ProbeSummaryFact
+                icon={ListChecks}
+                value={sourceAuditCount}
+                tooltip='来源请求审计记录数；其中重复账号已按账号 ID 合并'
+              />
+            )}
             <ProbeSummaryFact
               icon={UsersRound}
               value={accountIds.length}
@@ -529,6 +571,7 @@ export function ProbeDialog({
           <Button
             disabled={
               mutation.isPending ||
+              profilesLoading ||
               !accountIds.length ||
               !effectiveProfileIds.length ||
               targetCount === 0

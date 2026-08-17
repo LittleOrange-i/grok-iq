@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from app.services.account_service import AccountService
 from app.web.schemas import (
     AccountActionInput,
+    AccountBatchActionInput,
     AccountBatchDeleteInput,
     AccountBatchEgressInput,
     AccountBatchUpdateInput,
@@ -81,6 +82,18 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             enabled=payload.enabled,
         )
 
+    @router.post("/accounts/batch/action")
+    async def batch_account_action(
+        payload: AccountBatchActionInput,
+    ) -> dict[str, Any]:
+        return await service.action_many(
+            account_ids=payload.account_ids,
+            action=payload.action,
+            note=payload.note,
+            propagate=payload.propagate,
+            quarantine_minutes=payload.quarantine_minutes,
+        )
+
     @router.delete("/accounts/batch")
     async def batch_delete_accounts(
         payload: AccountBatchDeleteInput,
@@ -104,6 +117,18 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         limit: int = Query(default=200, ge=10, le=1000),
     ) -> dict[str, Any]:
         return await service.detail(account_id, limit)
+
+    @router.get("/accounts/{account_id}/samples")
+    def account_samples(
+        account_id: int,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100, alias="pageSize"),
+    ) -> dict[str, Any]:
+        return service.samples(
+            account_id,
+            page=page,
+            page_size=page_size,
+        )
 
     @router.post("/accounts/{account_id}/action")
     async def account_action(

@@ -29,6 +29,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/egress-nodes"),
     ("PATCH", "/api/egress-nodes/batch"),
     ("POST", "/api/egress-nodes"),
+    ("PUT", "/api/egress-nodes/{node_id}"),
     ("DELETE", "/api/egress-nodes"),
     ("POST", "/api/egress-nodes/{node_id}/test"),
     ("GET", "/api/probe-profiles"),

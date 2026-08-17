@@ -34,7 +34,9 @@ class EgressService:
             enabled=enabled,
         )
 
-    async def set_enabled(self, *, node_ids: list[int], enabled: bool) -> dict[str, Any]:
+    async def set_enabled(
+        self, *, node_ids: list[int], enabled: bool
+    ) -> dict[str, Any]:
         unique_ids = self._normalize_ids(node_ids)
         protected_ids = (
             await self._protected_node_ids(set(unique_ids)) if not enabled else set()
@@ -55,11 +57,44 @@ class EgressService:
             "skippedNodeIds": sorted(protected_ids),
         }
 
+    async def update(
+        self,
+        *,
+        node_id: int,
+        name: str,
+        proxy_url: str,
+        proxy_pool: bool,
+        account_capacity: int,
+    ) -> dict[str, Any]:
+        if node_id <= 0:
+            raise ValueError("出口节点 ID 无效")
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("节点名称不能为空")
+        normalized_proxy_url = proxy_url.strip()
+        current = await self._find_node(node_id)
+        if current is None:
+            raise ValueError("出口节点不存在")
+        return await self.client.update_egress_node(
+            node_id,
+            name=normalized_name,
+            proxy_pool=proxy_pool,
+            account_capacity=account_capacity,
+            enabled=bool(current.get("enabled")),
+            proxy_url=normalized_proxy_url or None,
+        )
+
     async def delete(self, *, node_ids: list[int]) -> dict[str, Any]:
         unique_ids = self._normalize_ids(node_ids)
         protected_ids = await self._protected_node_ids(set(unique_ids))
-        eligible_ids = [node_id for node_id in unique_ids if node_id not in protected_ids]
-        result = await self.client.delete_egress_nodes(eligible_ids) if eligible_ids else {}
+        eligible_ids = [
+            node_id for node_id in unique_ids if node_id not in protected_ids
+        ]
+        result = (
+            await self.client.delete_egress_nodes(eligible_ids)
+            if eligible_ids
+            else {}
+        )
         return {
             "requested": len(unique_ids),
             "eligible": len(eligible_ids),
@@ -72,12 +107,33 @@ class EgressService:
             raise ValueError("出口节点 ID 无效")
         return await self.client.test_egress_node(node_id)
 
+    async def _find_node(self, node_id: int) -> dict[str, Any] | None:
+        page = 1
+        while page <= 100:
+            payload = await self.client.list_egress_nodes(
+                scope="grok_build", page=page, pageSize=500
+            )
+            items = payload.get("items", [])
+            if not isinstance(items, list) or not items:
+                return None
+            for item in items:
+                if isinstance(item, dict) and int(item.get("id") or 0) == node_id:
+                    return item
+            total = int(payload.get("total") or 0)
+            size = int(payload.get("pageSize") or len(items) or 500)
+            if (total and page * size >= total) or len(items) < size:
+                return None
+            page += 1
+        return None
+
     async def _protected_node_ids(self, selected_ids: set[int]) -> set[int]:
         references = self.probes.active_egress_references()
         protected = set(references["nodeIds"])
         current_account_ids = set(references["currentAccountIds"])
         if current_account_ids:
-            accounts = await self.client.list_all_accounts(account_ids=current_account_ids)
+            accounts = await self.client.list_all_accounts(
+                account_ids=current_account_ids
+            )
             found_account_ids = {int(account.get("id") or 0) for account in accounts}
             if current_account_ids - found_account_ids:
                 raise ValueError("无法确认运行中探针的当前出口，请稍后重试")

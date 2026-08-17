@@ -103,7 +103,12 @@ class SsoReportService:
             request_timeout_seconds=request_timeout_seconds,
         )
 
-    def create_for_accounts(self, account_ids: list[int]) -> dict[str, Any]:
+    def create_for_accounts(
+        self,
+        account_ids: list[int],
+        *,
+        name: str = "",
+    ) -> dict[str, Any]:
         if self.register_events is None:
             raise RuntimeError("账号 SSO 存储尚未配置")
         normalized = list(
@@ -136,7 +141,8 @@ class SsoReportService:
         if not credentials:
             raise ValueError("已选账号均没有可用 SSO")
         report = self._create_with_credentials(
-            app_now().strftime("账号 SSO 检测 · %Y-%m-%d %H:%M"),
+            name.strip()
+            or app_now().strftime("账号 SSO 检测 · %Y-%m-%d %H:%M"),
             credentials,
             "",
             concurrency=8,
