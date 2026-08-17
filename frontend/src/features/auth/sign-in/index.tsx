@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { Activity, Check, Loader2, Radar, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
@@ -142,6 +142,11 @@ export function SignIn() {
             />
             <p className='mt-6 text-center text-xs text-muted-foreground'>
               JWT 登录有效期至少 7 天，凭据仅保存在本系统数据库中
+            </p>
+            <p className='mt-2 text-center text-xs'>
+              <Link to='/status' className='text-primary hover:underline'>
+                查看公开上游账号状态
+              </Link>
             </p>
           </CardContent>
         </Card>

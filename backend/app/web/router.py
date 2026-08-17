@@ -25,6 +25,7 @@ from .routes.auth import build_auth_router
 from .routes.chat import build_chat_router
 from .routes.egress import build_egress_router
 from .routes.health import build_health_router
+from .routes.public import build_public_router
 from .routes.integrations import (
     build_integrations_router,
     build_register_events_router,
@@ -69,6 +70,7 @@ def build_router(
             auth=auth_service,
         )
     )
+    router.include_router(build_public_router(account_service))
     router.include_router(
         build_integrations_router(settings, register_integration)
     )

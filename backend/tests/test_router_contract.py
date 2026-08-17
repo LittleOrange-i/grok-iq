@@ -14,6 +14,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/auth/me"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/health"),
+    ("GET", "/api/public/upstream-accounts"),
     ("GET", "/api/system/version"),
     ("POST", "/api/system/update/check"),
     ("GET", "/api/dashboard"),
@@ -21,9 +22,11 @@ EXPECTED_ROUTES = {
     ("GET", "/api/accounts/selection"),
     ("GET", "/api/accounts/options"),
     ("PUT", "/api/accounts/batch"),
+    ("POST", "/api/accounts/batch/action"),
     ("DELETE", "/api/accounts/batch"),
     ("PUT", "/api/accounts/batch/egress"),
     ("GET", "/api/accounts/{account_id}"),
+    ("GET", "/api/accounts/{account_id}/samples"),
     ("POST", "/api/accounts/{account_id}/action"),
     ("DELETE", "/api/accounts/{account_id}"),
     ("GET", "/api/egress-nodes"),
@@ -94,6 +97,7 @@ PUBLIC_PATHS = {
     "/api/auth/setup",
     "/api/auth/login",
     "/api/health",
+    "/api/public/upstream-accounts",
     "/api/integrations/grok-register/account-created",
     "/api/integrations/grok-register/account-imported",
 }
@@ -142,7 +146,7 @@ def test_business_router_package_preserves_method_and_path_contract():
     assert routes == EXPECTED_ROUTES
 
 
-def test_only_auth_health_and_register_webhooks_are_public():
+def test_only_auth_health_public_status_and_register_webhooks_are_public():
     router = build_test_router()
     for route in effective_routes(router):
         if not isinstance(route, APIRoute) and not isinstance(

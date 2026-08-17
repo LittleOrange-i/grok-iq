@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -197,6 +198,122 @@ async def test_account_list_marks_stored_sso_availability(tmp_path: Path):
 
     assert result["items"][0]["ssoAvailable"] is True
     assert result["items"][1]["ssoAvailable"] is False
+    database.dispose()
+
+
+class PublicSummaryClient:
+    def __init__(self, payload: dict[str, Any] | Exception):
+        self.payload = payload
+        self.calls = 0
+
+    async def admin_request(self, method: str, path: str, **_: Any) -> dict[str, Any]:
+        self.calls += 1
+        assert method == "GET"
+        assert path == "/api/admin/v1/accounts/summary"
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return self.payload
+
+
+class BlockingPublicSummaryClient(PublicSummaryClient):
+    def __init__(self, payload: dict[str, Any]):
+        super().__init__(payload)
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def admin_request(
+        self, method: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        self.started.set()
+        await self.release.wait()
+        return await super().admin_request(method, path, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_public_upstream_summary_returns_counts_only(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    client = PublicSummaryClient(
+        {
+            "total": 12,
+            "available": 7,
+            "recovering": 3,
+            "attention": 2,
+            "risk": 1,
+            "providers": {
+                "grok_build": {"total": 8, "available": 5},
+                "grok_web": {"total": 3, "available": 2},
+                "grok_console": {"total": 1, "available": 0},
+            },
+            "recovery": {"cooldown": 1, "waitingReset": 1, "probing": 1},
+            "issues": {"disabled": 1, "reauthRequired": 1},
+            "token": "must-not-leak",
+            "accounts": [{"id": 99, "email": "secret@example.test"}],
+        }
+    )
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    result = await service.public_upstream_account_summary()
+
+    assert result["reachable"] is True
+    assert result["total"] == 12
+    assert result["available"] == 7
+    assert result["providers"]["grok_build"] == {"total": 8, "available": 5}
+    assert result["recovery"] == {"cooldown": 1, "waitingReset": 1, "probing": 1}
+    assert result["issues"] == {"disabled": 1, "reauthRequired": 1}
+    assert "token" not in result
+    assert "accounts" not in result
+    database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_public_upstream_summary_coalesces_concurrent_requests(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    client = BlockingPublicSummaryClient({"total": 2, "available": 1})
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    first = asyncio.create_task(service.public_upstream_account_summary())
+    await client.started.wait()
+    second = asyncio.create_task(service.public_upstream_account_summary())
+    await asyncio.sleep(0)
+    client.release.set()
+
+    first_result, second_result = await asyncio.gather(first, second)
+
+    assert client.calls == 1
+    assert first_result == second_result
+    database.dispose()
+
+
+@pytest.mark.asyncio
+async def test_public_upstream_summary_hides_upstream_errors(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    client = PublicSummaryClient(RuntimeError("admin jwt expired for user root"))
+    service = AccountService(
+        settings=Settings(database_path=tmp_path / "grokiq.db"),
+        client=client,  # type: ignore[arg-type]
+        accounts=AccountRepository(database),
+        probes=ProbeRepository(database),
+    )
+
+    result = await service.public_upstream_account_summary()
+
+    assert result["reachable"] is False
+    assert result["total"] == 0
+    assert "jwt" not in str(result).lower()
+    assert "admin" not in str(result).lower()
     database.dispose()
 
 

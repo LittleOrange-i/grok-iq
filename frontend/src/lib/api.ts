@@ -13,6 +13,33 @@ export type AuthStatus = {
   user: AuthUser | null
 }
 
+export type PublicUpstreamProvider = 'grok_build' | 'grok_web' | 'grok_console'
+
+export type PublicUpstreamProviderCounts = {
+  total: number
+  available: number
+}
+
+export type PublicUpstreamAccountSummary = {
+  reachable: boolean
+  updatedAt: string | null
+  total: number
+  available: number
+  recovering: number
+  attention: number
+  risk: number
+  providers: Record<PublicUpstreamProvider, PublicUpstreamProviderCounts>
+  recovery: {
+    cooldown: number
+    waitingReset: number
+    probing: number
+  }
+  issues: {
+    disabled: number
+    reauthRequired: number
+  }
+}
+
 export type AuthSession = {
   accessToken: string
   tokenType: 'bearer'
@@ -1439,13 +1466,17 @@ export type ChatProviderInput = {
   isDefault: boolean
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit & { skipAuth?: boolean }
+): Promise<T> {
+  const { skipAuth = false, ...requestInit } = init ?? {}
   const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
+    ...requestInit,
     headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-      ...authorizationHeaders(),
+      ...(requestInit.body ? { 'Content-Type': 'application/json' } : {}),
+      ...requestInit.headers,
+      ...(skipAuth ? {} : authorizationHeaders()),
     },
   })
   if (!response.ok) {
@@ -1475,6 +1506,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const isAuthEndpoint = path.startsWith('/auth/')
     if (
       response.status === 401 &&
+      !skipAuth &&
       !isAuthEndpoint &&
       isAuthenticationRequiredCode(payload.code)
     ) {
@@ -1810,6 +1842,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   health: () => request<HealthResponse>('/health'),
+  publicUpstreamAccounts: () =>
+    request<PublicUpstreamAccountSummary>('/public/upstream-accounts', {
+      skipAuth: true,
+    }),
   systemVersion: () =>
     request<SystemVersionInfo>('/system/version', { cache: 'no-store' }),
   checkSystemUpdate: () =>

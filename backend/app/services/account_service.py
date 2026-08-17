@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import timedelta
 from typing import Any
 
-from app.core.clock import to_app_timezone, utc_now
+from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
@@ -12,6 +13,8 @@ from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
 
 QUARANTINE_RECOVERY_PRIORITY = -2_000_000_000
+PUBLIC_UPSTREAM_SUMMARY_TTL_SECONDS = 10.0
+PUBLIC_UPSTREAM_PROVIDERS = ("grok_build", "grok_web", "grok_console")
 
 
 class AccountService:
@@ -29,6 +32,8 @@ class AccountService:
         self.accounts = accounts
         self.probes = probes
         self.register_events = register_events
+        self._public_summary_cache: tuple[float, dict[str, Any]] | None = None
+        self._public_summary_lock = asyncio.Lock()
 
     async def list_accounts(
         self,
@@ -210,6 +215,41 @@ class AccountService:
             "page": int(payload.get("page") or page),
             "pageSize": int(payload.get("pageSize") or page_size),
         }
+
+    async def public_upstream_account_summary(self) -> dict[str, Any]:
+        """Return sanitized grok2api account counts for the public status page.
+
+        The browser never talks to grok2api. Only integer aggregates leave
+        this process; tokens, account identities, and upstream error bodies
+        stay on the server.
+        """
+
+        cached = self._fresh_public_summary()
+        if cached is not None:
+            return cached
+
+        async with self._public_summary_lock:
+            cached = self._fresh_public_summary()
+            if cached is not None:
+                return cached
+            try:
+                raw = await self.client.admin_request(
+                    "GET", "/api/admin/v1/accounts/summary"
+                )
+                payload = _public_upstream_summary(raw, reachable=True)
+            except Exception:
+                payload = _public_upstream_summary({}, reachable=False)
+            self._public_summary_cache = (time.monotonic(), payload)
+            return payload
+
+    def _fresh_public_summary(self) -> dict[str, Any] | None:
+        cached = self._public_summary_cache
+        if (
+            cached is not None
+            and time.monotonic() - cached[0] < PUBLIC_UPSTREAM_SUMMARY_TTL_SECONDS
+        ):
+            return cached[1]
+        return None
 
     async def dashboard(self, hours: int) -> dict[str, Any]:
         upstream = await self.client.admin_request(
@@ -675,3 +715,50 @@ class AccountService:
                 "recovery_guarded": False,
             },
         }
+
+
+def _count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _provider_counts(value: Any) -> dict[str, int]:
+    payload = value if isinstance(value, dict) else {}
+    return {
+        "total": _count(payload.get("total")),
+        "available": _count(payload.get("available")),
+    }
+
+
+def _public_upstream_summary(raw: Any, *, reachable: bool) -> dict[str, Any]:
+    payload = raw if isinstance(raw, dict) else {}
+    providers_raw = payload.get("providers")
+    providers = providers_raw if isinstance(providers_raw, dict) else {}
+    recovery_raw = payload.get("recovery")
+    recovery = recovery_raw if isinstance(recovery_raw, dict) else {}
+    issues_raw = payload.get("issues")
+    issues = issues_raw if isinstance(issues_raw, dict) else {}
+    return {
+        "reachable": reachable,
+        "updatedAt": app_isoformat(utc_now()),
+        "total": _count(payload.get("total")),
+        "available": _count(payload.get("available")),
+        "recovering": _count(payload.get("recovering")),
+        "attention": _count(payload.get("attention")),
+        "risk": _count(payload.get("risk")),
+        "providers": {
+            name: _provider_counts(providers.get(name))
+            for name in PUBLIC_UPSTREAM_PROVIDERS
+        },
+        "recovery": {
+            "cooldown": _count(recovery.get("cooldown")),
+            "waitingReset": _count(recovery.get("waitingReset")),
+            "probing": _count(recovery.get("probing")),
+        },
+        "issues": {
+            "disabled": _count(issues.get("disabled")),
+            "reauthRequired": _count(issues.get("reauthRequired")),
+        },
+    }
