@@ -22,7 +22,7 @@ REQUEST_AUDIT_MAX_PAGES = 200
 # Kept for API compatibility; adaptive scheduling is the default and exposes
 # its actual busy/normal/idle intervals in status payloads.
 REQUEST_AUDIT_SCAN_CRON = "*/5 * * * *"
-REQUEST_AUDIT_WINDOW_PRESETS = frozenset({"today", "6h", "24h", "7d", "30d"})
+REQUEST_AUDIT_WINDOW_PRESETS = frozenset({"today", "1h", "3h", "6h", "24h", "7d", "30d"})
 REQUEST_AUDIT_ACTIVITY_MINUTES = 5
 REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS = 120
 
@@ -208,6 +208,10 @@ class RequestAuditService:
             preset = "custom"
         elif preset == "today":
             start, end = _day_bounds(current_day_key())
+        elif preset == "1h":
+            start, end = now - timedelta(hours=1), now
+        elif preset == "3h":
+            start, end = now - timedelta(hours=3), now
         elif preset == "6h":
             start, end = now - timedelta(hours=6), now
         elif preset == "24h":
@@ -225,13 +229,13 @@ class RequestAuditService:
             raise ValueError("单次请求审计时间窗口不能超过 90 天")
         if start < now - timedelta(days=90, minutes=1):
             raise ValueError("请求审计仅支持最近 90 天")
-        if end > now + timedelta(days=1):
-            raise ValueError("请求审计结束时间超出允许范围")
 
         today_start, today_end = _day_bounds(current_day_key())
         is_today = start == today_start and end == today_end
         labels = {
             "today": "当天",
+            "1h": "最近 1 小时",
+            "3h": "最近 3 小时",
             "6h": "最近 6 小时",
             "24h": "最近 24 小时",
             "7d": "最近 7 天",

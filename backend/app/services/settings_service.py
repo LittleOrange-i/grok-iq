@@ -85,6 +85,7 @@ class RuntimeSettingsService:
             "grok2apiAdminPasswordConfigured": bool(s.grok2api_admin_password),
             "grok2apiHttpImpersonate": s.grok2api_http_impersonate,
             "grokRegisterWebhookTokenConfigured": bool(s.grok_register_webhook_token),
+            "ssoProxyConfigured": bool(s.sso_proxy),
             "initialProbeOnRegister": s.initial_probe_on_register,
             "registerProbeStabilizationSeconds": (
                 s.register_probe_stabilization_seconds
@@ -207,6 +208,7 @@ class RuntimeSettingsService:
         secrets = {
             "grok2apiAdminPassword": self.settings.grok2api_admin_password,
             "grokRegisterWebhookToken": self.settings.grok_register_webhook_token,
+            "ssoProxy": self.settings.sso_proxy,
             "wechatAppSecret": self.settings.wechat_app_secret,
         }
         if name not in secrets:

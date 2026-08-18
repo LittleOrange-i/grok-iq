@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from app.core.config import Settings
 from app.integrations.sso.checker import SsoCredential
 from app.persistence.database import Database
 from app.persistence.register_event_repository import RegisterEventRepository
@@ -131,6 +132,75 @@ async def test_account_report_skips_accounts_without_stored_sso(tmp_path: Path) 
         assert report["results"][0]["expected_email"] == "alpha@example.test"
         assert "RAW-ALPHA" not in str(report)
         assert checker_factory.tokens == ["RAW-ALPHA"]
+    finally:
+        await service.stop()
+        database.dispose()
+
+
+async def test_account_report_uses_configured_sso_proxy(tmp_path: Path) -> None:
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    register_events = RegisterEventRepository(database)
+    register_events.receive(
+        {
+            "event_id": "registration:alpha:grok2api-imported",
+            "email": "alpha@example.test",
+            "sso": "alpha@example.test----sso=RAW-ALPHA",
+        }
+    )
+    register_events.complete("registration:alpha:grok2api-imported", 17, [])
+    checker_factory = CheckerFactory()
+    settings = Settings(
+        database_path=tmp_path / "grokiq.db",
+        sso_proxy="sso-user:sso-pass@127.0.0.1:8080",
+    )
+    service = SsoReportService(
+        SsoReportRepository(database),
+        register_events=register_events,
+        checker_factory=checker_factory,
+        settings=settings,
+    )
+    await service.start()
+    try:
+        queued = service.create_for_accounts([17])
+        report = await wait_for_terminal(service, queued["id"])
+        assert report["status"] == "completed"
+        assert report["proxy_used"] is True
+        assert checker_factory.values == [
+            ("http://sso-user:sso-pass@127.0.0.1:8080", 8, 20)
+        ]
+        assert "sso-pass" not in str(report)
+    finally:
+        await service.stop()
+        database.dispose()
+
+
+async def test_create_falls_back_to_configured_sso_proxy(tmp_path: Path) -> None:
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    checker_factory = CheckerFactory()
+    settings = Settings(
+        database_path=tmp_path / "grokiq.db",
+        sso_proxy="http://sso-user:sso-pass@127.0.0.1:9090",
+    )
+    service = SsoReportService(
+        SsoReportRepository(database),
+        checker_factory=checker_factory,
+        settings=settings,
+    )
+    await service.start()
+    try:
+        queued = service.create(
+            "batch",
+            "first@example.com----SECRET-ONE",
+            "",
+        )
+        report = await wait_for_terminal(service, queued["id"])
+        assert report["status"] == "completed"
+        assert report["proxy_used"] is True
+        assert checker_factory.values == [
+            ("http://sso-user:sso-pass@127.0.0.1:9090", 8, 20)
+        ]
     finally:
         await service.stop()
         database.dispose()

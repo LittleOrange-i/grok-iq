@@ -400,7 +400,7 @@ export type EgressNodeProbeResult = {
 
 export type RequestAuditRiskLevel = 'normal' | 'watch' | 'high'
 export type RequestAuditWindowPreset =
-  'today' | '6h' | '24h' | '7d' | '30d' | 'custom'
+  'today' | '1h' | '3h' | '6h' | '24h' | '7d' | '30d' | 'custom'
 
 export type RequestAuditWindow = {
   preset: RequestAuditWindowPreset
@@ -938,6 +938,7 @@ export type RuntimeSettings = {
   grok2apiAdminPasswordConfigured: boolean
   grok2apiHttpImpersonate: string
   grokRegisterWebhookTokenConfigured: boolean
+  ssoProxyConfigured: boolean
   initialProbeOnRegister: boolean
   registerProbeStabilizationSeconds: number
   registerProbeProfileIds: string[]
@@ -1015,11 +1016,15 @@ export type RuntimeSettings = {
 export type EditableRuntimeSettings = RuntimeSettings & {
   grok2apiAdminPassword: string
   grokRegisterWebhookToken: string
+  ssoProxy: string
   wechatAppSecret: string
 }
 
 export type SecretSettingName =
-  'grok2apiAdminPassword' | 'grokRegisterWebhookToken' | 'wechatAppSecret'
+  | 'grok2apiAdminPassword'
+  | 'grokRegisterWebhookToken'
+  | 'ssoProxy'
+  | 'wechatAppSecret'
 
 export type RuntimeSettingsUpdate = Partial<
   Pick<
@@ -1095,6 +1100,7 @@ export type RuntimeSettingsUpdate = Partial<
 > & {
   grok2apiAdminPassword?: string
   grokRegisterWebhookToken?: string
+  ssoProxy?: string
   wechatAppSecret?: string
   clearSecrets?: SecretSettingName[]
 }
@@ -1128,6 +1134,7 @@ type RuntimeSettingsWire = Omit<
   | 'scheduledProbeRegisterCooldownMinutes'
   | 'registerProbeStabilizationSeconds'
   | 'registerProbeSwitchOnDegradation'
+  | 'ssoProxyConfigured'
   | 'autoQuarantineRecoveryEnabled'
   | 'requestAuditEnabled'
   | 'requestAuditAutoScanEnabled'
@@ -1172,6 +1179,7 @@ type RuntimeSettingsWire = Omit<
   scheduledProbeRegisterCooldownMinutes?: number
   registerProbeStabilizationSeconds?: number
   registerProbeSwitchOnDegradation?: boolean
+  ssoProxyConfigured?: boolean
   autoQuarantineRecoveryEnabled?: boolean
   requestAuditEnabled?: boolean
   requestAuditAutoScanEnabled?: boolean
@@ -1231,6 +1239,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',
     wechatAppSecretConfigured: value.wechatAppSecretConfigured ?? false,
+    ssoProxyConfigured: value.ssoProxyConfigured ?? false,
     wechatOpenid: value.wechatOpenid ?? '',
     wechatTemplateId: value.wechatTemplateId ?? '',
     degradationTps: value.degradationTps ?? value.softTps ?? 150,
@@ -1257,28 +1266,38 @@ async function loadEditableRuntimeSettings(): Promise<EditableRuntimeSettings> {
   const settings = normalizeRuntimeSettings(
     await request<RuntimeSettingsWire>('/settings')
   )
-  const [adminPassword, registerToken, wechatAppSecret] = await Promise.all([
-    settings.grok2apiAdminPasswordConfigured
-      ? request<{ value: string }>('/settings/secrets/grok2apiAdminPassword', {
-          cache: 'no-store',
-        })
-      : Promise.resolve({ value: '' }),
-    settings.grokRegisterWebhookTokenConfigured
-      ? request<{ value: string }>(
-          '/settings/secrets/grokRegisterWebhookToken',
-          { cache: 'no-store' }
-        )
-      : Promise.resolve({ value: '' }),
-    settings.wechatAppSecretConfigured
-      ? request<{ value: string }>('/settings/secrets/wechatAppSecret', {
-          cache: 'no-store',
-        })
-      : Promise.resolve({ value: '' }),
-  ])
+  const [adminPassword, registerToken, ssoProxy, wechatAppSecret] =
+    await Promise.all([
+      settings.grok2apiAdminPasswordConfigured
+        ? request<{ value: string }>(
+            '/settings/secrets/grok2apiAdminPassword',
+            {
+              cache: 'no-store',
+            }
+          )
+        : Promise.resolve({ value: '' }),
+      settings.grokRegisterWebhookTokenConfigured
+        ? request<{ value: string }>(
+            '/settings/secrets/grokRegisterWebhookToken',
+            { cache: 'no-store' }
+          )
+        : Promise.resolve({ value: '' }),
+      settings.ssoProxyConfigured
+        ? request<{ value: string }>('/settings/secrets/ssoProxy', {
+            cache: 'no-store',
+          })
+        : Promise.resolve({ value: '' }),
+      settings.wechatAppSecretConfigured
+        ? request<{ value: string }>('/settings/secrets/wechatAppSecret', {
+            cache: 'no-store',
+          })
+        : Promise.resolve({ value: '' }),
+    ])
   return {
     ...settings,
     grok2apiAdminPassword: adminPassword.value,
     grokRegisterWebhookToken: registerToken.value,
+    ssoProxy: ssoProxy.value,
     wechatAppSecret: wechatAppSecret.value,
   }
 }

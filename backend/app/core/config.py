@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     grok2api_http_impersonate: str = "chrome"
 
     grok_register_webhook_token: str = ""
+    # Optional proxy for SSO checks. Empty allows direct egress.
+    sso_proxy: str = ""
     initial_probe_on_register: bool = True
     register_probe_stabilization_seconds: float = Field(
         default=DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS,
@@ -152,6 +154,7 @@ class Settings(BaseSettings):
         "grok2api_admin_password",
         "grok2api_http_impersonate",
         "grok_register_webhook_token",
+        "sso_proxy",
         "initial_probe_on_register",
         "register_probe_stabilization_seconds",
         "register_probe_profile_ids",
@@ -222,6 +225,7 @@ class Settings(BaseSettings):
         {
             "grok2api_admin_password",
             "grok_register_webhook_token",
+            "sso_proxy",
             "wechat_app_secret",
         }
     )

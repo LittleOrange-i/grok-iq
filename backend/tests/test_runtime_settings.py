@@ -411,3 +411,35 @@ def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Pat
         )
         assert stored is not None
         assert "wechat-secret" not in json.dumps(stored.value)
+
+
+
+def test_sso_proxy_is_encrypted_masked_and_clearable(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    changed = service.update({"sso_proxy": "user:pass@127.0.0.1:8080"})
+    assert changed == ["sso_proxy"]
+    assert settings.sso_proxy == "http://user:pass@127.0.0.1:8080"
+    public = service.public_view()
+    assert public["ssoProxyConfigured"] is True
+    assert "pass" not in json.dumps(public)
+    assert service.reveal_secret("ssoProxy") == "http://user:pass@127.0.0.1:8080"
+
+    with database.session() as session:
+        stored = session.scalar(select(AppSetting).where(AppSetting.key == "sso_proxy"))
+        assert stored is not None
+        assert "pass" not in json.dumps(stored.value)
+
+    keep = RuntimeSettingsInput(ssoProxy="")
+    assert "sso_proxy" not in keep.runtime_changes()
+    clear = RuntimeSettingsInput(clearSecrets=["ssoProxy"])
+    assert clear.runtime_changes()["sso_proxy"] == ""
+
+    service.update(clear.runtime_changes())
+    assert settings.sso_proxy == ""
+    assert service.public_view()["ssoProxyConfigured"] is False
+
+
+def test_invalid_sso_proxy_is_rejected(tmp_path: Path):
+    _database, _settings, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="代理"):
+        service.update({"sso_proxy": "not-a-proxy"})

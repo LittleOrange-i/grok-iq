@@ -217,6 +217,7 @@ class ProbeRunBatchCreate(BaseModel):
 SecretSettingName = Literal[
     "grok2apiAdminPassword",
     "grokRegisterWebhookToken",
+    "ssoProxy",
     "wechatAppSecret",
 ]
 
@@ -270,6 +271,11 @@ class OnboardingCompleteInput(BaseModel):
         ge=1,
         le=24 * 365,
     )
+    sso_proxy: str | None = Field(
+        default=None,
+        alias="ssoProxy",
+        max_length=8000,
+    )
 
     def runtime_changes(self) -> dict[str, Any]:
         values = self.model_dump(exclude_unset=True)
@@ -295,6 +301,7 @@ class RuntimeSettingsInput(BaseModel):
     grok2api_admin_password: str | None = Field(default=None, alias="grok2apiAdminPassword")
     grok2api_http_impersonate: str | None = Field(default=None, alias="grok2apiHttpImpersonate")
     grok_register_webhook_token: str | None = Field(default=None, alias="grokRegisterWebhookToken")
+    sso_proxy: str | None = Field(default=None, alias="ssoProxy", max_length=8000)
     initial_probe_on_register: bool | None = Field(default=None, alias="initialProbeOnRegister")
     register_probe_stabilization_seconds: float | None = Field(
         default=None,
@@ -478,6 +485,7 @@ class RuntimeSettingsInput(BaseModel):
         for key in (
             "grok2api_admin_password",
             "grok_register_webhook_token",
+            "sso_proxy",
             "wechat_app_secret",
         ):
             if result.get(key) == "":
@@ -485,6 +493,7 @@ class RuntimeSettingsInput(BaseModel):
         clear_mapping = {
             "grok2apiAdminPassword": "grok2api_admin_password",
             "grokRegisterWebhookToken": "grok_register_webhook_token",
+            "ssoProxy": "sso_proxy",
             "wechatAppSecret": "wechat_app_secret",
         }
         for alias in self.clear_secrets:
@@ -495,7 +504,7 @@ class RuntimeSettingsInput(BaseModel):
 class RequestAuditScanInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    window_preset: Literal["today", "6h", "24h", "7d", "30d", "custom"] = Field(
+    window_preset: Literal["today", "1h", "3h", "6h", "24h", "7d", "30d", "custom"] = Field(
         default="today", alias="window"
     )
     start_at: datetime | None = Field(default=None, alias="startAt")

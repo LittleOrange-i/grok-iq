@@ -31,7 +31,7 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
         window_preset: str = Query(
             default="today",
             alias="window",
-            pattern="^(today|6h|24h|7d|30d|custom)$",
+            pattern="^(today|1h|3h|6h|24h|7d|30d|custom)$",
         ),
         start_at: str | None = Query(default=None, alias="startAt"),
         end_at: str | None = Query(default=None, alias="endAt"),
@@ -54,7 +54,7 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
         window_preset: str = Query(
             default="today",
             alias="window",
-            pattern="^(today|6h|24h|7d|30d|custom)$",
+            pattern="^(today|1h|3h|6h|24h|7d|30d|custom)$",
         ),
         start_at: str | None = Query(default=None, alias="startAt"),
         end_at: str | None = Query(default=None, alias="endAt"),

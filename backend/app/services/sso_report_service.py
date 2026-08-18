@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from app.core.clock import app_now
+from app.core.config import Settings
 from app.integrations.sso import (
     SsoChecker,
     SsoCredential,
@@ -43,9 +44,11 @@ class SsoReportService:
         register_events: RegisterEventRepository | None = None,
         checker: SsoChecker | None = None,
         checker_factory: SsoCheckerFactory | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.repository = repository
         self.register_events = register_events
+        self.settings = settings
         if checker is not None and checker_factory is not None:
             raise ValueError("checker 和 checker_factory 不能同时设置")
         self.checker_factory = checker_factory or (
@@ -178,7 +181,7 @@ class SsoReportService:
             self._clear_credentials(credentials)
             raise ValueError("SSO 单请求超时需在 5–120 秒之间")
 
-        normalized_proxy = normalize_proxy(proxy)
+        normalized_proxy = normalize_proxy(self._effective_proxy(proxy))
         report = self.repository.create_queued(
             name=name.strip() or app_now().strftime("SSO 检测 · %Y-%m-%d %H:%M"),
             total=len(credentials),
@@ -201,6 +204,14 @@ class SsoReportService:
             self.repository.delete_if_queued(str(report["id"]))
             raise
         return report
+
+    def _effective_proxy(self, proxy: str) -> str:
+        explicit = (proxy or "").strip()
+        if explicit:
+            return explicit
+        if self.settings is None:
+            return ""
+        return (self.settings.sso_proxy or "").strip()
 
     def list(self) -> list[dict[str, Any]]:
         return self.repository.list()

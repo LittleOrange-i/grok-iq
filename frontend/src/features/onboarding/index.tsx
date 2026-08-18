@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { PasswordInput } from '@/components/password-input'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 const steps = ['开始', '连接配置', '任务容量', '运行策略', '完成']
 
@@ -58,6 +59,7 @@ export function OnboardingPage() {
   const [analysisWindowDraft, setAnalysisWindowDraft] = useState<number | null>(
     null
   )
+  const [ssoProxyDraft, setSsoProxyDraft] = useState('')
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: api.settings,
@@ -81,6 +83,8 @@ export function OnboardingPage() {
   const timezone = timezoneDraft ?? settings.data?.schedulerTimezone ?? 'UTC'
   const analysisWindow =
     analysisWindowDraft ?? settings.data?.analysisWindowHours ?? 168
+  const ssoProxy = ssoProxyDraft
+  const ssoProxyConfigured = Boolean(settings.data?.ssoProxyConfigured)
 
   const passwordReady =
     Boolean(password.trim()) ||
@@ -112,6 +116,7 @@ export function OnboardingPage() {
         schedulerTimezone: timezone.trim(),
         analysisWindowHours: analysisWindow,
         ...(password.trim() ? { grok2apiAdminPassword: password } : {}),
+        ...(ssoProxy.trim() ? { ssoProxy: ssoProxy.trim() } : {}),
       }
       return api.completeOnboarding(payload)
     },
@@ -264,10 +269,13 @@ export function OnboardingPage() {
                 recoveryEnabled={recoveryEnabled}
                 timezone={timezone}
                 analysisWindow={analysisWindow}
+                ssoProxy={ssoProxy}
+                ssoProxyConfigured={ssoProxyConfigured}
                 onSchedulerEnabledChange={setSchedulerEnabledDraft}
                 onRecoveryEnabledChange={setRecoveryEnabledDraft}
                 onTimezoneChange={setTimezoneDraft}
                 onAnalysisWindowChange={setAnalysisWindowDraft}
+                onSsoProxyChange={setSsoProxyDraft}
               />
             )}
             {step === 4 && (
@@ -281,6 +289,7 @@ export function OnboardingPage() {
                 recoveryEnabled={recoveryEnabled}
                 timezone={timezone}
                 analysisWindow={analysisWindow}
+                ssoProxyReady={ssoProxyConfigured || Boolean(ssoProxy.trim())}
                 error={complete.error}
               />
             )}
@@ -517,19 +526,25 @@ function StrategyStep({
   recoveryEnabled,
   timezone,
   analysisWindow,
+  ssoProxy,
+  ssoProxyConfigured,
   onSchedulerEnabledChange,
   onRecoveryEnabledChange,
   onTimezoneChange,
   onAnalysisWindowChange,
+  onSsoProxyChange,
 }: {
   schedulerEnabled: boolean
   recoveryEnabled: boolean
   timezone: string
   analysisWindow: number
+  ssoProxy: string
+  ssoProxyConfigured: boolean
   onSchedulerEnabledChange: (value: boolean) => void
   onRecoveryEnabledChange: (value: boolean) => void
   onTimezoneChange: (value: string) => void
   onAnalysisWindowChange: (value: number) => void
+  onSsoProxyChange: (value: string) => void
 }) {
   return (
     <div className='space-y-5'>
@@ -583,6 +598,30 @@ function StrategyStep({
           </span>
         </label>
       </div>
+      <label className='grid gap-2'>
+        <span className='flex items-center gap-2 text-sm font-medium'>
+          <Network className='size-4 text-primary' />
+          SSO 检测代理（选填）
+        </span>
+        <Input
+          value={ssoProxy}
+          onChange={(event) => onSsoProxyChange(event.target.value)}
+          placeholder={
+            ssoProxyConfigured
+              ? '已配置，留空保持当前代理'
+              : 'host:port 或 username:password@host:port'
+          }
+          autoComplete='off'
+          spellCheck={false}
+        />
+        <span className='text-xs leading-5 text-muted-foreground'>
+          可跳过。用于 SSO
+          报告、账号检测和请求审计关联检查；支持代理池或单条代理。
+        </span>
+      </label>
+      {!ssoProxyConfigured && !ssoProxy.trim() ? (
+        <SsoDirectConnectRiskNotice description='可以先跳过不填。未填写时 SSO 检测将使用本机直连 IP 出口，容易导致账号被风控。' />
+      ) : null}
     </div>
   )
 }
@@ -597,6 +636,7 @@ function ReviewStep({
   recoveryEnabled,
   timezone,
   analysisWindow,
+  ssoProxyReady,
   error,
 }: {
   baseUrl: string
@@ -608,6 +648,7 @@ function ReviewStep({
   recoveryEnabled: boolean
   timezone: string
   analysisWindow: number
+  ssoProxyReady: boolean
   error: unknown
 }) {
   return (
@@ -634,6 +675,10 @@ function ReviewStep({
         />
         <ReviewRow label='默认调度时区' value={timezone} />
         <ReviewRow label='风险分析窗口' value={`${analysisWindow} 小时`} />
+        <ReviewRow
+          label='SSO 检测代理'
+          value={ssoProxyReady ? '已配置' : '未填写'}
+        />
         <ReviewRow label='其他高级参数' value='使用当前值或系统默认值' />
       </div>
       <Alert>

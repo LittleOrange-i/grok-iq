@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import Settings
+from app.integrations.sso import normalize_proxy
 
 
 class RuntimeSettingsValidator:
@@ -22,6 +23,7 @@ class RuntimeSettingsValidator:
         self._validate_route_prefix(candidate)
         self._normalize_register_strategy(candidate)
         self._normalize_wechat(candidate)
+        self._normalize_sso_proxy(candidate)
         return candidate
 
     @staticmethod
@@ -153,3 +155,11 @@ class RuntimeSettingsValidator:
         missing = [label for label, value in required.items() if not value]
         if missing:
             raise ValueError(f"开启微信异常推送前请填写：{'、'.join(missing)}")
+
+    @staticmethod
+    def _normalize_sso_proxy(candidate: Settings) -> None:
+        raw = (candidate.sso_proxy or "").strip()
+        if not raw:
+            candidate.sso_proxy = ""
+            return
+        candidate.sso_proxy = normalize_proxy(raw)

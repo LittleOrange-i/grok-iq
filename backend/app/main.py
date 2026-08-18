@@ -76,6 +76,7 @@ chat_service = ChatService(settings=settings, providers=chat_provider_repository
 sso_report_service = SsoReportService(
     sso_report_repository,
     register_events=register_event_repository,
+    settings=settings,
 )
 grok_client = Grok2APIClient(settings)
 wechat_client = WeChatTestAccountClient(settings)

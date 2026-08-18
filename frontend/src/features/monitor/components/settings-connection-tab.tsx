@@ -1,4 +1,10 @@
-import { CheckCircle2, Database, Link2, Network } from 'lucide-react'
+import {
+  CheckCircle2,
+  Database,
+  Link2,
+  Network,
+  ShieldAlert,
+} from 'lucide-react'
 import type { RuntimeSettings, SecretSettingName } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -9,6 +15,7 @@ import {
   SettingsCard,
 } from './settings-components'
 import type { SettingsForm, SettingsSetter } from './settings-model'
+import { SsoDirectConnectRiskNotice } from './sso-direct-connect-risk'
 
 export function SettingsConnectionTab({
   form,
@@ -64,6 +71,28 @@ export function SettingsConnectionTab({
             onChange={(value) => set('grok2apiAdminPassword', value)}
             onToggleClear={() => toggleSecretClear('grok2apiAdminPassword')}
           />
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        icon={ShieldAlert}
+        title='SSO 检测代理'
+        description='用于 SSO 报告、账号检测和请求审计关联检查。支持代理池或单条代理，格式与新建 SSO 检测一致。检测任务仍可单独覆盖；未配置时将直连。'
+      >
+        <div className='space-y-4'>
+          <SecretField
+            name='ssoProxy'
+            value={form.ssoProxy}
+            settings={settings}
+            clearing={clearSecrets.includes('ssoProxy')}
+            onChange={(value) => set('ssoProxy', value)}
+            onToggleClear={() => toggleSecretClear('ssoProxy')}
+          />
+          {!form.ssoProxy.trim() &&
+          (clearSecrets.includes('ssoProxy') ||
+            !settings.ssoProxyConfigured) ? (
+            <SsoDirectConnectRiskNotice />
+          ) : null}
         </div>
       </SettingsCard>
 

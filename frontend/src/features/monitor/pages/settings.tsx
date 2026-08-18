@@ -186,7 +186,10 @@ export function SettingsPage() {
     )
     const field = name as keyof Pick<
       SettingsForm,
-      'grok2apiAdminPassword' | 'grokRegisterWebhookToken' | 'wechatAppSecret'
+      | 'grok2apiAdminPassword'
+      | 'grokRegisterWebhookToken'
+      | 'ssoProxy'
+      | 'wechatAppSecret'
     >
     set(field, '' as SettingsForm[typeof field])
   }

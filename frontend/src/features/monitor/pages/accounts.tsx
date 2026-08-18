@@ -102,6 +102,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
+import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 type AccountBatchAction = 'enable' | 'disable'
 type RecoveryGuardFilter = 'all' | 'true' | 'false'
@@ -134,9 +135,8 @@ export function AccountsPage() {
   )
   const { page, pageSize, search, status, upstreamStatus, recoveryGuarded } =
     accountsView.value
-  const updateAccountsView = (
-    patch: Partial<typeof defaultAccountsView>
-  ) => accountsView.setValue((current) => ({ ...current, ...patch }))
+  const updateAccountsView = (patch: Partial<typeof defaultAccountsView>) =>
+    accountsView.setValue((current) => ({ ...current, ...patch }))
   const [deferredSearch] = useDebouncedValue(search.trim())
   const committedQuery = useMemo(
     () => ({
@@ -172,6 +172,12 @@ export function AccountsPage() {
     tableQuery.status !== committedQuery.status ||
     tableQuery.upstreamStatus !== committedQuery.upstreamStatus ||
     tableQuery.recoveryGuarded !== committedQuery.recoveryGuarded
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.settings,
+    staleTime: 60_000,
+  })
+  const ssoProxyConfigured = Boolean(settings.data?.ssoProxyConfigured)
   const query = useQuery({
     queryKey: [
       'accounts',
@@ -222,10 +228,7 @@ export function AccountsPage() {
     queryFn: () => api.account(detailId!),
     enabled: detailOpen && detailId != null,
   })
-  const accounts = useMemo(
-    () => query.data?.items ?? [],
-    [query.data?.items]
-  )
+  const accounts = useMemo(() => query.data?.items ?? [], [query.data?.items])
   const selectableAccounts = useMemo(
     () =>
       accounts.filter(
@@ -504,8 +507,7 @@ export function AccountsPage() {
               ])
             )
           : current.filter(
-              (id) =>
-                !selectableAccounts.some((item) => Number(item.id) === id)
+              (id) => !selectableAccounts.some((item) => Number(item.id) === id)
             )
       )
       const disabledIds = selectableAccounts
@@ -515,8 +517,7 @@ export function AccountsPage() {
         checked
           ? Array.from(new Set([...current, ...disabledIds]))
           : current.filter(
-              (id) =>
-                !selectableAccounts.some((item) => Number(item.id) === id)
+              (id) => !selectableAccounts.some((item) => Number(item.id) === id)
             )
       )
     },
@@ -838,9 +839,7 @@ export function AccountsPage() {
         disabledAccountCount={selectedDisabledCount}
         profiles={profiles.data ?? []}
         profilesLoading={profiles.isFetching && !profiles.data}
-        profilesError={
-          profiles.isError ? getErrorMessage(profiles.error) : ''
-        }
+        profilesError={profiles.isError ? getErrorMessage(profiles.error) : ''}
         onRefreshProfiles={() => void profiles.refetch()}
         egress={egress.data?.items ?? []}
         egressLoading={egress.isFetching}
@@ -1009,11 +1008,12 @@ export function AccountsPage() {
         }}
         title={`检测 ${selected.length} 个账号的 SSO？`}
         desc={
-          <div className='space-y-2'>
+          <div className='space-y-3'>
             <p>将使用注册联动保存的 SSO 创建检测报告。</p>
             <p className='text-muted-foreground'>
               缺少 SSO 或存储值解析失败的账号会被跳过，并在创建结果中显示数量。
             </p>
+            {ssoProxyConfigured ? null : <SsoDirectConnectRiskNotice />}
           </div>
         }
         cancelBtnText='取消'
@@ -1026,7 +1026,7 @@ export function AccountsPage() {
           ) : (
             <>
               <ScanSearch />
-              确认检测
+              {ssoProxyConfigured ? '确认检测' : '仍要直连检测'}
             </>
           )
         }
@@ -1367,7 +1367,9 @@ const AccountRow = memo(function AccountRow({
         </span>
       </TableCell>
       <TableCell>
-        <div className='tabular-nums'>{formatNumber(assessment.latest_tps)}</div>
+        <div className='tabular-nums'>
+          {formatNumber(assessment.latest_tps)}
+        </div>
         <div className='text-xs text-muted-foreground'>
           max {formatNumber(assessment.max_tps)}
         </div>

@@ -13,6 +13,7 @@ export type SettingsForm = {
   grok2apiAdminPassword: string
   grok2apiHttpImpersonate: string
   grokRegisterWebhookToken: string
+  ssoProxy: string
   initialProbeOnRegister: boolean
   registerProbeStabilizationSeconds: number
   registerProbeProfileIds: string[]
@@ -80,6 +81,11 @@ export const secretMetadata: Record<
     placeholder: '留空保持当前令牌',
     configuredKey: 'grokRegisterWebhookTokenConfigured',
   },
+  ssoProxy: {
+    label: 'SSO 检测代理',
+    placeholder: '留空保持当前代理',
+    configuredKey: 'ssoProxyConfigured',
+  },
   wechatAppSecret: {
     label: '微信 AppSecret',
     placeholder: '留空保持当前 AppSecret',
@@ -139,6 +145,7 @@ export function toSettingsForm(
     grok2apiAdminPassword: settings.grok2apiAdminPassword,
     grok2apiHttpImpersonate: settings.grok2apiHttpImpersonate,
     grokRegisterWebhookToken: settings.grokRegisterWebhookToken,
+    ssoProxy: settings.ssoProxy ?? '',
     initialProbeOnRegister: settings.initialProbeOnRegister,
     registerProbeStabilizationSeconds:
       settings.registerProbeStabilizationSeconds ?? 15,
@@ -264,6 +271,13 @@ export function buildSettingsPayload(
     payload.grokRegisterWebhookToken = form.grokRegisterWebhookToken
   }
   if (
+    !clearSecrets.includes('ssoProxy') &&
+    form.ssoProxy.trim() &&
+    form.ssoProxy !== original.ssoProxy
+  ) {
+    payload.ssoProxy = form.ssoProxy
+  }
+  if (
     !clearSecrets.includes('wechatAppSecret') &&
     form.wechatAppSecret.trim() &&
     form.wechatAppSecret !== original.wechatAppSecret
@@ -286,6 +300,7 @@ export function mergeEditableSettings(
     grokRegisterWebhookToken: clearSecrets.includes('grokRegisterWebhookToken')
       ? ''
       : form.grokRegisterWebhookToken,
+    ssoProxy: clearSecrets.includes('ssoProxy') ? '' : form.ssoProxy,
     wechatAppSecret: clearSecrets.includes('wechatAppSecret')
       ? ''
       : form.wechatAppSecret,

@@ -57,6 +57,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { ServerPagination } from '@/components/server-pagination'
+import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 const REPORT_PAGE_SIZES = [20, 50, 100]
 const ACTIVE_REPORT_STATUSES = new Set<SsoReportStatus>(['queued', 'running'])
@@ -67,6 +68,11 @@ export function SsoReportsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [viewingId, setViewingId] = useState<string | null>(null)
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.settings,
+    staleTime: 60_000,
+  })
   const reports = useQuery({
     queryKey: ['sso-reports'],
     queryFn: api.ssoReports,
@@ -229,6 +235,7 @@ export function SsoReportsPage() {
         <CreateReportDialog
           open
           pending={createMutation.isPending}
+          ssoProxyConfigured={Boolean(settings.data?.ssoProxyConfigured)}
           onOpenChange={(open) =>
             !createMutation.isPending && setCreateOpen(open)
           }
@@ -446,11 +453,13 @@ function Metric({
 function CreateReportDialog({
   open,
   pending,
+  ssoProxyConfigured,
   onOpenChange,
   onSubmit,
 }: {
   open: boolean
   pending: boolean
+  ssoProxyConfigured: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (body: {
     name: string
@@ -463,6 +472,7 @@ function CreateReportDialog({
   const [name, setName] = useState('')
   const [content, setContent] = useState('')
   const [proxy, setProxy] = useState('')
+  const [riskOpen, setRiskOpen] = useState(false)
   const [concurrencyInput, setConcurrencyInput] = useState('8')
   const [timeoutInput, setTimeoutInput] = useState('20')
   const concurrency = Number(concurrencyInput)
@@ -471,152 +481,193 @@ function CreateReportDialog({
     () => content.split(/\r?\n/).filter((line) => line.trim()).length,
     [content]
   )
+  const directConnect = !ssoProxyConfigured && !proxy.trim()
+  const submitBody = () => {
+    if (lineCount <= 0) return
+    const body = {
+      name,
+      ssoContent: content,
+      proxy,
+      concurrency,
+      requestTimeoutSeconds,
+    }
+    if (directConnect) {
+      setRiskOpen(true)
+      return
+    }
+    onSubmit(body)
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        size='wide'
-        onInteractOutside={(event) => pending && event.preventDefault()}
-        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setRiskOpen(false)
+          onOpenChange(nextOpen)
+        }}
       >
-        <DialogHeader>
-          <DialogTitle>新建 SSO 检测</DialogTitle>
-          <DialogDescription>
-            在本页配置并跟踪独立 SSO
-            任务；提交后立即进入后台队列，不会进入探针任务中心。
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          id='create-sso-report-form'
-          className='grid min-h-0 gap-4'
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (lineCount > 0) {
-              onSubmit({
-                name,
-                ssoContent: content,
-                proxy,
-                concurrency,
-                requestTimeoutSeconds,
-              })
-            }
-          }}
+        <DialogContent
+          size='wide'
+          onInteractOutside={(event) => pending && event.preventDefault()}
+          onEscapeKeyDown={(event) => pending && event.preventDefault()}
         >
-          <div className='grid gap-4 md:grid-cols-2'>
-            <div className='space-y-2'>
-              <Label htmlFor='sso-report-name'>报告名称</Label>
-              <Input
-                id='sso-report-name'
-                value={name}
-                maxLength={160}
-                placeholder='例如：8 月新账号 SSO 检测'
-                disabled={pending}
-                onChange={(event) => setName(event.target.value)}
-              />
+          <DialogHeader>
+            <DialogTitle>新建 SSO 检测</DialogTitle>
+            <DialogDescription>
+              在本页配置并跟踪独立 SSO
+              任务；提交后立即进入后台队列，不会进入探针任务中心。
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id='create-sso-report-form'
+            className='grid min-h-0 gap-4'
+            onSubmit={(event) => {
+              event.preventDefault()
+              submitBody()
+            }}
+          >
+            <div className='grid gap-4 md:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='sso-report-name'>报告名称</Label>
+                <Input
+                  id='sso-report-name'
+                  value={name}
+                  maxLength={160}
+                  placeholder='例如：8 月新账号 SSO 检测'
+                  disabled={pending}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
+              <div className='space-y-2'>
+                <Label htmlFor='sso-report-proxy'>代理（选填）</Label>
+                <Input
+                  id='sso-report-proxy'
+                  value={proxy}
+                  maxLength={8000}
+                  placeholder='host:port 或 username:password@host:port'
+                  autoComplete='off'
+                  spellCheck={false}
+                  disabled={pending}
+                  onChange={(event) => setProxy(event.target.value)}
+                />
+                <p className='text-xs text-muted-foreground'>
+                  也兼容 host:port:username:password 和带 http://
+                  的地址。留空则使用系统全局代理
+                  {ssoProxyConfigured ? '（已配置）' : '（当前未配置）'}
+                  ；代理凭据不会写入报告。
+                </p>
+              </div>
             </div>
-            <div className='space-y-2'>
-              <Label htmlFor='sso-report-proxy'>代理（选填）</Label>
-              <Input
-                id='sso-report-proxy'
-                value={proxy}
-                maxLength={8000}
-                placeholder='host:port 或 username:password@host:port'
-                autoComplete='off'
+            {directConnect ? <SsoDirectConnectRiskNotice /> : null}
+            <div className='grid gap-4 rounded-xl border bg-muted/15 p-4 md:grid-cols-2'>
+              <div className='space-y-2'>
+                <Label htmlFor='sso-report-concurrency'>任务并发数</Label>
+                <Input
+                  id='sso-report-concurrency'
+                  type='number'
+                  value={concurrencyInput}
+                  min={1}
+                  max={32}
+                  step={1}
+                  disabled={pending}
+                  onChange={(event) => setConcurrencyInput(event.target.value)}
+                />
+                <p className='text-xs leading-5 text-muted-foreground'>
+                  同一批次同时检测的 SSO 数量，范围 1–32，推荐
+                  8。数值越高完成越快，但代理和上游压力也越高。
+                </p>
+              </div>
+              <div className='space-y-2'>
+                <Label htmlFor='sso-report-timeout'>单请求超时（秒）</Label>
+                <Input
+                  id='sso-report-timeout'
+                  type='number'
+                  value={timeoutInput}
+                  min={5}
+                  max={120}
+                  step={1}
+                  disabled={pending}
+                  onChange={(event) => setTimeoutInput(event.target.value)}
+                />
+                <p className='text-xs leading-5 text-muted-foreground'>
+                  每个 SSO 请求最长等待时间，范围 5–120 秒，推荐
+                  20。代理较慢时可适当提高。
+                </p>
+              </div>
+            </div>
+            <div className='min-h-0 space-y-2'>
+              <div className='flex items-center justify-between gap-3'>
+                <Label htmlFor='sso-report-content'>SSO 列表</Label>
+                <Badge variant='secondary'>{lineCount} 行</Badge>
+              </div>
+              <Textarea
+                id='sso-report-content'
+                className='min-h-[20rem] resize-y font-mono text-xs leading-5'
+                value={content}
+                placeholder={'SSO_TOKEN_1\naccount@example.com----SSO_TOKEN_2'}
                 spellCheck={false}
                 disabled={pending}
-                onChange={(event) => setProxy(event.target.value)}
+                onChange={(event) => setContent(event.target.value)}
               />
               <p className='text-xs text-muted-foreground'>
-                也兼容 host:port:username:password 和带 http://
-                的地址；留空则直连。代理凭据不会写入报告。
+                每行一个账号；支持原始 SSO、sso=TOKEN、email----sso 和
+                email----password----sso。SSO 仅保存在任务内存中。
               </p>
             </div>
-          </div>
-          <div className='grid gap-4 rounded-xl border bg-muted/15 p-4 md:grid-cols-2'>
-            <div className='space-y-2'>
-              <Label htmlFor='sso-report-concurrency'>任务并发数</Label>
-              <Input
-                id='sso-report-concurrency'
-                type='number'
-                value={concurrencyInput}
-                min={1}
-                max={32}
-                step={1}
-                disabled={pending}
-                onChange={(event) => setConcurrencyInput(event.target.value)}
-              />
-              <p className='text-xs leading-5 text-muted-foreground'>
-                同一批次同时检测的 SSO 数量，范围 1–32，推荐
-                8。数值越高完成越快，但代理和上游压力也越高。
-              </p>
-            </div>
-            <div className='space-y-2'>
-              <Label htmlFor='sso-report-timeout'>单请求超时（秒）</Label>
-              <Input
-                id='sso-report-timeout'
-                type='number'
-                value={timeoutInput}
-                min={5}
-                max={120}
-                step={1}
-                disabled={pending}
-                onChange={(event) => setTimeoutInput(event.target.value)}
-              />
-              <p className='text-xs leading-5 text-muted-foreground'>
-                每个 SSO 请求最长等待时间，范围 5–120 秒，推荐
-                20。代理较慢时可适当提高。
-              </p>
-            </div>
-          </div>
-          <div className='min-h-0 space-y-2'>
-            <div className='flex items-center justify-between gap-3'>
-              <Label htmlFor='sso-report-content'>SSO 列表</Label>
-              <Badge variant='secondary'>{lineCount} 行</Badge>
-            </div>
-            <Textarea
-              id='sso-report-content'
-              className='min-h-[20rem] resize-y font-mono text-xs leading-5'
-              value={content}
-              placeholder={'SSO_TOKEN_1\naccount@example.com----SSO_TOKEN_2'}
-              spellCheck={false}
+          </form>
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
               disabled={pending}
-              onChange={(event) => setContent(event.target.value)}
-            />
-            <p className='text-xs text-muted-foreground'>
-              每行一个账号；支持原始 SSO、sso=TOKEN、email----sso 和
-              email----password----sso。SSO 仅保存在任务内存中。
-            </p>
-          </div>
-        </form>
-        <DialogFooter>
-          <Button
-            type='button'
-            variant='outline'
-            disabled={pending}
-            onClick={() => onOpenChange(false)}
-          >
-            取消
-          </Button>
-          <Button
-            type='submit'
-            form='create-sso-report-form'
-            disabled={
-              pending ||
-              lineCount === 0 ||
-              lineCount > 1000 ||
-              !Number.isInteger(concurrency) ||
-              concurrency < 1 ||
-              concurrency > 32 ||
-              !Number.isInteger(requestTimeoutSeconds) ||
-              requestTimeoutSeconds < 5 ||
-              requestTimeoutSeconds > 120
-            }
-          >
-            {pending ? <Loader2 className='animate-spin' /> : <FileSearch2 />}
-            {pending ? '正在创建任务' : '提交 ' + lineCount + ' 个 SSO'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type='submit'
+              form='create-sso-report-form'
+              disabled={
+                pending ||
+                lineCount === 0 ||
+                lineCount > 1000 ||
+                !Number.isInteger(concurrency) ||
+                concurrency < 1 ||
+                concurrency > 32 ||
+                !Number.isInteger(requestTimeoutSeconds) ||
+                requestTimeoutSeconds < 5 ||
+                requestTimeoutSeconds > 120
+              }
+            >
+              {pending ? <Loader2 className='animate-spin' /> : <FileSearch2 />}
+              {pending ? '正在创建任务' : '提交 ' + lineCount + ' 个 SSO'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={riskOpen}
+        onOpenChange={(nextOpen) => {
+          if (!pending) setRiskOpen(nextOpen)
+        }}
+        title='未配置 SSO 检测代理，仍要直连检测？'
+        desc={<SsoDirectConnectRiskNotice />}
+        cancelBtnText='返回填写'
+        confirmText={pending ? '正在创建任务' : '仍要直连检测'}
+        destructive
+        isLoading={pending}
+        handleConfirm={() => {
+          setRiskOpen(false)
+          onSubmit({
+            name,
+            ssoContent: content,
+            proxy,
+            concurrency,
+            requestTimeoutSeconds,
+          })
+        }}
+      />
+    </>
   )
 }
 

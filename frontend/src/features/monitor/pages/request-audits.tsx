@@ -130,6 +130,7 @@ import { AccountSampleExplorer } from '@/features/monitor/components/account-sam
 import { AuthStatusIndicator } from '@/features/monitor/components/account-state-indicators'
 import { buildEgressNodeNameMap } from '@/features/monitor/components/egress-node-names'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
+import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 const riskVariant: Record<
   RequestAuditRiskLevel,
@@ -188,6 +189,8 @@ const windowOptions: Array<{
   label: string
 }> = [
   { value: 'today', label: '当天' },
+  { value: '1h', label: '最近 1 小时' },
+  { value: '3h', label: '最近 3 小时' },
   { value: '6h', label: '最近 6 小时' },
   { value: '24h', label: '最近 24 小时' },
   { value: '7d', label: '最近 7 天' },
@@ -380,8 +383,7 @@ function normalizeRequestAuditWindow(
     Number.isNaN(end.getTime()) ||
     start >= end ||
     end.getTime() - start.getTime() > REQUEST_AUDIT_MAX_WINDOW_MS ||
-    start.getTime() < now - REQUEST_AUDIT_MAX_WINDOW_MS ||
-    end.getTime() > now + 60_000
+    start.getTime() < now - REQUEST_AUDIT_MAX_WINDOW_MS
   ) {
     return null
   }
@@ -1172,6 +1174,12 @@ export function RequestAuditsPage() {
     [selectedWindow]
   )
 
+  const settingsQuery = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.settings,
+    staleTime: 60_000,
+  })
+  const ssoProxyConfigured = Boolean(settingsQuery.data?.ssoProxyConfigured)
   const statusQuery = useQuery({
     queryKey: ['request-audits', 'status'],
     queryFn: api.requestAuditStatus,
@@ -1827,10 +1835,6 @@ export function RequestAuditsPage() {
     const now = Date.now()
     if (start.getTime() < now - REQUEST_AUDIT_MAX_WINDOW_MS) {
       toast.error('开始时间需位于最近 90 天内')
-      return
-    }
-    if (end.getTime() > now + 60 * 1000) {
-      toast.error('结束时间不能晚于当前时间')
       return
     }
     const nextWindow: RequestAuditWindowInput = {
@@ -2964,8 +2968,8 @@ export function RequestAuditsPage() {
               自定义审计时间窗口
             </DialogTitle>
             <DialogDescription>
-              支持最近 90
-              天内任意窗口。应用后页面先读取本地投影，点击扫描才访问上游审计接口。
+              开始时间需位于最近 90 天内，窗口最长 90
+              天；结束时间可以晚于现在。应用后页面先读取本地投影，点击扫描才访问上游审计接口。
             </DialogDescription>
           </DialogHeader>
           <div className='grid gap-4 py-2 sm:grid-cols-2'>
@@ -3017,7 +3021,7 @@ export function RequestAuditsPage() {
         }}
         title={`关联检查 ${bulkAction?.accountIds.length ?? 0} 个账号的 SSO？`}
         desc={
-          <div className='space-y-2'>
+          <div className='space-y-3'>
             <p>
               将从
               {bulkAction?.source === 'risk' ? '风险定位' : '请求流水'}
@@ -3026,6 +3030,7 @@ export function RequestAuditsPage() {
             <p className='text-muted-foreground'>
               账号会按 ID 去重；缺少注册联动 SSO 的账号会被标记并跳过。
             </p>
+            {ssoProxyConfigured ? null : <SsoDirectConnectRiskNotice />}
           </div>
         }
         cancelBtnText='取消'
@@ -3038,7 +3043,7 @@ export function RequestAuditsPage() {
           ) : (
             <>
               <ScanSearch />
-              创建关联检查
+              {ssoProxyConfigured ? '创建关联检查' : '仍要直连检查'}
             </>
           )
         }
