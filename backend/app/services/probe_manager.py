@@ -164,6 +164,10 @@ class ProbeManager:
             risk_watch_floor=self.settings.risk_watch_floor,
             risk_suspect_floor=self.settings.risk_suspect_floor,
             risk_high_floor=self.settings.risk_high_floor,
+            reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
+            media_input_observe_enabled=self.settings.media_input_observe_enabled,
+            request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
+            risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
         )
         self._desired_worker_concurrency = self.settings.probe_worker_concurrency
         if not self._started:
@@ -1019,6 +1023,14 @@ class ProbeManager:
             return assessment
         if assessment.get("disabled_by_monitor"):
             return assessment
+        if self.account_service is not None:
+            result = await self.account_service.apply_auto_quarantine(
+                account_id,
+                source="probe",
+                note="风险周期连续强异常达到自动隔离阈值",
+                risk_score=float(assessment.get("risk_score") or 0),
+            )
+            return result.get("assessment") or assessment
         account = await self.client.get_account(account_id)
         was_enabled = bool(account.get("enabled"))
         if was_enabled:
@@ -1144,6 +1156,9 @@ class ProbeManager:
             "response_text": result.response_text if result is not None else "",
             "usage": usage,
             "classification": "error",
+            "risk_rule_id": "http_error",
+            "risk_rule_ids": ["http_error"],
+            "risk_reasons": ["请求错误"],
             "severity": 1,
             "error": message[:4000],
             "created_at": utc_now(),

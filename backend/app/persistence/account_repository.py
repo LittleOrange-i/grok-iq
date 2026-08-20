@@ -6,7 +6,14 @@ from typing import Any
 
 from sqlalchemy import case, func, select
 
-from app.analyzer import Thresholds, maximum_anomaly_streak, risk_status
+from app.analyzer import (
+    Thresholds,
+    active_anomaly_classifications,
+    aggregate_rule_reasons,
+    maximum_anomaly_streak,
+    risk_status,
+    rule_metadata,
+)
 from app.core.clock import ensure_utc, utc_now
 
 from .database import Database
@@ -19,8 +26,12 @@ from .models import (
     model_dict,
 )
 
-ANOMALY_NAMES = {"elevated", "buffered_soft", "buffered_hard", "fast_risk", "marker_miss"}
-HARD_ANOMALY_NAMES = {"buffered_hard", "fast_risk", "marker_miss"}
+ANOMALY_NAMES = active_anomaly_classifications()
+HARD_ANOMALY_NAMES = {
+    name
+    for name in ANOMALY_NAMES
+    if ((metadata := rule_metadata(name)) is not None and bool(metadata.hard))
+}
 FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
 ALL_EGRESS_RISK_MIGRATION_KEY = "all_egress_risk_formula_v1"
 
@@ -143,21 +154,70 @@ class AccountRepository:
                 )
                 .order_by(ProbeSample.created_at.asc(), ProbeSample.id.asc())
             ).all()
-            anomalies = [row for row in rows if row.classification in ANOMALY_NAMES]
-            hard = [row for row in anomalies if row.classification in HARD_ANOMALY_NAMES]
+            anomaly_names = active_anomaly_classifications(thresholds)
+            anomalies = [
+                row
+                for row in rows
+                if row.classification in anomaly_names
+            ]
+            hard = [
+                row
+                for row in anomalies
+                if (
+                    (metadata := rule_metadata(row.classification)) is not None
+                    and bool(metadata.hard)
+                )
+            ]
             fast = [row for row in anomalies if row.classification == "fast_risk"]
             marker = [row for row in anomalies if row.classification == "marker_miss"]
+            reasoning_zero = [
+                row for row in anomalies if row.classification == "reasoning_zero"
+            ]
             egress_count = len({self._observed_egress_key(row) for row in anomalies})
-            streak = maximum_anomaly_streak(row.classification for row in rows)
+            streak = maximum_anomaly_streak(
+                (row.classification for row in rows),
+                anomaly_names,
+            )
             measurable = [row for row in rows if row.status == "done" and row.tps > 0]
             status, score, reasons = risk_status(
                 anomaly_count=len(anomalies),
                 hard_count=len(hard),
                 fast_count=len(fast),
                 marker_miss_count=len(marker),
+                reasoning_zero_count=len(reasoning_zero),
                 anomaly_streak=streak,
                 sample_count=len(measurable),
                 thresholds=thresholds,
+            )
+            rule_counts: dict[str, int] = {}
+            for row in anomalies:
+                rule_counts[row.classification] = (
+                    rule_counts.get(row.classification, 0) + 1
+                )
+            generic_rule_reasons = aggregate_rule_reasons(rule_counts, thresholds)
+            legacy_special_reasons = {
+                "fast_risk": f"持续生成型高速样本 {len(fast)} 次",
+                "marker_miss": f"预期标记缺失 {len(marker)} 次",
+                "reasoning_zero": (
+                    f"成功请求思考输出为 0 共 {len(reasoning_zero)} 次"
+                ),
+            }
+            reasons = list(
+                dict.fromkeys(
+                    [
+                        *[
+                            reason
+                            for reason in reasons
+                            if reason not in legacy_special_reasons.values()
+                        ],
+                        *generic_rule_reasons,
+                        *(
+                            [f"强降智信号 {len(hard)} 次"]
+                            if hard
+                            else []
+                        ),
+                    ]
+                )
             )
             assessment = session.get(AccountAssessment, account_id)
             if assessment is None:
@@ -193,6 +253,7 @@ class AccountRepository:
             assessment.hard_anomaly_count = len(hard)
             assessment.fast_risk_count = len(fast)
             assessment.marker_miss_count = len(marker)
+            assessment.reasoning_zero_count = len(reasoning_zero)
             assessment.distinct_egress_count = egress_count
             assessment.anomaly_streak = streak
             assessment.avg_tps = sum(row.tps for row in measurable) / len(measurable) if measurable else 0.0

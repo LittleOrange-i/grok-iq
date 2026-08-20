@@ -59,6 +59,7 @@ class SsoCredential:
     token: str = field(repr=False)
     expected_email: str = ""
     label: str = ""
+    account_id: int | None = None
 
 
 class SsoCredentialLoader:
@@ -248,5 +249,5 @@ class SsoChecker:
             "risk": risk,
             "event": event,
             "denied": denied,
-            "flagged": source != 0,
+            "flagged": source not in {None, 0},
         }

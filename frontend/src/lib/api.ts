@@ -159,6 +159,7 @@ export type SsoReportItem = {
 }
 
 export type SsoCheckResult = {
+  account_id?: number | null
   label: string
   expected_email: string
   checked_at: string
@@ -196,6 +197,10 @@ export type SsoCheckResult = {
   }
   error: string
   response_ms: number
+  account_action?: {
+    status: string
+    error?: string
+  }
 }
 
 export type SsoReportDetail = SsoReportItem & {
@@ -318,8 +323,34 @@ export type UpstreamAccount = {
   egressAssignmentMode?: string
   buildBotFlagged?: boolean
   ssoAvailable: boolean
+  ssoRiskStatus?:
+    | 'missing'
+    | 'unverified'
+    | 'pending'
+    | 'clean'
+    | 'flagged'
+    | 'failed'
+    | string
+  ssoRiskCheckedAt?: string | null
+  ssoBotFlagged?: boolean
+  ssoBotSource?: number | null
+  ssoPreDisableAction?: string
+  egressRecommendation?: EgressRecommendation | null
   quota?: UpstreamQuota
   assessment: Assessment
+}
+
+export type EgressRecommendation = {
+  type: 'change_egress' | 'none' | string
+  label: string
+  reason: string
+  highRiskCount?: number
+  maxTps?: number
+  ssoVerdict?: string
+  checkedAt?: string | null
+  priorityAction?: string
+  priority?: number | null
+  egressNodeIds?: number[]
 }
 
 export type AccountOption = {
@@ -330,6 +361,11 @@ export type AccountOption = {
   authStatus?: string
   egressNodeId?: string | null
   egressAssignmentMode?: string
+  ssoRiskStatus?: string
+  ssoRiskCheckedAt?: string | null
+  ssoBotFlagged?: boolean
+  ssoPreDisableAction?: string
+  egressRecommendation?: EgressRecommendation | null
 }
 
 type AccountTargetSummary = {
@@ -429,6 +465,8 @@ export type RequestAuditRecord = {
   statusCode: number
   streaming: boolean
   inputTokens: number
+  mediaInputImages: number
+  hasMediaInput: boolean
   outputTokens: number
   reasoningTokens: number
   totalTokens: number
@@ -437,6 +475,10 @@ export type RequestAuditRecord = {
   tps: number | null
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
+  riskRuleId: string
+  riskRuleIds: string[]
+  reasoningZeroRisk: boolean
+  preDisableCheck: RequestAuditPreDisableCheck | null
   probeSampleCount: number
   probeSamples: RequestAuditProbeContext[]
   createdAt: string | null
@@ -467,6 +509,61 @@ export type RequestAuditProbeContext = {
   }
 }
 
+export type RequestAuditPreDisableCheck = {
+  auditId: string
+  auditCreatedAt: string | null
+  auditTps: number
+  status:
+    | 'pending'
+    | 'checking'
+    | 'flagged'
+    | 'clean'
+    | 'missing_sso'
+    | 'proxy_required'
+    | 'invalid_session'
+    | 'email_mismatch'
+    | 'check_failed'
+    | 'isolation_disabled'
+    | string
+  ssoVerdict: string
+  proxyUsed: boolean
+  validSession: boolean | null
+  emailMatch: boolean | null
+  statusCode: number
+  responseMs: number
+  checkError: string
+  botFlag: {
+    found: boolean
+    source: number | null
+    details: string
+    policy: string
+    risk: number | null
+    event: string
+    denied: boolean
+    flagged: boolean
+  }
+  actionStatus:
+    | 'pending'
+    | 'disabled'
+    | 'already_disabled'
+    | 'already_quarantined'
+    | 'task_protected'
+    | 'auto_quarantine_disabled'
+    | 'action_failed'
+    | 'deprioritized'
+    | 'already_deprioritized'
+    | 'deprioritize_disabled'
+    | 'deprioritize_failed'
+    | 'not_required'
+    | string
+  actionError: string
+  egressRecommendation?: EgressRecommendation | null
+  previousPriority?: number | null
+  appliedPriority?: number | null
+  checkedAt: string | null
+  updatedAt: string | null
+}
+
 export type RequestAuditAccountRisk = {
   accountId: number | null
   accountName: string
@@ -481,6 +578,10 @@ export type RequestAuditAccountRisk = {
   highRiskCount: number
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
+  reasoningZeroCount: number
+  mediaInputCount: number
+  mediaInputImages: number
+  probeReasoningZeroCount: number
   egressNodeIds: number[]
   egressNodes: string[]
   monitorStatus: string
@@ -493,6 +594,9 @@ export type RequestAuditAccountRisk = {
   upstreamEnabled: boolean | null
   upstreamAuthStatus: string
   lastSeenAt: string | null
+  preDisableCheck: RequestAuditPreDisableCheck | null
+  egressRecommendation?: EgressRecommendation | null
+  priorityAction?: string
 }
 
 export type RequestAuditNodeRisk = {
@@ -513,10 +617,15 @@ export type RequestAuditNodeRisk = {
   highRiskCount: number
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
+  reasoningZeroCount: number
+  mediaInputCount: number
+  mediaInputImages: number
   accountCount: number
   riskAccountCount: number
   accounts: RequestAuditAccountRisk[]
   lastSeenAt: string | null
+  egressRecommendation?: EgressRecommendation | null
+  egressRecommendationCount?: number
 }
 
 export type RequestAuditSummary = {
@@ -526,6 +635,7 @@ export type RequestAuditSummary = {
   averageTps: number
   p95Tps: number
   maxTps: number
+  reasoningZeroRequests: number
   watchAccounts: number
   highRiskAccounts: number
   accountCount: number
@@ -538,6 +648,8 @@ export type RequestAuditThresholds = {
   watch: number
   high: number
 }
+
+export type RequestAuditRule = RiskRuleDefinition
 
 export type RequestAuditScanState = {
   day: string
@@ -579,6 +691,12 @@ export type RequestAuditConfig = {
   liveRefreshEnabled: boolean
   liveRefreshSeconds: number
   riskEnabled: boolean
+  reasoningZeroRiskEnabled: boolean
+  mediaInputObserveEnabled: boolean
+  rules: RiskRuleDefinition[]
+  tpsOnlyDeprioritizeEnabled: boolean
+  tpsOnlyPriority: number
+  tpsOnlyMinCount: number
   isolationEnabled: boolean
   retentionDays: number
 }
@@ -627,6 +745,15 @@ export type RequestAuditScanResult = {
   skipped?: boolean
   activity?: RequestAuditActivity
   recommendedIntervalSeconds?: number
+  preDisableChecks?: {
+    requested: number
+    flagged: number
+    clean: number
+    skipped: number
+    disabled: number
+    deprioritized: number
+    failed: number
+  }
 }
 
 export type RequestAuditPage = {
@@ -928,8 +1055,34 @@ export type ProbeSample = {
   response_sha256?: string
   response_text: string
   classification: string
+  risk_rule_id?: string
+  risk_rule_ids?: string[]
+  risk_reasons?: string[]
   error: string
   created_at: string
+}
+
+export type RiskRuleDefinition = {
+  id: string
+  label: string
+  description: string
+  scopes: string[]
+  priority: number
+  enabled: boolean
+  configurable: boolean
+  defaultEnabled: boolean
+  classification: string
+  anomalous: boolean
+  hard: boolean
+  auditActionMode: string
+  auditMinCount: number
+}
+
+export type RiskRuleOverride = {
+  id: string
+  enabled?: boolean
+  priority?: number
+  [key: string]: string | number | boolean | null | undefined
 }
 
 export type RuntimeSettings = {
@@ -968,6 +1121,13 @@ export type RuntimeSettings = {
   requestAuditLiveRefreshEnabled: boolean
   requestAuditLiveRefreshSeconds: number
   requestAuditRiskEnabled: boolean
+  reasoningZeroRiskEnabled: boolean
+  mediaInputObserveEnabled: boolean
+  riskRuleOverrides: RiskRuleOverride[]
+  riskRules: RiskRuleDefinition[]
+  requestAuditTpsOnlyDeprioritizeEnabled: boolean
+  requestAuditTpsOnlyPriority: number
+  requestAuditTpsOnlyMinCount: number
   requestAuditIsolationEnabled: boolean
   requestAuditRetentionDays: number
   probeWorkerConcurrency: number
@@ -1060,6 +1220,12 @@ export type RuntimeSettingsUpdate = Partial<
     | 'requestAuditLiveRefreshEnabled'
     | 'requestAuditLiveRefreshSeconds'
     | 'requestAuditRiskEnabled'
+    | 'reasoningZeroRiskEnabled'
+    | 'mediaInputObserveEnabled'
+    | 'riskRuleOverrides'
+    | 'requestAuditTpsOnlyDeprioritizeEnabled'
+    | 'requestAuditTpsOnlyPriority'
+    | 'requestAuditTpsOnlyMinCount'
     | 'requestAuditIsolationEnabled'
     | 'requestAuditRetentionDays'
     | 'probeWorkerConcurrency'
@@ -1147,6 +1313,12 @@ type RuntimeSettingsWire = Omit<
   | 'requestAuditLiveRefreshEnabled'
   | 'requestAuditLiveRefreshSeconds'
   | 'requestAuditRiskEnabled'
+  | 'reasoningZeroRiskEnabled'
+  | 'riskRuleOverrides'
+  | 'riskRules'
+  | 'requestAuditTpsOnlyDeprioritizeEnabled'
+  | 'requestAuditTpsOnlyPriority'
+  | 'requestAuditTpsOnlyMinCount'
   | 'requestAuditIsolationEnabled'
   | 'requestAuditRetentionDays'
 > & {
@@ -1192,6 +1364,13 @@ type RuntimeSettingsWire = Omit<
   requestAuditLiveRefreshEnabled?: boolean
   requestAuditLiveRefreshSeconds?: number
   requestAuditRiskEnabled?: boolean
+  reasoningZeroRiskEnabled?: boolean
+  mediaInputObserveEnabled?: boolean
+  riskRuleOverrides?: RiskRuleOverride[]
+  riskRules?: RiskRuleDefinition[]
+  requestAuditTpsOnlyDeprioritizeEnabled?: boolean
+  requestAuditTpsOnlyPriority?: number
+  requestAuditTpsOnlyMinCount?: number
   requestAuditIsolationEnabled?: boolean
   requestAuditRetentionDays?: number
 }
@@ -1234,6 +1413,14 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       value.requestAuditLiveRefreshEnabled ?? true,
     requestAuditLiveRefreshSeconds: value.requestAuditLiveRefreshSeconds ?? 30,
     requestAuditRiskEnabled: value.requestAuditRiskEnabled ?? true,
+    reasoningZeroRiskEnabled: value.reasoningZeroRiskEnabled ?? true,
+    mediaInputObserveEnabled: value.mediaInputObserveEnabled ?? true,
+    riskRuleOverrides: value.riskRuleOverrides ?? [],
+    riskRules: value.riskRules ?? [],
+    requestAuditTpsOnlyDeprioritizeEnabled:
+      value.requestAuditTpsOnlyDeprioritizeEnabled ?? true,
+    requestAuditTpsOnlyPriority: value.requestAuditTpsOnlyPriority ?? -1000000,
+    requestAuditTpsOnlyMinCount: value.requestAuditTpsOnlyMinCount ?? 2,
     requestAuditIsolationEnabled: value.requestAuditIsolationEnabled ?? true,
     requestAuditRetentionDays: value.requestAuditRetentionDays ?? 90,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,

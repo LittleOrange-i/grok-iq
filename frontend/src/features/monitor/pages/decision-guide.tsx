@@ -62,6 +62,7 @@ type Thresholds = Pick<
   | 'bufferFirstTokenShare'
   | 'minGenerationMs'
   | 'minimumOutputTokens'
+  | 'reasoningZeroRiskEnabled'
   | 'autoQuarantine'
   | 'quarantineMinutes'
 >
@@ -98,6 +99,7 @@ const defaultThresholds: Thresholds = {
   bufferFirstTokenShare: 0.85,
   minGenerationMs: 250,
   minimumOutputTokens: 32,
+  reasoningZeroRiskEnabled: true,
   autoQuarantine: false,
   quarantineMinutes: 30,
 }
@@ -498,6 +500,16 @@ function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
       badge: <StatusBadge value='insufficient' />,
       summary: `输出 Token 少于 ${thresholds.minimumOutputTokens}，证据长度不足。`,
       conditions: ['不记录降智信号', '不会打断既有连续信号序列'],
+    },
+    {
+      icon: Activity,
+      title: '思考输出为 0',
+      badge: <StatusBadge value='reasoning_zero' />,
+      summary: '请求成功且有可见输出，但 reasoning Token 为 0。',
+      conditions: thresholds.reasoningZeroRiskEnabled
+        ? ['记录 1 次疑似降智', '同时计为强降智信号']
+        : ['当前规则已关闭'],
+      tone: thresholds.reasoningZeroRiskEnabled ? 'danger' : 'default',
     },
     {
       icon: CheckCircle2,

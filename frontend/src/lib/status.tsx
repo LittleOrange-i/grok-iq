@@ -20,6 +20,7 @@ const labels: Record<string, string> = {
   buffered_hard: '强缓冲降智',
   fast_risk: '强降智信号',
   marker_miss: '预期缺失',
+  reasoning_zero: '思考输出为 0',
   error: '错误',
   unmeasurable: '无法测量',
   insufficient: '样本不足',

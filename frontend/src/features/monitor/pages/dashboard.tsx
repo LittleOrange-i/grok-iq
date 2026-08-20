@@ -20,6 +20,7 @@ import {
 import { api, type ProbeRun, type UpstreamAccount } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { formatDate, formatNumber } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { InfoTooltip } from '@/components/info-tooltip'
@@ -229,6 +230,16 @@ export function DashboardPage() {
                 </div>
                 <div className='text-right'>
                   <StatusBadge value={account.assessment?.monitor_status} />
+                  {account.ssoRiskStatus === 'flagged' && (
+                    <Badge variant='destructive' className='mt-1 ml-1'>
+                      SSO 已标记
+                    </Badge>
+                  )}
+                  {account.egressRecommendation?.type === 'change_egress' && (
+                    <Badge variant='warning' className='mt-1 ml-1'>
+                      建议换出口
+                    </Badge>
+                  )}
                   <div className='mt-1 text-xs text-muted-foreground tabular-nums'>
                     {formatNumber(account.assessment?.risk_score)} 分
                   </div>

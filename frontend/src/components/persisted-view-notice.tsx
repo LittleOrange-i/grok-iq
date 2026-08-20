@@ -18,7 +18,10 @@ export function PersistedViewNotice({
           <div className='font-medium text-foreground'>
             {restored ? '已恢复上次查看视图' : '当前为自定义视图'}
           </div>
-          <div className='mt-0.5 truncate text-muted-foreground' title={summary}>
+          <div
+            className='mt-0.5 truncate text-muted-foreground'
+            title={summary}
+          >
             {summary}
           </div>
         </div>

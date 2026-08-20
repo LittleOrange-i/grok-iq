@@ -101,6 +101,23 @@ class Settings(BaseSettings):
     request_audit_live_refresh_enabled: bool = True
     request_audit_live_refresh_seconds: int = Field(default=30, ge=10, le=300)
     request_audit_risk_enabled: bool = True
+    # A successful response with no reasoning tokens is a degradation signal
+    # even when throughput remains below the TPS thresholds.
+    reasoning_zero_risk_enabled: bool = True
+    media_input_observe_enabled: bool = True
+    # Ordered per-rule overrides. Unknown IDs are preserved so rules supplied
+    # by a later integration can be configured without adding another column.
+    # Example: [{"id": "reasoning_zero", "enabled": True, "priority": 50}]
+    risk_rule_overrides: list[dict[str, Any]] = Field(default_factory=list)
+    # Repeated TPS-only anomalies with a clean SSO verdict should be routed at
+    # a lower upstream priority while operators try another egress node.
+    request_audit_tps_only_deprioritize_enabled: bool = True
+    request_audit_tps_only_priority: int = Field(
+        default=-1_000_000,
+        ge=-2_000_000_000,
+        le=0,
+    )
+    request_audit_tps_only_min_count: int = Field(default=2, ge=2, le=100)
     request_audit_isolation_enabled: bool = True
     request_audit_retention_days: int = Field(default=90, ge=1, le=90)
 
@@ -184,6 +201,12 @@ class Settings(BaseSettings):
         "request_audit_live_refresh_enabled",
         "request_audit_live_refresh_seconds",
         "request_audit_risk_enabled",
+        "reasoning_zero_risk_enabled",
+        "media_input_observe_enabled",
+        "risk_rule_overrides",
+        "request_audit_tps_only_deprioritize_enabled",
+        "request_audit_tps_only_priority",
+        "request_audit_tps_only_min_count",
         "request_audit_isolation_enabled",
         "request_audit_retention_days",
         "probe_worker_concurrency",

@@ -59,6 +59,10 @@ thresholds = Thresholds(
     risk_watch_floor=settings.risk_watch_floor,
     risk_suspect_floor=settings.risk_suspect_floor,
     risk_high_floor=settings.risk_high_floor,
+    reasoning_zero_risk_enabled=settings.reasoning_zero_risk_enabled,
+    media_input_observe_enabled=settings.media_input_observe_enabled,
+    request_audit_risk_enabled=settings.request_audit_risk_enabled,
+    risk_rule_overrides=tuple(settings.risk_rule_overrides),
 )
 
 database = Database(settings.database_path)
@@ -89,6 +93,19 @@ account_service = AccountService(
     accounts=account_repository,
     probes=probe_repository,
     register_events=register_event_repository,
+    request_audits=request_audit_repository,
+    sso_reports=sso_report_repository,
+)
+sso_report_service.set_account_action_handler(
+    lambda account_id, detail: account_service.apply_auto_quarantine(
+        account_id,
+        source="sso_report",
+        note="SSO 检测发现 bot 标记后立即自动停用",
+        risk_score=max(float(settings.risk_high_floor), 85.0),
+        force=True,
+        permanent=True,
+        detail=detail,
+    )
 )
 probe_manager = ProbeManager(
     settings=settings,
@@ -107,6 +124,8 @@ request_audit_service = RequestAuditService(
     repository=request_audit_repository,
     accounts=account_repository,
     probes=probe_repository,
+    sso_reports=sso_report_service,
+    account_service=account_service,
 )
 scheduler_service = SchedulerService(
     settings=settings,

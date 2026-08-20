@@ -1,4 +1,113 @@
-from app.analyzer import SampleMetrics, Thresholds, classify_sample, risk_status
+from app.analyzer import (
+    SampleMetrics,
+    Thresholds,
+    classify_audit_sample,
+    classify_sample,
+    risk_rule_definitions,
+    risk_status,
+)
+
+
+def test_normal_throughput_does_not_fall_through_to_fast_risk():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=1753,
+            reasoning_tokens=1161,
+            first_token_ms=1210,
+            duration_ms=25_446,
+            egress_key="node:23",
+        ),
+        Thresholds(),
+    )
+
+    assert result.name == "normal"
+    assert result.rule_id == ""
+    assert result.tps < 150
+
+
+def test_normal_audit_throughput_stays_normal():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=1753,
+        reasoning_tokens=1161,
+        first_token_ms=1210,
+        duration_ms=25_446,
+        tps=72.3304,
+        thresholds=Thresholds(),
+    )
+
+    assert result.name == "normal"
+    assert result.rule_id == ""
+
+
+def test_media_input_high_tps_is_observed_instead_of_high_risk():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=42,
+        reasoning_tokens=20,
+        first_token_ms=3139,
+        duration_ms=3149,
+        tps=4200,
+        thresholds=Thresholds(),
+        extra={"media_input_images": 3},
+    )
+
+    assert result.name == "watch"
+    assert result.rule_id == "media_input_observe"
+    assert result.hard is False
+    assert "Media Input" in result.reasons[0]
+
+
+def test_media_input_observation_can_be_disabled():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=42,
+        reasoning_tokens=20,
+        first_token_ms=3139,
+        duration_ms=3149,
+        tps=4200,
+        thresholds=Thresholds(media_input_observe_enabled=False),
+        extra={"media_input_images": 3},
+    )
+
+    assert result.name == "high"
+    assert result.rule_id == "fast_risk"
+    assert result.hard is True
+
+
+def test_reasoning_zero_still_precedes_media_input_observation():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=42,
+        reasoning_tokens=0,
+        first_token_ms=3139,
+        duration_ms=3149,
+        tps=4200,
+        thresholds=Thresholds(),
+        extra={"media_input_images": 3},
+    )
+
+    assert result.name == "high"
+    assert result.rule_id == "reasoning_zero"
+
+
+def test_low_tps_buffering_does_not_trigger_buffered_hard():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=10,
+            reasoning_tokens=5,
+            first_token_ms=1000,
+            duration_ms=1100,
+            egress_key="node:23",
+        ),
+        Thresholds(minimum_output_tokens=1),
+    )
+
+    assert result.buffered is True
+    assert result.tps == 100
+    assert result.name == "normal"
 
 
 def test_classifies_delayed_burst_as_buffered_hard():
@@ -34,7 +143,7 @@ def test_classifies_sustained_high_speed_as_fast_risk():
     assert result.buffered is False
 
 
-def test_lower_tps_interval_records_a_degradation_signal():
+def test_reasoning_zero_precedes_normal_tps_when_enabled():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
@@ -46,9 +155,43 @@ def test_lower_tps_interval_records_a_degradation_signal():
         ),
         Thresholds(),
     )
-    assert result.name == "elevated"
+    assert result.name == "reasoning_zero"
     assert result.anomalous is True
-    assert result.hard is False
+    assert result.hard is True
+    assert result.rule_id == "reasoning_zero"
+
+
+def test_reasoning_zero_can_be_disabled_through_rule_overrides():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=300,
+            reasoning_tokens=0,
+            first_token_ms=1000,
+            duration_ms=2000,
+            egress_key="node:3",
+        ),
+        Thresholds(
+            risk_rule_overrides=(
+                {"id": "reasoning_zero", "enabled": False},
+            )
+        ),
+    )
+
+    assert result.name == "elevated"
+    assert result.rule_id == "elevated_tps"
+
+
+def test_risk_rule_catalog_exposes_order_and_scope():
+    values = risk_rule_definitions(Thresholds(), scope="audit")
+
+    assert [value["priority"] for value in values] == sorted(
+        value["priority"] for value in values
+    )
+    assert any(
+        value["id"] == "reasoning_zero" and value["enabled"]
+        for value in values
+    )
 
 
 def test_repeated_strong_signals_become_high_risk():

@@ -25,7 +25,12 @@ import {
   formatNumber,
   formatPercent,
 } from './settings-format'
-import type { SettingsForm, SettingsSetter } from './settings-model'
+import {
+  setRiskRuleEnabled,
+  setRiskRulePriority,
+  type SettingsForm,
+  type SettingsSetter,
+} from './settings-model'
 
 export function SettingsRiskTab({
   form,
@@ -238,7 +243,7 @@ export function SettingsRiskTab({
           />
           <RiskFactorRow
             title='强信号'
-            description='buffered_hard、fast_risk、marker_miss 每出现 1 次先在本项加分；fast_risk 和 marker_miss 还会进入各自的专项计分。'
+            description='buffered_hard、fast_risk、marker_miss、reasoning_zero 等强规则每出现 1 次先在本项加分；部分规则还会进入专项计分。'
             weight={form.riskHardWeight}
             cap={form.riskHardCap}
             onWeightChange={(value) => set('riskHardWeight', value)}
@@ -339,11 +344,147 @@ export function SettingsRiskTab({
       </SettingsCard>
 
       <SettingsCard
+        icon={ShieldCheck}
+        title='风控规则目录'
+        description='所有样本规则按优先级从小到大执行。新增规则只需在后端注册，即会自动出现在这里；关闭规则后会按剩余规则重算账号。'
+        descriptionAsHint
+      >
+        <div className='overflow-hidden rounded-xl border'>
+          {form.riskRules.length ? (
+            [...form.riskRules]
+              .sort((left, right) => {
+                const leftPriority =
+                  form.riskRuleOverrides.find((item) => item.id === left.id)
+                    ?.priority ?? left.priority
+                const rightPriority =
+                  form.riskRuleOverrides.find((item) => item.id === right.id)
+                    ?.priority ?? right.priority
+                return leftPriority - rightPriority
+              })
+              .map((rule, index) => {
+                const override = form.riskRuleOverrides.find(
+                  (item) => item.id === rule.id
+                )
+                const enabled = override?.enabled ?? rule.enabled
+                return (
+                  <div
+                    key={rule.id}
+                    className={`flex items-center justify-between gap-4 px-4 py-3 ${index ? 'border-t' : ''}`}
+                  >
+                    <div className='min-w-0'>
+                      <div className='flex flex-wrap items-center gap-2'>
+                        <span className='text-sm font-medium'>
+                          {rule.label}
+                        </span>
+                        <Badge variant='outline'>
+                          #{override?.priority ?? rule.priority}
+                        </Badge>
+                        {rule.scopes.map((scope) => (
+                          <Badge key={scope} variant='secondary'>
+                            {scope === 'probe'
+                              ? '探针'
+                              : scope === 'audit'
+                                ? '审计'
+                                : scope}
+                          </Badge>
+                        ))}
+                      </div>
+                      <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+                        {rule.description}
+                        <span className='ml-2 font-mono text-[10px]'>
+                          {rule.id}
+                        </span>
+                      </p>
+                    </div>
+                    <div className='flex shrink-0 items-center gap-2'>
+                      <Input
+                        className='h-8 w-20'
+                        type='number'
+                        min={-100000}
+                        max={100000}
+                        value={override?.priority ?? rule.priority}
+                        disabled={!rule.configurable}
+                        aria-label={`${rule.label}优先级`}
+                        onChange={(event) =>
+                          set(
+                            'riskRuleOverrides',
+                            setRiskRulePriority(
+                              form,
+                              rule.id,
+                              Number(event.target.value)
+                            )
+                          )
+                        }
+                      />
+                      <Switch
+                        checked={enabled}
+                        disabled={!rule.configurable}
+                        aria-label={`${rule.label}规则`}
+                        onCheckedChange={(value) => {
+                          set(
+                            'riskRuleOverrides',
+                            setRiskRuleEnabled(form, rule.id, value)
+                          )
+                          if (rule.id === 'reasoning_zero') {
+                            set('reasoningZeroRiskEnabled', value)
+                          }
+                          if (rule.id === 'media_input_observe') {
+                            set('mediaInputObserveEnabled', value)
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+          ) : (
+            <div className='px-4 py-6 text-sm text-muted-foreground'>
+              保存或刷新设置后载入规则目录。
+            </div>
+          )}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
         icon={Power}
         title='自动隔离'
         description='配置高风险账号的自动停用方式。可以在指定时间后恢复，也可以保持停用直到人工恢复。'
         descriptionAsHint
       >
+        <div className='mb-4 grid overflow-hidden rounded-xl border sm:grid-cols-2'>
+          <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
+            <div className='text-sm font-medium'>思考输出为 0 识别</div>
+            <Switch
+              checked={form.reasoningZeroRiskEnabled}
+              onCheckedChange={(value) => {
+                set('reasoningZeroRiskEnabled', value)
+                set(
+                  'riskRuleOverrides',
+                  setRiskRuleEnabled(form, 'reasoning_zero', value)
+                )
+              }}
+            />
+          </div>
+          <div className='flex min-h-20 items-center justify-between gap-4 border-t px-4 py-3 sm:border-t-0 sm:border-l'>
+            <div className='text-sm font-medium'>TPS-only 自动降优先级</div>
+            <Switch
+              checked={form.requestAuditTpsOnlyDeprioritizeEnabled}
+              onCheckedChange={(value) =>
+                set('requestAuditTpsOnlyDeprioritizeEnabled', value)
+              }
+            />
+          </div>
+        </div>
+        <div className='mb-4 max-w-xs'>
+          <NumberField
+            label='TPS-only 累计异常次数'
+            hint='达到该次数且代理 SSO 正常后，降低账号优先级并提示更换出口'
+            value={form.requestAuditTpsOnlyMinCount}
+            min={2}
+            max={100}
+            onChange={(value) => set('requestAuditTpsOnlyMinCount', value)}
+          />
+        </div>
         <div className='grid overflow-hidden rounded-xl border lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.72fr)_14rem]'>
           <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
             <div className='flex items-center gap-1.5 text-sm font-medium'>
@@ -389,8 +530,7 @@ export function SettingsRiskTab({
               min={1}
               max={10080}
               disabled={
-                !form.autoQuarantine ||
-                !form.autoQuarantineRecoveryEnabled
+                !form.autoQuarantine || !form.autoQuarantineRecoveryEnabled
               }
               aria-label='停用时长（分钟）'
               onChange={(event) =>

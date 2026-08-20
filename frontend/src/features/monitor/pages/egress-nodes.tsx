@@ -685,9 +685,7 @@ export function EgressNodesPage() {
                 (!editingNode && !nodeForm.proxyUrl.trim())
               }
               onClick={() =>
-                editingNode
-                  ? editMutation.mutate()
-                  : createMutation.mutate()
+                editingNode ? editMutation.mutate() : createMutation.mutate()
               }
             >
               {createMutation.isPending || editMutation.isPending ? (

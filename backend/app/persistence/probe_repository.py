@@ -40,7 +40,14 @@ ESTIMATED_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"completed", "completed_with_errors", "failed", "cancelled"}
 BLOCKING_ACCOUNT_RESTORE_STATUSES = {"restoring", "restore_failed"}
 DEGRADATION_CLASSIFICATIONS = frozenset(
-    {"elevated", "buffered_soft", "buffered_hard", "fast_risk", "marker_miss"}
+    {
+        "elevated",
+        "buffered_soft",
+        "buffered_hard",
+        "fast_risk",
+        "marker_miss",
+        "reasoning_zero",
+    }
 )
 PROBE_DURATION_ESTIMATE_BACKFILL_KEY = _PROBE_DURATION_ESTIMATE_BACKFILL_KEY
 SAFE_CURRENT_EGRESS_MIGRATION_KEY = _SAFE_CURRENT_EGRESS_MIGRATION_KEY

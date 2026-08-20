@@ -89,6 +89,14 @@ export function SettingsExecutionTab({
           max={0}
           onChange={(value) => set('probeDiagnosticPriority', value)}
         />
+        <NumberField
+          label='TPS-only 降级优先级'
+          hint='TPS 多次异常但 SSO 正常时使用；账号保持启用并提示更换出口'
+          value={form.requestAuditTpsOnlyPriority}
+          min={-2000000000}
+          max={0}
+          onChange={(value) => set('requestAuditTpsOnlyPriority', value)}
+        />
       </div>
       <div className='mt-4 rounded-lg border bg-muted/25 p-3 text-xs leading-5 text-muted-foreground'>
         账号级并发固定为 1。正常定检启动间隔在所有 Worker

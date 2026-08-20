@@ -102,10 +102,18 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
-import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 type AccountBatchAction = 'enable' | 'disable'
 type RecoveryGuardFilter = 'all' | 'true' | 'false'
+type SsoRiskFilter =
+  | 'all'
+  | 'missing'
+  | 'unverified'
+  | 'pending'
+  | 'clean'
+  | 'flagged'
+  | 'failed'
+  | 'change_egress'
 
 const ACCOUNTS_VIEW_STORAGE_KEY = 'grokiq.monitor.accounts-view.v1'
 const defaultAccountsView = {
@@ -115,6 +123,7 @@ const defaultAccountsView = {
   status: 'all',
   upstreamStatus: 'all',
   recoveryGuarded: 'all',
+  ssoRisk: 'all' as SsoRiskFilter,
 }
 
 const accountMonitorStatusLabels: Record<string, string> = {
@@ -126,6 +135,17 @@ const accountMonitorStatusLabels: Record<string, string> = {
   quarantined: '已停用',
 }
 
+const ssoRiskLabels: Record<SsoRiskFilter, string> = {
+  all: '全部 SSO 风控状态',
+  missing: '缺少 SSO',
+  unverified: 'SSO 未复检',
+  pending: 'SSO 待复检',
+  clean: 'SSO 正常',
+  flagged: 'SSO 已标记',
+  failed: 'SSO 复检失败',
+  change_egress: '建议更换出口',
+}
+
 export function AccountsPage() {
   const client = useQueryClient()
   const navigate = useNavigate()
@@ -133,8 +153,15 @@ export function AccountsPage() {
     ACCOUNTS_VIEW_STORAGE_KEY,
     defaultAccountsView
   )
-  const { page, pageSize, search, status, upstreamStatus, recoveryGuarded } =
-    accountsView.value
+  const {
+    page,
+    pageSize,
+    search,
+    status,
+    upstreamStatus,
+    recoveryGuarded,
+    ssoRisk,
+  } = accountsView.value
   const updateAccountsView = (patch: Partial<typeof defaultAccountsView>) =>
     accountsView.setValue((current) => ({ ...current, ...patch }))
   const [deferredSearch] = useDebouncedValue(search.trim())
@@ -146,8 +173,17 @@ export function AccountsPage() {
       status,
       upstreamStatus,
       recoveryGuarded,
+      ssoRisk,
     }),
-    [deferredSearch, page, pageSize, recoveryGuarded, status, upstreamStatus]
+    [
+      deferredSearch,
+      page,
+      pageSize,
+      recoveryGuarded,
+      ssoRisk,
+      status,
+      upstreamStatus,
+    ]
   )
   // Apply filter/page query after the overlay and select close have painted.
   const tableQuery = usePaintDeferredValue(committedQuery)
@@ -171,7 +207,8 @@ export function AccountsPage() {
     tableQuery.search !== committedQuery.search ||
     tableQuery.status !== committedQuery.status ||
     tableQuery.upstreamStatus !== committedQuery.upstreamStatus ||
-    tableQuery.recoveryGuarded !== committedQuery.recoveryGuarded
+    tableQuery.recoveryGuarded !== committedQuery.recoveryGuarded ||
+    tableQuery.ssoRisk !== committedQuery.ssoRisk
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: api.settings,
@@ -187,6 +224,7 @@ export function AccountsPage() {
       tableQuery.status,
       tableQuery.upstreamStatus,
       tableQuery.recoveryGuarded,
+      tableQuery.ssoRisk,
     ],
     queryFn: ({ signal }) =>
       api.accounts(
@@ -203,6 +241,7 @@ export function AccountsPage() {
             tableQuery.recoveryGuarded === 'all'
               ? ''
               : tableQuery.recoveryGuarded,
+          ssoRisk: tableQuery.ssoRisk === 'all' ? '' : tableQuery.ssoRisk,
         },
         signal
       ),
@@ -262,6 +301,7 @@ export function AccountsPage() {
     tableQuery.status,
     tableQuery.upstreamStatus,
     tableQuery.recoveryGuarded,
+    tableQuery.ssoRisk,
   ].join('|')
   const appliedFilterKeyRef = useRef(tableFilterKey)
   useEffect(() => {
@@ -303,6 +343,7 @@ export function AccountsPage() {
           tableQuery.recoveryGuarded === 'all'
             ? ''
             : tableQuery.recoveryGuarded,
+        ssoRisk: tableQuery.ssoRisk === 'all' ? '' : tableQuery.ssoRisk,
       }),
     onSuccess: (result) => {
       setSelected(result.accountIds)
@@ -553,6 +594,7 @@ export function AccountsPage() {
       : recoveryGuarded === 'true'
         ? '恢复保护'
         : '未标记恢复保护',
+    ssoRiskLabels[ssoRisk],
     `第 ${page} 页 · 每页 ${pageSize} 条`,
   ].join(' · ')
 
@@ -688,7 +730,7 @@ export function AccountsPage() {
       <Card>
         <CardContent className='p-4'>
           <div
-            className='mb-4 flex flex-col gap-3 md:flex-row'
+            className='mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(4,minmax(10rem,auto))]'
             aria-busy={showTableLoading}
           >
             <div className='relative flex-1'>
@@ -765,6 +807,28 @@ export function AccountsPage() {
                 <SelectItem value='all'>全部恢复状态</SelectItem>
                 <SelectItem value='true'>恢复保护</SelectItem>
                 <SelectItem value='false'>未标记</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={ssoRisk}
+              onValueChange={(value) => {
+                beginTableInteraction()
+                updateAccountsView({
+                  ssoRisk: value as SsoRiskFilter,
+                  page: 1,
+                })
+              }}
+            >
+              <SelectTrigger className='w-full md:w-52'>
+                <ShieldAlert className='size-4 text-muted-foreground' />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(ssoRiskLabels).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -1009,11 +1073,17 @@ export function AccountsPage() {
         title={`检测 ${selected.length} 个账号的 SSO？`}
         desc={
           <div className='space-y-3'>
-            <p>将使用注册联动保存的 SSO 创建检测报告。</p>
+            <p>
+              将使用注册联动保存的 SSO，并强制通过系统配置代理创建检测报告。
+            </p>
             <p className='text-muted-foreground'>
               缺少 SSO 或存储值解析失败的账号会被跳过，并在创建结果中显示数量。
             </p>
-            {ssoProxyConfigured ? null : <SsoDirectConnectRiskNotice />}
+            {!ssoProxyConfigured && (
+              <p className='text-destructive'>
+                尚未配置 SSO 检测代理，请先到系统设置的连接与凭据中配置。
+              </p>
+            )}
           </div>
         }
         cancelBtnText='取消'
@@ -1026,12 +1096,14 @@ export function AccountsPage() {
           ) : (
             <>
               <ScanSearch />
-              {ssoProxyConfigured ? '确认检测' : '仍要直连检测'}
+              {ssoProxyConfigured ? '确认检测' : '请先配置代理'}
             </>
           )
         }
         isLoading={ssoReportPending}
-        disabled={selected.length === 0 || selected.length > 1000}
+        disabled={
+          !ssoProxyConfigured || selected.length === 0 || selected.length > 1000
+        }
         handleConfirm={() => accountSsoReportMutation.mutate(selected)}
       />
       <ConfirmDialog
@@ -1307,7 +1379,10 @@ const AccountRow = memo(function AccountRow({
         </div>
       </TableCell>
       <TableCell className='text-center'>
-        <SsoAvailabilityIndicator available={account.ssoAvailable} />
+        <div className='flex flex-col items-center gap-1'>
+          <SsoAvailabilityIndicator available={account.ssoAvailable} />
+          <AccountSsoRiskBadge account={account} />
+        </div>
       </TableCell>
       <TableCell>
         <div className='flex items-center gap-2'>
@@ -1442,6 +1517,54 @@ function SsoAvailabilityIndicator({ available }: { available: boolean }) {
   )
 }
 
+function AccountSsoRiskBadge({ account }: { account: UpstreamAccount }) {
+  const status =
+    account.ssoRiskStatus || (account.ssoAvailable ? 'unverified' : 'missing')
+  const recommendation = account.egressRecommendation
+  if (recommendation?.type === 'change_egress') {
+    return (
+      <Badge
+        variant='warning'
+        className='gap-1'
+        title={`${recommendation.reason}${recommendation.priority != null ? `；当前降级优先级 ${recommendation.priority}` : ''}`}
+      >
+        <Network className='size-3' />
+        换出口
+      </Badge>
+    )
+  }
+  const meta =
+    status === 'flagged'
+      ? { label: 'SSO 已标记', variant: 'destructive' as const }
+      : status === 'clean'
+        ? {
+            label:
+              account.ssoPreDisableAction === 'deprioritize_disabled'
+                ? 'SSO 正常 · 待降级'
+                : 'SSO 正常',
+            variant: 'success' as const,
+          }
+        : status === 'pending'
+          ? { label: 'SSO 复检中', variant: 'secondary' as const }
+          : status === 'failed'
+            ? { label: 'SSO 复检失败', variant: 'warning' as const }
+            : status === 'missing'
+              ? { label: '缺少 SSO', variant: 'outline' as const }
+              : { label: 'SSO 未复检', variant: 'outline' as const }
+  return (
+    <Badge
+      variant={meta.variant}
+      title={
+        account.ssoRiskCheckedAt
+          ? `${meta.label} · ${formatDate(account.ssoRiskCheckedAt)}`
+          : meta.label
+      }
+    >
+      {meta.label}
+    </Badge>
+  )
+}
+
 function AccountDetail({
   data,
   egressNodeNames,
@@ -1485,6 +1608,10 @@ function AccountDetail({
           value={<StatusBadge value={assessment.monitor_status} />}
         />
         <Metric
+          label='SSO 风控'
+          value={<AccountSsoRiskBadge account={account} />}
+        />
+        <Metric
           label='恢复保护'
           value={assessment.recovery_guarded ? '已标记' : '未标记'}
         />
@@ -1498,6 +1625,20 @@ function AccountDetail({
           value={formatDate(assessment.latest_sample_at)}
         />
       </div>
+      {account.egressRecommendation?.type === 'change_egress' && (
+        <div className='rounded-lg border border-amber-500/30 bg-amber-500/8 p-3'>
+          <div className='flex flex-wrap items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300'>
+            <Network className='size-4' />
+            {account.egressRecommendation.label || '建议更换出口节点'}
+          </div>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            {account.egressRecommendation.reason}
+            {account.egressRecommendation.priority != null
+              ? `；账号已降至优先级 ${account.egressRecommendation.priority}`
+              : ''}
+          </p>
+        </div>
+      )}
       {reasons.length > 0 && (
         <div className='rounded-lg border border-amber-500/25 bg-amber-500/5 p-3'>
           <div className='text-sm font-medium text-amber-700 dark:text-amber-300'>

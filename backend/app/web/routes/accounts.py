@@ -32,6 +32,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         upstream_status: str = Query(default="", alias="status"),
         monitor_status: str = Query(default="", alias="monitorStatus"),
         recovery_guarded: str = Query(default="", alias="recoveryGuarded"),
+        sso_risk: str = Query(default="", alias="ssoRisk"),
     ) -> dict[str, Any]:
         return await service.list_accounts(
             page=page,
@@ -41,6 +42,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             upstream_status=upstream_status,
             monitor_status=monitor_status,
             recovery_guarded=recovery_guarded,
+            sso_risk=sso_risk,
         )
 
     @router.get("/accounts/selection")
@@ -50,6 +52,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         upstream_status: str = Query(default="", alias="status"),
         monitor_status: str = Query(default="", alias="monitorStatus"),
         recovery_guarded: str = Query(default="", alias="recoveryGuarded"),
+        sso_risk: str = Query(default="", alias="ssoRisk"),
     ) -> dict[str, Any]:
         return await service.select_account_ids(
             search=search,
@@ -57,6 +60,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             upstream_status=upstream_status,
             monitor_status=monitor_status,
             recovery_guarded=recovery_guarded,
+            sso_risk=sso_risk,
         )
 
     @router.get("/accounts/options")
@@ -65,12 +69,14 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
         search: str = "",
         upstream_status: str = Query(default="", alias="status"),
+        sso_risk: str = Query(default="", alias="ssoRisk"),
     ) -> dict[str, Any]:
         return await service.list_account_options(
             page=page,
             page_size=page_size,
             search=search,
             upstream_status=upstream_status,
+            sso_risk=sso_risk,
         )
 
     @router.put("/accounts/batch")

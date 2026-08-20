@@ -10,7 +10,11 @@ COMPATIBILITY_COLUMNS = {
             "recovery_guarded",
             "ALTER TABLE account_assessments ADD COLUMN recovery_guarded BOOLEAN "
             "NOT NULL DEFAULT 0",
-        )
+        ),
+        (
+            "reasoning_zero_count",
+            "ALTER TABLE account_assessments ADD COLUMN reasoning_zero_count INTEGER NOT NULL DEFAULT 0",
+        ),
     ],
     "probe_profiles": [
         (
@@ -104,6 +108,18 @@ COMPATIBILITY_COLUMNS = {
     ],
     "probe_samples": [
         (
+            "risk_rule_id",
+            "ALTER TABLE probe_samples ADD COLUMN risk_rule_id VARCHAR(100) NOT NULL DEFAULT ''",
+        ),
+        (
+            "risk_rule_ids",
+            "ALTER TABLE probe_samples ADD COLUMN risk_rule_ids JSON NOT NULL DEFAULT '[]'",
+        ),
+        (
+            "risk_reasons",
+            "ALTER TABLE probe_samples ADD COLUMN risk_reasons JSON NOT NULL DEFAULT '[]'",
+        ),
+        (
             "error_code",
             "ALTER TABLE probe_samples ADD COLUMN error_code VARCHAR(100) NOT NULL DEFAULT ''",
         ),
@@ -164,6 +180,28 @@ COMPATIBILITY_COLUMNS = {
             "TEXT NOT NULL DEFAULT ''",
         ),
     ],
+    "request_audit_records": [
+        (
+            "media_input_images",
+            "ALTER TABLE request_audit_records ADD COLUMN media_input_images "
+            "INTEGER NOT NULL DEFAULT 0",
+        ),
+    ],
+    "request_audit_account_verifications": [
+        (
+            "egress_recommendation",
+            "ALTER TABLE request_audit_account_verifications ADD COLUMN "
+            "egress_recommendation JSON NOT NULL DEFAULT '{}'",
+        ),
+        (
+            "previous_priority",
+            "ALTER TABLE request_audit_account_verifications ADD COLUMN previous_priority INTEGER",
+        ),
+        (
+            "applied_priority",
+            "ALTER TABLE request_audit_account_verifications ADD COLUMN applied_priority INTEGER",
+        ),
+    ],
 }
 COMPATIBILITY_INDEXES = {
     "account_assessments": [
@@ -188,6 +226,13 @@ COMPATIBILITY_INDEXES = {
             "ix_probe_run_created_at",
             "CREATE INDEX IF NOT EXISTS ix_probe_run_created_at ON probe_runs (created_at)",
         ),
+    ],
+    "probe_samples": [
+        (
+            "ix_probe_samples_risk_rule_id",
+            "CREATE INDEX IF NOT EXISTS ix_probe_samples_risk_rule_id "
+            "ON probe_samples (risk_rule_id)",
+        )
     ],
     "register_webhook_events": [
         (
@@ -224,6 +269,8 @@ class DatabaseSchemaMigrator:
         with self.engine.begin() as connection:
             for statement in statements:
                 connection.exec_driver_sql(statement)
+            self._backfill_probe_risk_rules(connection, table_names)
+            self._backfill_media_input_counts(connection, table_names)
             self._backfill_sso_reports(connection, table_names)
             self._backfill_plan_profiles(connection, table_names)
             self._backfill_register_sso_received_at(connection, table_names)
@@ -255,6 +302,39 @@ class DatabaseSchemaMigrator:
                 "UPDATE sso_reports SET completed_count = total "
                 "WHERE status = 'completed' AND completed_count = 0 AND total > 0"
             )
+
+    @staticmethod
+    def _backfill_probe_risk_rules(connection, table_names: set[str]) -> None:  # type: ignore[no-untyped-def]
+        if "probe_samples" not in table_names:
+            return
+        connection.exec_driver_sql(
+            "UPDATE probe_samples SET risk_rule_id = CASE classification "
+            "WHEN 'elevated' THEN 'elevated_tps' "
+            "WHEN 'buffered_soft' THEN 'buffered_soft' "
+            "WHEN 'buffered_hard' THEN 'buffered_hard' "
+            "WHEN 'fast_risk' THEN 'fast_risk' "
+            "WHEN 'marker_miss' THEN 'marker_miss' "
+            "WHEN 'reasoning_zero' THEN 'reasoning_zero' "
+            "WHEN 'error' THEN 'http_error' "
+            "ELSE risk_rule_id END "
+            "WHERE risk_rule_id = ''"
+        )
+
+    @staticmethod
+    def _backfill_media_input_counts(connection, table_names: set[str]) -> None:  # type: ignore[no-untyped-def]
+        if "request_audit_records" not in table_names:
+            return
+        # Older local projections kept the complete upstream JSON in ``raw``
+        # but did not project media counts. SQLite's JSON1 extension is present
+        # in the supported runtime; the CASE also tolerates malformed legacy
+        # payloads by leaving the existing value untouched.
+        connection.exec_driver_sql(
+            "UPDATE request_audit_records "
+            "SET media_input_images = MAX(0, CAST(json_extract(raw, '$.mediaInputImages') AS INTEGER)) "
+            "WHERE media_input_images = 0 "
+            "AND json_valid(raw) "
+            "AND COALESCE(json_extract(raw, '$.mediaInputImages'), 0) > 0"
+        )
 
     @staticmethod
     def _backfill_plan_profiles(connection, table_names: set[str]) -> None:  # type: ignore[no-untyped-def]

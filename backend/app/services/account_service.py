@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
@@ -11,6 +11,8 @@ from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
+from app.persistence.request_audit_repository import RequestAuditRepository
+from app.persistence.sso_report_repository import SsoReportRepository
 
 QUARANTINE_RECOVERY_PRIORITY = -2_000_000_000
 PUBLIC_UPSTREAM_SUMMARY_TTL_SECONDS = 10.0
@@ -26,12 +28,16 @@ class AccountService:
         accounts: AccountRepository,
         probes: ProbeRepository,
         register_events: RegisterEventRepository | None = None,
+        request_audits: RequestAuditRepository | None = None,
+        sso_reports: SsoReportRepository | None = None,
     ):
         self.settings = settings
         self.client = client
         self.accounts = accounts
         self.probes = probes
         self.register_events = register_events
+        self.request_audits = request_audits
+        self.sso_reports = sso_reports
         self._public_summary_cache: tuple[float, dict[str, Any]] | None = None
         self._public_summary_lock = asyncio.Lock()
 
@@ -45,22 +51,26 @@ class AccountService:
         upstream_status: str = "",
         monitor_status: str = "",
         recovery_guarded: str = "",
+        sso_risk: str = "",
     ) -> dict[str, Any]:
         upstream_filters = self._upstream_status_filter(upstream_status)
         if (
             monitor_status
             or recovery_guarded in {"true", "false"}
             or enabled in {"true", "false"}
+            or sso_risk not in {"", "all"}
         ):
             upstream = await self.client.list_all_accounts(**upstream_filters)
             account_ids = [int(item.get("id") or 0) for item in upstream]
             assessments = self.accounts.get_assessments(account_ids)
             sso_account_ids = self._account_ids_with_sso(account_ids)
+            verifications = self._latest_verifications(account_ids)
             values = [
                 self._overlay(
                     item,
                     assessments.get(int(item.get("id") or 0)),
                     sso_available=int(item.get("id") or 0) in sso_account_ids,
+                    verification=verifications.get(int(item.get("id") or 0)),
                 )
                 for item in upstream
                 if self._matches(item, search=search, enabled=enabled)
@@ -68,6 +78,11 @@ class AccountService:
                     assessments.get(int(item.get("id") or 0)),
                     monitor_status=monitor_status,
                     recovery_guarded=recovery_guarded,
+                )
+                and self._matches_sso_risk(
+                    verifications.get(int(item.get("id") or 0)),
+                    sso_available=int(item.get("id") or 0) in sso_account_ids,
+                    sso_risk=sso_risk,
                 )
             ]
             start = (page - 1) * page_size
@@ -90,6 +105,7 @@ class AccountService:
         account_ids = [int(item.get("id") or 0) for item in items]
         assessments = self.accounts.get_assessments(account_ids)
         sso_account_ids = self._account_ids_with_sso(account_ids)
+        verifications = self._latest_verifications(account_ids)
         return {
             **payload,
             "items": [
@@ -97,6 +113,7 @@ class AccountService:
                     item,
                     assessments.get(int(item.get("id") or 0)),
                     sso_available=int(item.get("id") or 0) in sso_account_ids,
+                    verification=verifications.get(int(item.get("id") or 0)),
                 )
                 for item in items
             ],
@@ -104,11 +121,13 @@ class AccountService:
 
     async def detail(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         account = await self.client.get_account(account_id)
+        verification = self._latest_verifications([account_id]).get(account_id)
         return {
             "account": self._overlay(
                 account,
                 self.accounts.get_assessment(account_id),
                 sso_available=account_id in self._account_ids_with_sso([account_id]),
+                verification=verification,
             ),
             "history": self.probes.account_history(account_id, limit),
         }
@@ -134,6 +153,7 @@ class AccountService:
         upstream_status: str = "",
         monitor_status: str = "",
         recovery_guarded: str = "",
+        sso_risk: str = "",
     ) -> dict[str, Any]:
         """Return every probe-capable account matching the current UI filters."""
 
@@ -148,6 +168,9 @@ class AccountService:
             if monitor_status or recovery_guarded in {"true", "false"}
             else {}
         )
+        account_ids = [int(item.get("id") or 0) for item in upstream]
+        sso_account_ids = self._account_ids_with_sso(account_ids)
+        verifications = self._latest_verifications(account_ids)
         matched = [
             item
             for item in upstream
@@ -156,6 +179,11 @@ class AccountService:
                 assessments.get(int(item.get("id") or 0)),
                 monitor_status=monitor_status,
                 recovery_guarded=recovery_guarded,
+            )
+            and self._matches_sso_risk(
+                verifications.get(int(item.get("id") or 0)),
+                sso_available=int(item.get("id") or 0) in sso_account_ids,
+                sso_risk=sso_risk,
             )
         ]
         selectable = [item for item in matched if self._is_probe_selectable(item)]
@@ -176,6 +204,7 @@ class AccountService:
         page_size: int,
         search: str = "",
         upstream_status: str = "",
+        sso_risk: str = "",
     ) -> dict[str, Any]:
         """Return one compact live page for account pickers.
 
@@ -192,6 +221,9 @@ class AccountService:
         if search.strip():
             params["search"] = search.strip()
         payload = await self.client.list_accounts(**params)
+        account_ids = [int(item.get("id") or 0) for item in payload.get("items", [])]
+        verifications = self._latest_verifications(account_ids)
+        sso_account_ids = self._account_ids_with_sso(account_ids)
         items = [
             {
                 "id": str(item.get("id") or ""),
@@ -205,9 +237,18 @@ class AccountService:
                     else None
                 ),
                 "egressAssignmentMode": str(item.get("egressAssignmentMode") or ""),
+                **self._sso_overlay(
+                    verifications.get(int(item.get("id") or 0)),
+                    sso_available=int(item.get("id") or 0) in sso_account_ids,
+                ),
             }
             for item in payload.get("items", [])
             if int(item.get("id") or 0) > 0
+            and self._matches_sso_risk(
+                verifications.get(int(item.get("id") or 0)),
+                sso_available=int(item.get("id") or 0) in sso_account_ids,
+                sso_risk=sso_risk,
+            )
         ]
         return {
             "items": items,
@@ -257,6 +298,8 @@ class AccountService:
         )
         metrics = self.accounts.dashboard_metrics(hours)
         assessments = self.accounts.list_assessments(limit=8)
+        assessment_ids = [int(item["account_id"]) for item in assessments]
+        verifications = self._latest_verifications(assessment_ids)
         labels = await self.client.list_all_accounts(
             {int(item["account_id"]) for item in assessments}
         )
@@ -270,6 +313,7 @@ class AccountService:
                         int(item["account_id"]), {"id": item["account_id"]}
                     ),
                     item,
+                    verification=verifications.get(int(item["account_id"])),
                 )
                 for item in assessments
             ],
@@ -410,6 +454,182 @@ class AccountService:
             "failures": failures,
         }
 
+    async def apply_auto_quarantine(
+        self,
+        account_id: int,
+        *,
+        source: str,
+        note: str,
+        risk_score: float,
+        detail: dict[str, Any] | None = None,
+        force: bool = False,
+        permanent: bool = False,
+    ) -> dict[str, Any]:
+        """Apply the shared automatic stop while respecting probe ownership.
+
+        Callers are responsible for deciding that their evidence is strong
+        enough.  This boundary owns the final upstream mutation, local
+        quarantine state, alert, and a machine-readable action result.
+        """
+
+        normalized_account_id = int(account_id)
+        assessment = self.accounts.get_assessment(normalized_account_id) or {}
+        was_already_quarantined = (
+            str(assessment.get("monitor_status") or "") == "quarantined"
+        )
+        if not self.settings.auto_quarantine and not force:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "auto_quarantine_disabled",
+                "assessment": assessment,
+            }
+        if self.request_audits is not None:
+            self.request_audits.clear_egress_recommendations_for_account(
+                normalized_account_id
+            )
+        if was_already_quarantined and not force:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "already_quarantined",
+                "assessment": assessment,
+            }
+        if normalized_account_id in self.probes.account_settings_locked_ids(
+            {normalized_account_id}
+        ):
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "task_protected",
+                "assessment": assessment,
+            }
+
+        account = await self.client.get_account(normalized_account_id)
+        was_enabled = bool(account.get("enabled"))
+        if was_enabled:
+            await self.client.set_account_enabled(normalized_account_id, False)
+        previous_enabled = assessment.get("previous_upstream_enabled")
+        if previous_enabled is None:
+            previous_enabled = was_enabled
+        disabled_by_monitor = bool(assessment.get("disabled_by_monitor")) or was_enabled
+        until = None
+        if not permanent and self.settings.auto_quarantine_recovery_enabled:
+            until = utc_now() + timedelta(minutes=self.settings.quarantine_minutes)
+        quarantined = self.accounts.set_manual_status(
+            account_id=normalized_account_id,
+            status="quarantined",
+            note=note,
+            quarantine_until=until,
+            previous_upstream_enabled=bool(previous_enabled),
+            disabled_by_monitor=disabled_by_monitor,
+            recovery_guarded=False,
+        )
+        action_status = (
+            "disabled"
+            if was_enabled
+            else "already_quarantined"
+            if was_already_quarantined
+            else "already_disabled"
+        )
+        normalized_source = str(source or "monitor").strip() or "monitor"
+        alert_kind = (
+            "auto_quarantine"
+            if normalized_source == "probe"
+            else f"{normalized_source}_auto_quarantine"[:48]
+        )
+        self.accounts.create_alert(
+            account_id=normalized_account_id,
+            kind=alert_kind,
+            severity="critical",
+            title=(
+                "账号已被自动停用"
+                if was_enabled
+                else "账号已处于停用状态并记录隔离"
+            ),
+            detail={
+                "source": normalized_source,
+                "actionStatus": action_status,
+                "quarantineUntil": app_isoformat(until),
+                "recoveryMode": (
+                    "temporary" if until is not None else "permanent"
+                ),
+                "riskScore": float(risk_score),
+                **(detail or {}),
+            },
+        )
+        return {
+            "accountId": normalized_account_id,
+            "actionStatus": action_status,
+            "quarantineUntil": to_app_timezone(until),
+            "assessment": quarantined,
+        }
+
+    async def apply_tps_only_deprioritization(
+        self,
+        account_id: int,
+        *,
+        source: str,
+        note: str,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Lower an account's upstream priority when TPS is anomalous but SSO is clean.
+
+        This action deliberately changes only the routing priority. It does not
+        disable the account and is idempotent when a prior audit already placed
+        the account at the configured low priority.
+        """
+
+        normalized_account_id = int(account_id)
+        target_priority = int(self.settings.request_audit_tps_only_priority)
+        if not self.settings.request_audit_tps_only_deprioritize_enabled:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "deprioritize_disabled",
+                "priority": target_priority,
+            }
+        if normalized_account_id in self.probes.account_settings_locked_ids(
+            {normalized_account_id}
+        ):
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "task_protected",
+                "priority": target_priority,
+                "actionError": "账号正在执行探针任务，任务释放设置锁后重试",
+            }
+        account = await self.client.get_account(normalized_account_id)
+        current_priority_raw = account.get("priority")
+        try:
+            current_priority = int(current_priority_raw)
+        except (TypeError, ValueError):
+            current_priority = 0
+        if current_priority <= target_priority:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "already_deprioritized",
+                "priority": current_priority,
+                "previousPriority": current_priority,
+            }
+        await self.client.set_account_priority(normalized_account_id, target_priority)
+        normalized_source = str(source or "request_audit").strip() or "request_audit"
+        self.accounts.create_alert(
+            account_id=normalized_account_id,
+            kind="request_audit_deprioritize",
+            severity="warning",
+            title="TPS 异常但 SSO 正常，账号已降低优先级",
+            detail={
+                "source": normalized_source,
+                "actionStatus": "deprioritized",
+                "previousPriority": current_priority,
+                "priority": target_priority,
+                "recommendation": "change_egress",
+                **(detail or {}),
+            },
+        )
+        return {
+            "accountId": normalized_account_id,
+            "actionStatus": "deprioritized",
+            "priority": target_priority,
+            "previousPriority": current_priority,
+        }
+
     async def set_accounts_enabled(
         self,
         *,
@@ -469,6 +689,14 @@ class AccountService:
             else None
         )
         failures = list(update_result.failures) if update_result else []
+        successful_ids = set(eligible_ids) - {
+            int(failure.account_id) for failure in failures
+        }
+        if self.request_audits is not None:
+            for account_id in successful_ids:
+                self.request_audits.clear_egress_recommendations_for_account(
+                    account_id
+                )
         return {
             "requested": len(unique_ids),
             "eligible": len(eligible_ids),
@@ -694,16 +922,183 @@ class AccountService:
             return set()
         return self.register_events.account_ids_with_sso(account_ids)
 
+    def _latest_verifications(self, account_ids: list[int]) -> dict[int, dict[str, Any]]:
+        audit_values = (
+            self.request_audits.latest_verifications_for_accounts(account_ids)
+            if self.request_audits is not None
+            else {}
+        )
+        report_values = (
+            self.sso_reports.latest_account_results(account_ids)
+            if self.sso_reports is not None
+            else {}
+        )
+        merged = dict(audit_values)
+        for account_id, value in report_values.items():
+            report_value = self._sso_report_verification(value)
+            current = merged.get(account_id)
+            if (
+                current is None
+                or self._verification_time(report_value)
+                >= self._verification_time(current)
+            ):
+                merged[account_id] = report_value
+        return merged
+
+    def latest_sso_verifications(
+        self,
+        account_ids: list[int],
+    ) -> dict[int, dict[str, Any]]:
+        """Expose the newest audit or account-report SSO evidence by account."""
+
+        return self._latest_verifications(account_ids)
+
+    @staticmethod
+    def _verification_time(value: dict[str, Any]) -> float:
+        raw = (
+            value.get("checked_at")
+            or value.get("updated_at")
+            or value.get("_report_completed_at")
+        )
+        if hasattr(raw, "timestamp"):
+            try:
+                return float(raw.timestamp())
+            except (TypeError, ValueError, OverflowError):
+                pass
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+    @staticmethod
+    def _sso_report_verification(value: dict[str, Any]) -> dict[str, Any]:
+        bot_flag = value.get("bot_flag")
+        if not isinstance(bot_flag, dict):
+            bot_flag = {}
+        verdict = str(value.get("verdict") or "error")
+        if value.get("valid_session") is not True:
+            status = "check_failed"
+        elif value.get("email_match") is not True:
+            status = "email_mismatch"
+        elif bool(bot_flag.get("flagged")) or verdict.startswith("flagged"):
+            status = "flagged"
+        elif verdict == "clean":
+            status = "clean"
+        else:
+            status = "check_failed"
+        action = value.get("account_action")
+        if not isinstance(action, dict):
+            action = {}
+        return {
+            "account_id": int(value.get("account_id") or 0),
+            "status": status,
+            "sso_verdict": verdict,
+            "bot_flag": bot_flag,
+            "proxy_used": bool(value.get("_report_proxy_used")),
+            "valid_session": value.get("valid_session"),
+            "email_match": value.get("email_match"),
+            "status_code": int(value.get("status_code") or 0),
+            "response_ms": int(value.get("response_ms") or 0),
+            "check_error": str(value.get("error") or ""),
+            "action_status": str(action.get("status") or "not_required"),
+            "action_error": str(action.get("error") or ""),
+            "checked_at": value.get("checked_at") or value.get("_report_completed_at"),
+            "updated_at": value.get("_report_completed_at"),
+            "egress_recommendation": {},
+            "_report_id": value.get("_report_id"),
+        }
+
+    @staticmethod
+    def _sso_status(
+        verification: dict[str, Any] | None,
+        *,
+        sso_available: bool,
+    ) -> str:
+        if not verification:
+            return "unverified" if sso_available else "missing"
+        status = str(verification.get("status") or "").strip()
+        if status == "missing_sso" or not sso_available:
+            return "missing"
+        if status in {
+            "proxy_required",
+            "invalid_session",
+            "email_mismatch",
+            "check_failed",
+            "isolation_disabled",
+        }:
+            return "failed"
+        if status == "flagged":
+            return "flagged"
+        if not status and bool(
+            (verification.get("bot_flag") or {}).get("flagged")
+            if isinstance(verification.get("bot_flag"), dict)
+            else False
+        ):
+            return "flagged"
+        if status == "clean":
+            return "clean"
+        if status in {"pending", "checking"}:
+            return "pending"
+        return "unverified"
+
+    @classmethod
+    def _sso_overlay(
+        cls,
+        verification: dict[str, Any] | None,
+        *,
+        sso_available: bool,
+    ) -> dict[str, Any]:
+        value = verification or {}
+        bot_flag = value.get("bot_flag")
+        if not isinstance(bot_flag, dict):
+            bot_flag = {}
+        recommendation = value.get("egress_recommendation")
+        if not isinstance(recommendation, dict) or not recommendation:
+            recommendation = None
+        return {
+            "ssoRiskStatus": cls._sso_status(
+                verification,
+                sso_available=sso_available,
+            ),
+            "ssoRiskCheckedAt": value.get("checked_at"),
+            "ssoBotFlagged": bool(bot_flag.get("flagged")),
+            "ssoBotSource": bot_flag.get("source"),
+            "ssoPreDisableAction": str(value.get("action_status") or ""),
+            "egressRecommendation": recommendation,
+        }
+
+    @classmethod
+    def _matches_sso_risk(
+        cls,
+        verification: dict[str, Any] | None,
+        *,
+        sso_available: bool,
+        sso_risk: str,
+    ) -> bool:
+        requested = str(sso_risk or "").strip().lower()
+        if requested in {"", "all"}:
+            return True
+        overlay = cls._sso_overlay(verification, sso_available=sso_available)
+        if requested == "change_egress":
+            recommendation = overlay.get("egressRecommendation") or {}
+            return recommendation.get("type") == "change_egress"
+        return overlay.get("ssoRiskStatus") == requested
+
     @staticmethod
     def _overlay(
         item: dict[str, Any],
         assessment: dict[str, Any] | None,
         *,
         sso_available: bool = False,
+        verification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
             **item,
             "ssoAvailable": sso_available,
+            **AccountService._sso_overlay(
+                verification,
+                sso_available=sso_available,
+            ),
             "assessment": assessment
             or {
                 "account_id": int(item.get("id") or 0),

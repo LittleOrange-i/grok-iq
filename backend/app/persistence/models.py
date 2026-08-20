@@ -73,6 +73,7 @@ class AccountAssessment(Base):
     hard_anomaly_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fast_risk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     marker_miss_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reasoning_zero_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     distinct_egress_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     anomaly_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     avg_tps: Mapped[float] = mapped_column(Float, default=0, nullable=False)
@@ -289,6 +290,11 @@ class ProbeSample(Base):
     response_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     usage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="", nullable=False, index=True)
+    risk_rule_id: Mapped[str] = mapped_column(
+        String(100), default="", nullable=False, index=True
+    )
+    risk_rule_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    risk_reasons: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     severity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(AppDateTime(), default=utc_now, nullable=False)
@@ -334,6 +340,7 @@ class RequestAuditRecord(Base):
     status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     streaming: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    media_input_images: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     reasoning_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     total_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -370,6 +377,65 @@ class RequestAuditScanState(Base):
     last_pages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_new_records: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_seen_records: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class RequestAuditAccountVerification(Base):
+    """Credential-free SSO evidence captured before an audit-driven disable.
+
+    The raw SSO and proxy are deliberately never persisted.  One audit row can
+    trigger at most one verification record, while the account index supports
+    showing the latest decision in the risk workspace.
+    """
+
+    __tablename__ = "request_audit_account_verifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "audit_upstream_id",
+            name="uq_request_audit_account_verification_audit",
+        ),
+        Index(
+            "ix_request_audit_verification_account_updated",
+            "account_id",
+            "updated_at",
+        ),
+        Index("ix_request_audit_verification_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    audit_upstream_id: Mapped[str] = mapped_column(
+        ForeignKey("request_audit_records.upstream_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    audit_created_at: Mapped[datetime] = mapped_column(AppDateTime(), nullable=False)
+    audit_tps: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False
+    )
+    sso_verdict: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    bot_flag: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    proxy_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    valid_session: Mapped[bool | None] = mapped_column(Boolean)
+    email_match: Mapped[bool | None] = mapped_column(Boolean)
+    status_code: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    response_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    check_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    action_status: Mapped[str] = mapped_column(
+        String(40), default="pending", nullable=False
+    )
+    action_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    egress_recommendation: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    previous_priority: Mapped[int | None] = mapped_column(Integer)
+    applied_priority: Mapped[int | None] = mapped_column(Integer)
+    checked_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    created_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
     )

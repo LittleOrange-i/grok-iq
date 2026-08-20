@@ -257,6 +257,59 @@ def test_runtime_settings_reject_invalid_risk_formula(tmp_path: Path):
         )
 
 
+def test_media_input_switch_synchronizes_the_rule_registry(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update({"media_input_observe_enabled": False})
+
+    assert changed == ["media_input_observe_enabled", "risk_rule_overrides"]
+    assert settings.media_input_observe_enabled is False
+    assert settings.risk_rule_overrides == [
+        {"id": "media_input_observe", "enabled": False}
+    ]
+    assert service.public_view()["mediaInputObserveEnabled"] is False
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded.public_view()["mediaInputObserveEnabled"] is False
+
+
+def test_rule_registry_switch_updates_the_dedicated_media_setting(tmp_path: Path):
+    _, settings, service = build_service(tmp_path)
+
+    changed = service.update(
+        {
+            "risk_rule_overrides": [
+                {"id": "media_input_observe", "enabled": False, "priority": 55}
+            ]
+        }
+    )
+
+    assert changed == ["media_input_observe_enabled", "risk_rule_overrides"]
+    assert settings.media_input_observe_enabled is False
+    assert service.public_view()["mediaInputObserveEnabled"] is False
+
+
+def test_loading_legacy_dedicated_switch_backfills_rule_override(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+    repository = SettingsRepository(database, settings)
+    repository.save({"media_input_observe_enabled": False})
+
+    service.load()
+
+    assert settings.media_input_observe_enabled is False
+    assert settings.risk_rule_overrides == [
+        {"id": "media_input_observe", "enabled": False}
+    ]
+    assert repository.load()["risk_rule_overrides"] == [
+        {"id": "media_input_observe", "enabled": False}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_saving_risk_formula_recalculates_existing_accounts():
     settings = Settings(_env_file=None)

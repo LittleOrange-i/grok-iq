@@ -24,10 +24,12 @@ import {
   Gauge,
   Globe2,
   Info,
+  ImageIcon,
   Layers3,
   ListChecks,
   ListFilter,
   LockKeyhole,
+  Network,
   Play,
   RefreshCw,
   ScanSearch,
@@ -58,6 +60,7 @@ import {
   type RequestAuditActivityLevel,
   type RequestAuditConfig,
   type RequestAuditNodeRisk,
+  type RequestAuditPreDisableCheck,
   type RequestAuditProbeContext,
   type RequestAuditRecord,
   type RequestAuditRiskLevel,
@@ -130,7 +133,6 @@ import { AccountSampleExplorer } from '@/features/monitor/components/account-sam
 import { AuthStatusIndicator } from '@/features/monitor/components/account-state-indicators'
 import { buildEgressNodeNameMap } from '@/features/monitor/components/egress-node-names'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
-import { SsoDirectConnectRiskNotice } from '@/features/monitor/components/sso-direct-connect-risk'
 
 const riskVariant: Record<
   RequestAuditRiskLevel,
@@ -180,6 +182,12 @@ const fallbackConfig: RequestAuditConfig = {
   liveRefreshEnabled: true,
   liveRefreshSeconds: 30,
   riskEnabled: true,
+  reasoningZeroRiskEnabled: true,
+  mediaInputObserveEnabled: true,
+  rules: [],
+  tpsOnlyDeprioritizeEnabled: true,
+  tpsOnlyPriority: -1_000_000,
+  tpsOnlyMinCount: 2,
   isolationEnabled: true,
   retentionDays: 90,
 }
@@ -332,6 +340,67 @@ function UpstreamAccountState({
   )
 }
 
+function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
+  if (!check) return '待代理复检'
+  if (check.actionStatus === 'disabled') return '已自动停用'
+  if (check.actionStatus === 'already_disabled') return '已记录停用'
+  if (check.actionStatus === 'task_protected') return '任务保护'
+  if (check.actionStatus === 'auto_quarantine_disabled') return '自动停用未开启'
+  if (check.actionStatus === 'deprioritized') return '已降低优先级'
+  if (check.actionStatus === 'already_deprioritized') return '已是低优先级'
+  if (check.actionStatus === 'deprioritize_disabled') return '优先级降级未开启'
+  if (check.actionStatus === 'deprioritize_failed') return '降低优先级失败'
+  if (check.actionStatus === 'action_failed') return '处置失败'
+  if (check.status === 'checking') return '代理复检中'
+  if (check.status === 'flagged') return 'SSO 已标记'
+  if (check.status === 'clean') return 'SSO 正常'
+  if (check.status === 'missing_sso') return '缺少 SSO'
+  if (check.status === 'proxy_required') return '未配置代理'
+  if (check.status === 'invalid_session') return 'SSO 会话无效'
+  if (check.status === 'email_mismatch') return '邮箱不匹配'
+  if (check.status === 'isolation_disabled') return '隔离开关关闭'
+  if (check.status === 'check_failed') return '复检失败'
+  return '等待复检'
+}
+
+function PreDisableCheckBadge({
+  check,
+  compact = false,
+}: {
+  check: RequestAuditPreDisableCheck | null
+  compact?: boolean
+}) {
+  const label = preDisableStatusLabel(check)
+  const tone =
+    check?.actionStatus === 'disabled' || check?.status === 'flagged'
+      ? 'destructive'
+      : check?.actionStatus === 'deprioritized' ||
+          check?.actionStatus === 'already_deprioritized'
+        ? 'warning'
+        : check?.status === 'clean'
+          ? check?.egressRecommendation?.type === 'change_egress'
+            ? 'warning'
+            : 'success'
+          : check?.actionStatus === 'action_failed' ||
+              check?.actionStatus === 'deprioritize_failed' ||
+              check?.status === 'check_failed'
+            ? 'warning'
+            : 'outline'
+  return (
+    <Badge
+      variant={tone}
+      className={cn(compact && 'h-5 px-1.5 text-[10px]')}
+      title={
+        check
+          ? `${label}${check.proxyUsed ? ' · 已通过 SSO 代理' : ''}${check.checkError ? ` · ${check.checkError}` : ''}`
+          : '高风险请求会先使用保存的 SSO 通过配置代理复检，再决定是否停用。'
+      }
+    >
+      {label}
+    </Badge>
+  )
+}
+
 function configDraft(
   config: RequestAuditConfig | undefined,
   thresholds: RequestAuditThresholds | undefined
@@ -448,8 +517,19 @@ function RiskBadge({
       ? '正常'
       : value === 'watch'
         ? `观察 ≥ ${formatNumber(thresholds.watch)} TPS`
-        : `高风险 ≥ ${formatNumber(thresholds.high)} TPS`
-  return <Badge variant={riskVariant[value]}>{label}</Badge>
+        : `高风险 / 思考 0`
+  return (
+    <Badge
+      variant={riskVariant[value]}
+      title={
+        value === 'high'
+          ? '达到高 TPS 阈值，或命中已开启的思考输出为 0 信号'
+          : undefined
+      }
+    >
+      {label}
+    </Badge>
+  )
 }
 
 function Tps({ value }: { value: number | null | undefined }) {
@@ -677,6 +757,33 @@ function AuditConfigurationSheet({
                 onCheckedChange={(value) => update('riskEnabled', value)}
               />
               <ToggleSetting
+                title='思考输出为 0 识别'
+                description='成功请求有输出但思考 Token 为 0 时，默认作为降智信号。'
+                checked={draft.reasoningZeroRiskEnabled}
+                disabled={!draft.enabled || !draft.riskEnabled}
+                onCheckedChange={(value) =>
+                  update('reasoningZeroRiskEnabled', value)
+                }
+              />
+              <ToggleSetting
+                title='Media Input 暂按观察'
+                description='含图片等媒体输入的请求，即使 TPS 偏高也先标记观察，不直接进入账号处置。'
+                checked={draft.mediaInputObserveEnabled}
+                disabled={!draft.enabled || !draft.riskEnabled}
+                onCheckedChange={(value) =>
+                  update('mediaInputObserveEnabled', value)
+                }
+              />
+              <ToggleSetting
+                title='TPS-only 自动降低优先级'
+                description='TPS 多次异常但代理 SSO 正常时保留账号、降低调度优先级并提示更换出口。'
+                checked={draft.tpsOnlyDeprioritizeEnabled}
+                disabled={!draft.enabled || !draft.riskEnabled}
+                onCheckedChange={(value) =>
+                  update('tpsOnlyDeprioritizeEnabled', value)
+                }
+              />
+              <ToggleSetting
                 title='账号隔离操作'
                 description='允许从账号或代理节点详情直接联动隔离。'
                 checked={draft.isolationEnabled}
@@ -697,6 +804,36 @@ function AuditConfigurationSheet({
                 onCheckedChange={(value) =>
                   update('adaptiveScanEnabled', value)
                 }
+              />
+            </div>
+          </section>
+
+          <Separator />
+
+          <section className='space-y-3'>
+            <div>
+              <h3 className='text-sm font-semibold'>TPS-only 处置</h3>
+              <p className='mt-0.5 text-xs text-muted-foreground'>
+                仅 TPS 达到高风险阈值且累计达到次数后执行；SSO
+                标记仍走立即停用。
+              </p>
+            </div>
+            <div className='grid gap-3 sm:grid-cols-2'>
+              <NumberField
+                label='累计异常次数'
+                value={draft.tpsOnlyMinCount}
+                min={2}
+                max={100}
+                disabled={!draft.tpsOnlyDeprioritizeEnabled}
+                onChange={(value) => update('tpsOnlyMinCount', value)}
+              />
+              <NumberField
+                label='降低后的账号优先级'
+                value={draft.tpsOnlyPriority}
+                min={-2000000000}
+                max={0}
+                disabled={!draft.tpsOnlyDeprioritizeEnabled}
+                onChange={(value) => update('tpsOnlyPriority', value)}
               />
             </div>
           </section>
@@ -1795,6 +1932,12 @@ export function RequestAuditsPage() {
       requestAuditLiveRefreshEnabled: settingsDraft.liveRefreshEnabled,
       requestAuditLiveRefreshSeconds: settingsDraft.liveRefreshSeconds,
       requestAuditRiskEnabled: settingsDraft.riskEnabled,
+      reasoningZeroRiskEnabled: settingsDraft.reasoningZeroRiskEnabled,
+      mediaInputObserveEnabled: settingsDraft.mediaInputObserveEnabled,
+      requestAuditTpsOnlyDeprioritizeEnabled:
+        settingsDraft.tpsOnlyDeprioritizeEnabled,
+      requestAuditTpsOnlyPriority: settingsDraft.tpsOnlyPriority,
+      requestAuditTpsOnlyMinCount: settingsDraft.tpsOnlyMinCount,
       requestAuditIsolationEnabled: settingsDraft.isolationEnabled,
       requestAuditRetentionDays: settingsDraft.retentionDays,
       degradationTps: settingsDraft.watchTps,
@@ -2518,6 +2661,10 @@ export function RequestAuditsPage() {
                         : '本次未获取'}
                       ，不代表历史请求时状态
                     </span>
+                    <span>
+                      当前按最近请求时间倒序；思考输出为 0
+                      的成功请求计入降智信号
+                    </span>
                   </div>
                 </div>
 
@@ -3028,9 +3175,14 @@ export function RequestAuditsPage() {
               的当前选择创建 SSO 检查报告，并跳转到报告页面查看进度与结果。
             </p>
             <p className='text-muted-foreground'>
-              账号会按 ID 去重；缺少注册联动 SSO 的账号会被标记并跳过。
+              账号会按 ID 去重并强制使用系统 SSO 代理；缺少注册联动 SSO
+              的账号会被标记并跳过。
             </p>
-            {ssoProxyConfigured ? null : <SsoDirectConnectRiskNotice />}
+            {!ssoProxyConfigured && (
+              <p className='text-destructive'>
+                尚未配置 SSO 检测代理，请先到系统设置的连接与凭据中配置。
+              </p>
+            )}
           </div>
         }
         cancelBtnText='取消'
@@ -3043,12 +3195,12 @@ export function RequestAuditsPage() {
           ) : (
             <>
               <ScanSearch />
-              {ssoProxyConfigured ? '创建关联检查' : '仍要直连检查'}
+              {ssoProxyConfigured ? '创建关联检查' : '请先配置代理'}
             </>
           )
         }
         isLoading={bulkSsoMutation.isPending}
-        disabled={!bulkAction?.accountIds.length}
+        disabled={!ssoProxyConfigured || !bulkAction?.accountIds.length}
         handleConfirm={() => {
           if (!bulkAction || bulkAction.kind !== 'sso') return
           bulkSsoMutation.mutate({
@@ -3143,6 +3295,12 @@ export function RequestAuditsPage() {
               <Badge variant='outline'>
                 审计峰值 {formatNumber(sampleAccount.maxTps)} Token/s
               </Badge>
+              {sampleAccount.mediaInputCount > 0 && (
+                <Badge variant='info'>
+                  Media Input {formatNumber(sampleAccount.mediaInputImages, 0)}{' '}
+                  张
+                </Badge>
+              )}
               <UpstreamAccountState account={sampleAccount} compact />
               <span className='text-muted-foreground'>
                 “周期样本”用于当前监控判定；下方总数包含该账号全部本地历史样本。
@@ -3404,6 +3562,14 @@ function AuditRecordDetailDialog({
                 mono
               />
               <AuditDetailField
+                label='Media Input'
+                value={
+                  record.hasMediaInput
+                    ? `${formatNumber(record.mediaInputImages, 0)} 张`
+                    : '无'
+                }
+              />
+              <AuditDetailField
                 label='推理 Token'
                 value={formatNumber(record.reasoningTokens, 0)}
                 mono
@@ -3414,6 +3580,92 @@ function AuditRecordDetailDialog({
                 mono
               />
             </dl>
+
+            <div className='rounded-lg border border-primary/25 bg-primary/5 p-3'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <div className='text-sm font-medium'>停用前代理 SSO 复检</div>
+                <PreDisableCheckBadge check={record.preDisableCheck} compact />
+              </div>
+              {record.preDisableCheck ? (
+                <div className='mt-3 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4'>
+                  <AuditDetailField
+                    label='代理执行'
+                    value={record.preDisableCheck.proxyUsed ? '是' : '否'}
+                  />
+                  <AuditDetailField
+                    label='SSO 判定'
+                    value={record.preDisableCheck.ssoVerdict || '—'}
+                  />
+                  <AuditDetailField
+                    label='bot source'
+                    value={String(record.preDisableCheck.botFlag.source ?? '—')}
+                    mono
+                  />
+                  <AuditDetailField
+                    label='bot risk'
+                    value={String(record.preDisableCheck.botFlag.risk ?? '—')}
+                    mono
+                  />
+                  <AuditDetailField
+                    label='policy / event'
+                    value={`${record.preDisableCheck.botFlag.policy || '—'} / ${record.preDisableCheck.botFlag.event || '—'}`}
+                  />
+                  <AuditDetailField
+                    label='HTTP / 耗时'
+                    value={`${record.preDisableCheck.statusCode || '—'} / ${record.preDisableCheck.responseMs || 0} ms`}
+                    mono
+                  />
+                  <AuditDetailField
+                    label='检测时间'
+                    value={formatDate(record.preDisableCheck.checkedAt)}
+                  />
+                  <AuditDetailField
+                    label='最终动作'
+                    value={record.preDisableCheck.actionStatus || '—'}
+                  />
+                  <AuditDetailField
+                    label='优先级调整'
+                    value={
+                      record.preDisableCheck.appliedPriority != null
+                        ? `${record.preDisableCheck.previousPriority ?? '未知'} → ${record.preDisableCheck.appliedPriority}`
+                        : '—'
+                    }
+                    mono
+                  />
+                </div>
+              ) : (
+                <p className='mt-2 text-xs leading-5 text-muted-foreground'>
+                  该请求尚未产生复检记录；只有高风险请求才会进入保存的 SSO +
+                  代理复检流程。
+                </p>
+              )}
+              {record.preDisableCheck?.botFlag.details && (
+                <div className='mt-3 rounded-md border bg-background/70 p-2 text-xs text-muted-foreground'>
+                  {record.preDisableCheck.botFlag.details}
+                </div>
+              )}
+              {record.preDisableCheck?.checkError && (
+                <div className='mt-3 text-xs text-destructive'>
+                  {record.preDisableCheck.checkError}
+                </div>
+              )}
+              {record.preDisableCheck?.actionError && (
+                <div className='mt-1 text-xs text-destructive'>
+                  {record.preDisableCheck.actionError}
+                </div>
+              )}
+              {record.preDisableCheck?.egressRecommendation?.type ===
+                'change_egress' && (
+                <div className='mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 p-2 text-xs'>
+                  <div className='font-medium text-amber-700 dark:text-amber-300'>
+                    {record.preDisableCheck.egressRecommendation.label}
+                  </div>
+                  <div className='mt-1 text-muted-foreground'>
+                    {record.preDisableCheck.egressRecommendation.reason}
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className='rounded-lg border border-sky-500/25 bg-sky-500/5 p-3 text-sm'>
               <div className='font-medium text-sky-800 dark:text-sky-200'>
@@ -3716,7 +3968,7 @@ function NodePerspective({
       <div className='border-b p-3 lg:border-r lg:border-b-0'>
         <div className='mb-2 flex items-center justify-between px-1 text-xs text-muted-foreground'>
           <span>{nodes.length} 个代理节点</span>
-          <span>按风险与峰值排序</span>
+          <span>按最近请求时间倒序</span>
         </div>
         <div className='max-h-[34rem] space-y-1.5 overflow-y-auto pr-1'>
           {nodes.map((node) => (
@@ -3760,6 +4012,11 @@ function NodePerspective({
                 <div className='mt-1 text-[10px] text-muted-foreground'>
                   {node.riskAccountCount} 异常账号
                 </div>
+                {(node.egressRecommendationCount ?? 0) > 0 && (
+                  <div className='mt-0.5 text-[10px] text-amber-700 dark:text-amber-300'>
+                    {node.egressRecommendationCount} 个建议换出口
+                  </div>
+                )}
               </div>
             </button>
           ))}
@@ -3782,6 +4039,11 @@ function NodePerspective({
               {selected.enabled != null && (
                 <Badge variant={selected.enabled ? 'success' : 'secondary'}>
                   {selected.enabled ? '节点启用' : '节点停用'}
+                </Badge>
+              )}
+              {(selected.egressRecommendationCount ?? 0) > 0 && (
+                <Badge variant='warning'>
+                  {selected.egressRecommendationCount} 个账号建议换出口
                 </Badge>
               )}
             </div>
@@ -3970,6 +4232,10 @@ function NodePerspective({
                   </div>
                   <div className='col-span-3 sm:ml-2'>
                     <div className='flex items-center justify-end gap-1'>
+                      <PreDisableCheckBadge
+                        check={account.preDisableCheck}
+                        compact
+                      />
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
@@ -4162,6 +4428,32 @@ function AccountRiskRow({
       <TableCell className='align-middle !whitespace-normal'>
         <div className='flex max-w-64 flex-wrap items-center gap-1.5'>
           <RiskBadge value={account.riskLevel} thresholds={thresholds} />
+          {account.reasoningZeroCount > 0 && (
+            <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
+              思考 0 ×{account.reasoningZeroCount}
+            </Badge>
+          )}
+          {account.mediaInputCount > 0 && (
+            <Badge
+              variant='info'
+              className='h-5 gap-1 px-1.5 text-[10px]'
+              title={`Media Input ${account.mediaInputImages} 张`}
+            >
+              <ImageIcon className='size-3' />
+              Media Input ×{account.mediaInputImages}
+            </Badge>
+          )}
+          <PreDisableCheckBadge check={account.preDisableCheck} compact />
+          {account.egressRecommendation?.type === 'change_egress' && (
+            <Badge
+              variant='warning'
+              className='h-5 gap-1 px-1.5 text-[10px]'
+              title={account.egressRecommendation.reason}
+            >
+              <Network className='size-3' />
+              建议换出口
+            </Badge>
+          )}
           <span className='text-[10px] break-words text-muted-foreground'>
             {account.riskReasons[0] || '未超过阈值'}
           </span>
@@ -4169,6 +4461,23 @@ function AccountRiskRow({
         {account.riskLevel !== 'normal' && (
           <div className='text-[10px] break-words text-muted-foreground'>
             观察 {account.watchCount} 次 · 高风险 {account.highRiskCount} 次
+          </div>
+        )}
+        {account.preDisableCheck?.status === 'flagged' &&
+          account.preDisableCheck.botFlag?.flagged && (
+            <div className='text-[10px] break-words text-destructive'>
+              bot source {account.preDisableCheck.botFlag.source ?? '未知'}
+              {account.preDisableCheck.botFlag.risk != null
+                ? ` · risk ${account.preDisableCheck.botFlag.risk}`
+                : ''}
+            </div>
+          )}
+        {account.egressRecommendation?.type === 'change_egress' && (
+          <div className='text-[10px] break-words text-amber-700 dark:text-amber-300'>
+            {account.egressRecommendation.reason}
+            {account.preDisableCheck?.appliedPriority != null
+              ? ` · 优先级 ${account.preDisableCheck.appliedPriority}`
+              : ''}
           </div>
         )}
       </TableCell>
@@ -4342,7 +4651,25 @@ function AuditRow({
         </Badge>
       </TableCell>
       <TableCell className='align-middle'>
-        <RiskBadge value={row.riskLevel} thresholds={thresholds} />
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <RiskBadge value={row.riskLevel} thresholds={thresholds} />
+          {row.reasoningZeroRisk && (
+            <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
+              思考输出 0
+            </Badge>
+          )}
+          {row.hasMediaInput && (
+            <Badge
+              variant='info'
+              className='h-5 gap-1 px-1.5 text-[10px]'
+              title={`Media Input ${row.mediaInputImages} 张`}
+            >
+              <ImageIcon className='size-3' />
+              Media Input ×{row.mediaInputImages}
+            </Badge>
+          )}
+          <PreDisableCheckBadge check={row.preDisableCheck} compact />
+        </div>
       </TableCell>
       <TableCell className='text-right align-middle'>
         <Tooltip>

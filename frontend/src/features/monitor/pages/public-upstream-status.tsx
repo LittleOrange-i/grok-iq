@@ -12,13 +12,13 @@ import {
   UsersRound,
   Webhook,
 } from 'lucide-react'
+import { IconGithub } from '@/assets/brand-icons'
 import {
   api,
   type PublicUpstreamAccountSummary,
   type PublicUpstreamProvider,
 } from '@/lib/api'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
-import { IconGithub } from '@/assets/brand-icons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -347,7 +347,9 @@ function MetricCard({
           <p className='number mt-1 text-2xl font-semibold'>
             {raw ? value : formatNumber(Number(value), 0)}
           </p>
-          <p className='mt-1 truncate text-xs text-muted-foreground'>{detail}</p>
+          <p className='mt-1 truncate text-xs text-muted-foreground'>
+            {detail}
+          </p>
         </div>
       </CardContent>
     </Card>
@@ -400,13 +402,7 @@ function ProviderCard({
   )
 }
 
-function CountTile({
-  label,
-  value,
-}: {
-  label: string
-  value: number | null
-}) {
+function CountTile({ label, value }: { label: string; value: number | null }) {
   return (
     <div className='rounded-lg border bg-muted/20 px-3 py-3'>
       <div className='text-xs text-muted-foreground'>{label}</div>

@@ -53,8 +53,8 @@ import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
-import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
+import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -177,6 +177,7 @@ const degradationClassifications = new Set([
   'buffered_hard',
   'fast_risk',
   'marker_miss',
+  'reasoning_zero',
 ])
 
 const RUNS_VIEW_STORAGE_KEY = 'grokiq.monitor.runs-view.v1'
@@ -191,15 +192,11 @@ const defaultRunsView = {
 
 export function RunsPage() {
   const client = useQueryClient()
-  const runsView = usePersistedViewState(
-    RUNS_VIEW_STORAGE_KEY,
-    defaultRunsView
-  )
+  const runsView = usePersistedViewState(RUNS_VIEW_STORAGE_KEY, defaultRunsView)
   const { status, search, createdFrom, createdTo, page, pageSize } =
     runsView.value
-  const updateRunsView = (
-    patch: Partial<typeof defaultRunsView>
-  ) => runsView.setValue((current) => ({ ...current, ...patch }))
+  const updateRunsView = (patch: Partial<typeof defaultRunsView>) =>
+    runsView.setValue((current) => ({ ...current, ...patch }))
   const [deferredSearch] = useDebouncedValue(search.trim())
   const createdFromIso = toIsoDateTime(createdFrom)
   const createdToIso = toIsoDateTime(createdTo)
@@ -1017,9 +1014,7 @@ export function RunsPage() {
         sourceTaskCount={probeSelection?.taskCount ?? 0}
         profiles={profiles.data ?? []}
         profilesLoading={profiles.isFetching && !profiles.data}
-        profilesError={
-          profiles.isError ? getErrorMessage(profiles.error) : ''
-        }
+        profilesError={profiles.isError ? getErrorMessage(profiles.error) : ''}
         onRefreshProfiles={() => void profiles.refetch()}
         egress={egress.data?.items ?? []}
         egressLoading={egress.isFetching}

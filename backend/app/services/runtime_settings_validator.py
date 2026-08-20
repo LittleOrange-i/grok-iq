@@ -16,6 +16,7 @@ class RuntimeSettingsValidator:
     def validate(self, values: dict[str, object], fixed_strategy: dict[str, object]) -> Settings:
         candidate = Settings.model_validate(values | fixed_strategy)
         self._validate_risk(candidate)
+        self._normalize_risk_rules(candidate)
         self._validate_request_audit(candidate)
         self._validate_retry(candidate)
         self._validate_connection(candidate)
@@ -49,6 +50,42 @@ class RuntimeSettingsValidator:
         ):
             if weight > 0 and cap <= 0:
                 raise ValueError(f"{label}权重大于 0 时封顶分必须大于 0")
+
+    @staticmethod
+    def _normalize_risk_rules(candidate: Settings) -> None:
+        normalized: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw in candidate.risk_rule_overrides:
+            if not isinstance(raw, dict):
+                raise ValueError("风险规则覆盖项必须是对象")
+            rule_id = str(raw.get("id") or raw.get("ruleId") or "").strip()
+            if not rule_id:
+                raise ValueError("风险规则覆盖项缺少 ID")
+            if len(rule_id) > 100:
+                raise ValueError("风险规则 ID 不能超过 100 个字符")
+            if rule_id in seen:
+                raise ValueError(f"风险规则覆盖项重复: {rule_id}")
+            seen.add(rule_id)
+            item: dict[str, object] = {"id": rule_id}
+            if "enabled" in raw:
+                item["enabled"] = bool(raw["enabled"])
+            if "priority" in raw:
+                try:
+                    priority = int(raw["priority"])
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ValueError(f"风险规则优先级无效: {rule_id}") from exc
+                if priority < -100_000 or priority > 100_000:
+                    raise ValueError(f"风险规则优先级超出范围: {rule_id}")
+                item["priority"] = priority
+            # Preserve extension-owned scalar settings without coupling the
+            # core validator to every future rule parameter.
+            for key, value in raw.items():
+                if key in {"id", "ruleId", "enabled", "priority"}:
+                    continue
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    item[str(key)] = value
+            normalized.append(item)
+        candidate.risk_rule_overrides = normalized
 
     @staticmethod
     def _validate_retry(candidate: Settings) -> None:

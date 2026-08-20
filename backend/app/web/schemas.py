@@ -403,6 +403,27 @@ class RuntimeSettingsInput(BaseModel):
     request_audit_risk_enabled: bool | None = Field(
         default=None, alias="requestAuditRiskEnabled"
     )
+    reasoning_zero_risk_enabled: bool | None = Field(
+        default=None, alias="reasoningZeroRiskEnabled"
+    )
+    media_input_observe_enabled: bool | None = Field(
+        default=None, alias="mediaInputObserveEnabled"
+    )
+    risk_rule_overrides: list[dict[str, Any]] | None = Field(
+        default=None, alias="riskRuleOverrides", max_length=200
+    )
+    request_audit_tps_only_deprioritize_enabled: bool | None = Field(
+        default=None, alias="requestAuditTpsOnlyDeprioritizeEnabled"
+    )
+    request_audit_tps_only_priority: int | None = Field(
+        default=None,
+        alias="requestAuditTpsOnlyPriority",
+        ge=-2_000_000_000,
+        le=0,
+    )
+    request_audit_tps_only_min_count: int | None = Field(
+        default=None, alias="requestAuditTpsOnlyMinCount", ge=2, le=100
+    )
     request_audit_isolation_enabled: bool | None = Field(
         default=None, alias="requestAuditIsolationEnabled"
     )

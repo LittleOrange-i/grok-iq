@@ -144,7 +144,7 @@ export function SsoReportsPage() {
     <Page>
       <PageHeader
         title='SSO 检测'
-        description='SSO 任务在本页独立配置和跟踪，不进入探针任务中心；页面可随时关闭，后台持续更新队列与进度。bot=0 记为正常，其他值记为风控标记。'
+        description='SSO 任务在本页独立配置和跟踪；账号中心发起的检测出现 bot 标记会立即停用并同步到账号风控状态。bot=0 记为正常，其他值记为风控标记。'
         descriptionAsHint
         actions={
           <>
@@ -884,6 +884,7 @@ function ReportDetailDialog({
                         <TableHead>#</TableHead>
                         <TableHead>账号</TableHead>
                         <TableHead>判定</TableHead>
+                        <TableHead>账号处置</TableHead>
                         <TableHead>Bot</TableHead>
                         <TableHead>地区</TableHead>
                         <TableHead>响应</TableHead>
@@ -986,6 +987,26 @@ function ResultRow({ item, index }: { item: SsoCheckResult; index: number }) {
           {clean ? '正常' : flagged ? '风控标记' : verdictLabel(item.verdict)}
         </Badge>
       </TableCell>
+      <TableCell>
+        {item.account_id ? (
+          <Badge
+            variant={
+              ['disabled', 'already_disabled', 'already_quarantined'].includes(
+                item.account_action?.status ?? ''
+              )
+                ? 'destructive'
+                : item.account_action?.status === 'task_protected'
+                  ? 'warning'
+                  : 'outline'
+            }
+            title={item.account_action?.error || ''}
+          >
+            {ssoAccountActionLabel(item.account_action?.status)}
+          </Badge>
+        ) : (
+          <span className='text-muted-foreground'>未关联账号</span>
+        )}
+      </TableCell>
       <TableCell className='font-mono'>
         {item.bot_flag.source == null ? '—' : item.bot_flag.source}
       </TableCell>
@@ -1013,4 +1034,14 @@ function verdictLabel(value: string) {
   if (value === 'invalid_or_unknown') return '无效 / 未知'
   if (value === 'error') return '请求异常'
   return value
+}
+
+function ssoAccountActionLabel(value?: string) {
+  if (value === 'disabled') return '已立即停用'
+  if (value === 'already_disabled') return '已处于停用'
+  if (value === 'already_quarantined') return '已隔离'
+  if (value === 'task_protected') return '任务结束后重试'
+  if (value === 'action_failed') return '停用失败'
+  if (value) return value
+  return '无需处置'
 }

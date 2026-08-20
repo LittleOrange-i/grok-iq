@@ -35,6 +35,13 @@ export type SettingsForm = {
   probeTransientRetryMaxSeconds: number
   probeRoutePrefix: string
   probeDiagnosticPriority: number
+  reasoningZeroRiskEnabled: boolean
+  mediaInputObserveEnabled: boolean
+  riskRuleOverrides: EditableRuntimeSettings['riskRuleOverrides']
+  riskRules: EditableRuntimeSettings['riskRules']
+  requestAuditTpsOnlyDeprioritizeEnabled: boolean
+  requestAuditTpsOnlyPriority: number
+  requestAuditTpsOnlyMinCount: number
   analysisWindowHours: number
   degradationTps: number
   strongDegradationTps: number
@@ -171,6 +178,15 @@ export function toSettingsForm(
     probeTransientRetryMaxSeconds: settings.probeTransientRetryMaxSeconds ?? 30,
     probeRoutePrefix: settings.probeRoutePrefix,
     probeDiagnosticPriority: settings.probeDiagnosticPriority,
+    reasoningZeroRiskEnabled: settings.reasoningZeroRiskEnabled ?? true,
+    mediaInputObserveEnabled: settings.mediaInputObserveEnabled ?? true,
+    riskRuleOverrides: settings.riskRuleOverrides ?? [],
+    riskRules: settings.riskRules ?? [],
+    requestAuditTpsOnlyDeprioritizeEnabled:
+      settings.requestAuditTpsOnlyDeprioritizeEnabled ?? true,
+    requestAuditTpsOnlyPriority:
+      settings.requestAuditTpsOnlyPriority ?? -1_000_000,
+    requestAuditTpsOnlyMinCount: settings.requestAuditTpsOnlyMinCount ?? 2,
     analysisWindowHours: settings.analysisWindowHours,
     degradationTps: settings.degradationTps,
     strongDegradationTps: settings.strongDegradationTps,
@@ -229,6 +245,13 @@ export function buildSettingsPayload(
     probeTransientRetryMaxSeconds: form.probeTransientRetryMaxSeconds,
     probeRoutePrefix: form.probeRoutePrefix.trim(),
     probeDiagnosticPriority: form.probeDiagnosticPriority,
+    reasoningZeroRiskEnabled: form.reasoningZeroRiskEnabled,
+    mediaInputObserveEnabled: form.mediaInputObserveEnabled,
+    riskRuleOverrides: form.riskRuleOverrides,
+    requestAuditTpsOnlyDeprioritizeEnabled:
+      form.requestAuditTpsOnlyDeprioritizeEnabled,
+    requestAuditTpsOnlyPriority: form.requestAuditTpsOnlyPriority,
+    requestAuditTpsOnlyMinCount: form.requestAuditTpsOnlyMinCount,
     analysisWindowHours: form.analysisWindowHours,
     degradationTps: form.degradationTps,
     strongDegradationTps: form.strongDegradationTps,
@@ -305,6 +328,32 @@ export function mergeEditableSettings(
       ? ''
       : form.wechatAppSecret,
   }
+}
+
+export function setRiskRuleEnabled(
+  form: SettingsForm,
+  ruleId: string,
+  enabled: boolean
+) {
+  const current = form.riskRuleOverrides.find((item) => item.id === ruleId)
+  const next = {
+    ...(current ?? { id: ruleId }),
+    enabled,
+  }
+  return [...form.riskRuleOverrides.filter((item) => item.id !== ruleId), next]
+}
+
+export function setRiskRulePriority(
+  form: SettingsForm,
+  ruleId: string,
+  priority: number
+) {
+  const current = form.riskRuleOverrides.find((item) => item.id === ruleId)
+  const next = {
+    ...(current ?? { id: ruleId }),
+    priority,
+  }
+  return [...form.riskRuleOverrides.filter((item) => item.id !== ruleId), next]
 }
 
 export function validateSettings(form: SettingsForm) {

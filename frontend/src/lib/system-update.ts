@@ -22,7 +22,9 @@ export function localDateKey(now = new Date()) {
   return `${year}-${month}-${day}`
 }
 
-export function parseDismissedUpdate(raw: string | null): DismissedUpdate | null {
+export function parseDismissedUpdate(
+  raw: string | null
+): DismissedUpdate | null {
   if (!raw) return null
   try {
     const value = JSON.parse(raw) as Partial<DismissedUpdate>

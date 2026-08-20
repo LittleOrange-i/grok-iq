@@ -341,6 +341,17 @@ export function AccountMultiSelect({
                             停用
                           </Badge>
                         )}
+                        {account.ssoRiskStatus === 'flagged' && (
+                          <Badge variant='destructive' className='shrink-0'>
+                            SSO 风控
+                          </Badge>
+                        )}
+                        {account.egressRecommendation?.type ===
+                          'change_egress' && (
+                          <Badge variant='warning' className='shrink-0'>
+                            换出口
+                          </Badge>
+                        )}
                         {!detectable && (
                           <Badge variant='secondary' className='shrink-0'>
                             {account.authStatus || '鉴权异常'}

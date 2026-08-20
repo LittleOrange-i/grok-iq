@@ -4,13 +4,19 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, false, func, select
+from sqlalchemy import and_, delete, false, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.clock import utc_now
 
 from .database import Database
-from .models import RequestAuditRecord, RequestAuditScanState, model_dict
+from .models import (
+    MetadataRow,
+    RequestAuditAccountVerification,
+    RequestAuditRecord,
+    RequestAuditScanState,
+    model_dict,
+)
 
 
 class RequestAuditRepository:
@@ -78,6 +84,7 @@ class RequestAuditRepository:
             "status_code",
             "streaming",
             "input_tokens",
+            "media_input_images",
             "output_tokens",
             "reasoning_tokens",
             "total_tokens",
@@ -101,6 +108,247 @@ class RequestAuditRepository:
                 payloads,
             )
             return max(0, int(result.rowcount or 0))
+
+    def refresh_media_input_counts(self, items: Iterable[dict[str, Any]]) -> int:
+        values: dict[str, int] = {}
+        for item in items:
+            upstream_id = str(item.get("id") or item.get("requestId") or "").strip()
+            try:
+                count = max(0, int(item.get("mediaInputImages") or 0))
+            except (TypeError, ValueError, OverflowError):
+                count = 0
+            if upstream_id and count > 0:
+                values[upstream_id] = count
+        if not values:
+            return 0
+        updated = 0
+        with self.database.transaction() as session:
+            for upstream_id, count in values.items():
+                result = session.execute(
+                    update(RequestAuditRecord)
+                    .where(
+                        RequestAuditRecord.upstream_id == upstream_id,
+                        RequestAuditRecord.media_input_images != count,
+                    )
+                    .values(media_input_images=count)
+                )
+                updated += int(result.rowcount or 0)
+        return updated
+
+    def metadata_value(self, key: str) -> str:
+        with self.database.session() as session:
+            value = session.get(MetadataRow, str(key))
+            return str(value.value or "") if value else ""
+
+    def set_metadata_value(self, key: str, value: str) -> None:
+        with self.database.transaction() as session:
+            row = session.get(MetadataRow, str(key))
+            if row is None:
+                session.add(MetadataRow(key=str(key), value=str(value)))
+            else:
+                row.value = str(value)
+
+    def create_verification(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Create durable pending evidence without duplicating an audit trigger."""
+
+        audit_upstream_id = str(values.get("audit_upstream_id") or "").strip()
+        if not audit_upstream_id:
+            raise ValueError("请求审计复检缺少审计 ID")
+        columns = {
+            "account_id",
+            "audit_upstream_id",
+            "audit_created_at",
+            "audit_tps",
+            "status",
+            "sso_verdict",
+            "bot_flag",
+            "proxy_used",
+            "valid_session",
+            "email_match",
+            "status_code",
+            "response_ms",
+            "check_error",
+            "action_status",
+            "action_error",
+            "egress_recommendation",
+            "previous_priority",
+            "applied_priority",
+            "checked_at",
+            "created_at",
+            "updated_at",
+        }
+        now = utc_now()
+        payload = {key: item for key, item in values.items() if key in columns}
+        payload.update(
+            {
+                "audit_upstream_id": audit_upstream_id,
+                "created_at": payload.get("created_at") or now,
+                "updated_at": now,
+            }
+        )
+        with self.database.transaction() as session:
+            session.execute(
+                sqlite_insert(RequestAuditAccountVerification.__table__)
+                .values(**payload)
+                .on_conflict_do_nothing(index_elements=["audit_upstream_id"])
+            )
+            value = session.scalar(
+                select(RequestAuditAccountVerification).where(
+                    RequestAuditAccountVerification.audit_upstream_id
+                    == audit_upstream_id
+                )
+            )
+            if value is None:
+                raise RuntimeError("请求审计复检记录创建失败")
+            return model_dict(value)
+
+    def update_verification(
+        self,
+        audit_upstream_id: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        allowed = {
+            "status",
+            "sso_verdict",
+            "bot_flag",
+            "proxy_used",
+            "valid_session",
+            "email_match",
+            "status_code",
+            "response_ms",
+            "check_error",
+            "action_status",
+            "action_error",
+            "egress_recommendation",
+            "previous_priority",
+            "applied_priority",
+            "checked_at",
+        }
+        with self.database.transaction() as session:
+            value = session.scalar(
+                select(RequestAuditAccountVerification).where(
+                    RequestAuditAccountVerification.audit_upstream_id
+                    == str(audit_upstream_id)
+                )
+            )
+            if value is None:
+                return None
+            for key, item in values.items():
+                if key in allowed:
+                    setattr(value, key, item)
+            value.updated_at = utc_now()
+            session.flush()
+            return model_dict(value)
+
+    def clear_egress_recommendations_for_account(self, account_id: int) -> int:
+        """Remove stale change-egress hints after a later decisive SSO verdict."""
+
+        with self.database.transaction() as session:
+            result = session.execute(
+                update(RequestAuditAccountVerification)
+                .where(RequestAuditAccountVerification.account_id == int(account_id))
+                .values(egress_recommendation={}, updated_at=utc_now())
+            )
+            return int(result.rowcount or 0)
+
+    def set_action_for_account_statuses(
+        self,
+        account_id: int,
+        *,
+        statuses: set[str],
+        action_status: str,
+        action_error: str = "",
+    ) -> int:
+        """Apply one action result to historical verdict rows for global UI state."""
+
+        if not statuses:
+            return 0
+        with self.database.transaction() as session:
+            result = session.execute(
+                update(RequestAuditAccountVerification)
+                .where(
+                    RequestAuditAccountVerification.account_id == int(account_id),
+                    RequestAuditAccountVerification.status.in_(statuses),
+                )
+                .values(
+                    action_status=str(action_status),
+                    action_error=str(action_error)[:1000],
+                    updated_at=utc_now(),
+                )
+            )
+            return int(result.rowcount or 0)
+
+    def verifications_for_audits(
+        self,
+        audit_upstream_ids: Iterable[str],
+    ) -> dict[str, dict[str, Any]]:
+        values = {
+            str(item).strip() for item in audit_upstream_ids if str(item).strip()
+        }
+        if not values:
+            return {}
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(RequestAuditAccountVerification).where(
+                    RequestAuditAccountVerification.audit_upstream_id.in_(values)
+                )
+            ).all()
+            return {
+                str(row.audit_upstream_id): model_dict(row) for row in rows
+            }
+
+    def latest_verifications_for_accounts(
+        self,
+        account_ids: Iterable[int],
+    ) -> dict[int, dict[str, Any]]:
+        normalized = {int(item) for item in account_ids if int(item) > 0}
+        if not normalized:
+            return {}
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(RequestAuditAccountVerification)
+                .where(RequestAuditAccountVerification.account_id.in_(normalized))
+                .order_by(
+                    RequestAuditAccountVerification.account_id.asc(),
+                    func.coalesce(
+                        RequestAuditAccountVerification.checked_at,
+                        RequestAuditAccountVerification.updated_at,
+                    ).desc(),
+                    RequestAuditAccountVerification.updated_at.desc(),
+                    RequestAuditAccountVerification.audit_created_at.desc(),
+                    RequestAuditAccountVerification.id.desc(),
+                )
+            ).all()
+        result: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            result.setdefault(int(row.account_id), model_dict(row))
+        return result
+
+    def retryable_verification_account_ids(self) -> set[int]:
+        """Return accounts whose confirmed verdict still needs an action retry."""
+
+        with self.database.session() as session:
+            rows = session.scalars(
+                select(RequestAuditAccountVerification.account_id)
+                .where(
+                    or_(
+                        and_(
+                            RequestAuditAccountVerification.status == "flagged",
+                            RequestAuditAccountVerification.action_status.in_(
+                                {"pending", "action_failed", "task_protected"}
+                            ),
+                        ),
+                        and_(
+                            RequestAuditAccountVerification.status == "clean",
+                            RequestAuditAccountVerification.action_status.in_(
+                                {"deprioritize_failed", "task_protected"}
+                            ),
+                        ),
+                    )
+                )
+                .distinct()
+            ).all()
+        return {int(value) for value in rows if int(value) > 0}
 
     def delete_older_than(self, cutoff: datetime) -> int:
         with self.database.transaction() as session:
@@ -164,6 +412,10 @@ class RequestAuditRepository:
         watch_threshold: float = 150,
         high_threshold: float = 500,
         risk_enabled: bool = True,
+        reasoning_zero_risk_enabled: bool = True,
+        media_input_observe_enabled: bool = True,
+        elevated_tps_risk_enabled: bool = True,
+        fast_tps_risk_enabled: bool = True,
     ) -> dict[str, Any]:
         page = max(1, page)
         page_size = max(1, min(page_size, 200))
@@ -182,30 +434,74 @@ class RequestAuditRepository:
             # Risk is evaluated against the live runtime thresholds instead of
             # the classification snapshot stored when the row was fetched.
             # Settings changes therefore take effect immediately in filters.
+            reasoning_zero_clause = (
+                (RequestAuditRecord.status_code >= 200)
+                & (RequestAuditRecord.status_code < 300)
+                & (RequestAuditRecord.output_tokens > 0)
+                & (RequestAuditRecord.reasoning_tokens == 0)
+            )
+            if not reasoning_zero_risk_enabled:
+                reasoning_zero_clause = false()
+            media_input_clause = RequestAuditRecord.media_input_images > 0
+            media_observe_clause = (
+                media_input_clause
+                & (RequestAuditRecord.tps >= watch_threshold)
+                & ~reasoning_zero_clause
+                if media_input_observe_enabled
+                else false()
+            )
             if not risk_enabled:
                 if risk in {"risky", "watch", "high"}:
                     query = query.where(false())
                     count_query = count_query.where(false())
             elif risk == "risky":
-                clause = RequestAuditRecord.tps >= watch_threshold
+                tps_clause = false()
+                if elevated_tps_risk_enabled:
+                    tps_clause = (
+                        (RequestAuditRecord.tps >= watch_threshold)
+                        & (RequestAuditRecord.tps < high_threshold)
+                    )
+                if fast_tps_risk_enabled:
+                    tps_clause = tps_clause | (
+                        RequestAuditRecord.tps >= high_threshold
+                    )
+                clause = tps_clause | reasoning_zero_clause | media_observe_clause
                 query = query.where(clause)
                 count_query = count_query.where(clause)
             elif risk == "high":
-                clause = RequestAuditRecord.tps >= high_threshold
+                clause = reasoning_zero_clause
+                if fast_tps_risk_enabled:
+                    clause = clause | (
+                        (RequestAuditRecord.tps >= high_threshold)
+                        & ~media_observe_clause
+                    )
                 query = query.where(clause)
                 count_query = count_query.where(clause)
             elif risk == "watch":
-                clause = (
-                    (RequestAuditRecord.tps >= watch_threshold)
-                    & (RequestAuditRecord.tps < high_threshold)
-                )
+                clause = false()
+                if elevated_tps_risk_enabled:
+                    clause = (
+                        (RequestAuditRecord.tps >= watch_threshold)
+                        & (RequestAuditRecord.tps < high_threshold)
+                        & ~reasoning_zero_clause
+                    )
+                clause = clause | media_observe_clause
                 query = query.where(clause)
                 count_query = count_query.where(clause)
             elif risk == "normal":
-                clause = (
-                    RequestAuditRecord.tps.is_(None)
-                    | (RequestAuditRecord.tps < watch_threshold)
-                )
+                risky_tps_clause = false()
+                if elevated_tps_risk_enabled:
+                    risky_tps_clause = risky_tps_clause | (
+                        (RequestAuditRecord.tps >= watch_threshold)
+                        & (RequestAuditRecord.tps < high_threshold)
+                    )
+                if fast_tps_risk_enabled:
+                    risky_tps_clause = risky_tps_clause | (
+                        RequestAuditRecord.tps >= high_threshold
+                    )
+                if media_input_observe_enabled:
+                    risky_tps_clause = risky_tps_clause & ~media_observe_clause
+                clause = ~risky_tps_clause & ~reasoning_zero_clause & ~media_observe_clause
                 query = query.where(clause)
                 count_query = count_query.where(clause)
             if egress_node_id is not None:

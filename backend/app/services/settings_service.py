@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.analyzer import Thresholds, risk_rule_definitions, risk_rule_enabled
 from app.core.config import (
     DEFAULT_REGISTER_PROBE_PROFILE_IDS,
     REGISTER_PROBE_EXECUTION_MODE,
@@ -14,6 +15,10 @@ from app.services.runtime_settings_validator import RuntimeSettingsValidator
 
 REGISTER_FIXED_STRATEGY_MIGRATION_KEY = "register_probe_fixed_strategy_v2"
 INITIAL_ONBOARDING_COMPLETED_KEY = "initial_onboarding_completed_v1"
+RISK_RULE_SWITCH_FIELDS = {
+    "reasoning_zero": "reasoning_zero_risk_enabled",
+    "media_input_observe": "media_input_observe_enabled",
+}
 
 
 def fixed_register_probe_strategy() -> dict[str, Any]:
@@ -58,6 +63,16 @@ class RuntimeSettingsService:
             )
         if not overrides:
             return
+        synchronized = self._synchronize_risk_rule_switches(dict(overrides))
+        if synchronized != overrides:
+            self.repository.save(
+                {
+                    key: value
+                    for key, value in synchronized.items()
+                    if key in Settings.RUNTIME_FIELDS
+                }
+            )
+            overrides = synchronized
         candidate = self._validate(self.settings.model_dump() | overrides)
         self.settings.apply_runtime(candidate)
 
@@ -67,11 +82,65 @@ class RuntimeSettingsService:
         }
         if not changes:
             return []
+        changes = self._synchronize_risk_rule_switches(changes)
         candidate = self._validate(self.settings.model_dump() | changes)
         normalized = {key: getattr(candidate, key) for key in changes}
         self.repository.save(normalized)
         self.settings.apply_runtime(candidate)
         return sorted(normalized)
+
+    def _synchronize_risk_rule_switches(
+        self,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Keep dedicated switches and registry overrides as one setting.
+
+        The request-audit workspace exposes compact dedicated switches while
+        the global risk settings page edits the extensible rule registry.  A
+        change from either UI must therefore update both representations;
+        otherwise one page could show a rule as enabled while evaluation uses
+        the value saved by the other page.
+        """
+
+        explicit_keys = set(changes)
+        overrides_changed = "risk_rule_overrides" in explicit_keys
+        raw_overrides = changes.get(
+            "risk_rule_overrides",
+            self.settings.risk_rule_overrides,
+        )
+        if not isinstance(raw_overrides, list) or not all(
+            isinstance(item, dict) for item in raw_overrides
+        ):
+            return changes
+        overrides = [dict(item) for item in raw_overrides]
+        override_values = {
+            str(item.get("id") or item.get("ruleId") or "").strip(): item
+            for item in overrides
+        }
+        overrides_modified = False
+
+        for rule_id, field_name in RISK_RULE_SWITCH_FIELDS.items():
+            if field_name in explicit_keys:
+                enabled = bool(changes[field_name])
+                current = override_values.get(rule_id)
+                if current is None:
+                    current = {"id": rule_id, "enabled": enabled}
+                    overrides.append(current)
+                    override_values[rule_id] = current
+                    overrides_modified = True
+                elif current.get("enabled") != enabled:
+                    current["enabled"] = enabled
+                    overrides_modified = True
+                continue
+            if not overrides_changed:
+                continue
+            current = override_values.get(rule_id)
+            if current is not None and "enabled" in current:
+                changes[field_name] = bool(current["enabled"])
+
+        if overrides_modified:
+            changes["risk_rule_overrides"] = overrides
+        return changes
 
     @classmethod
     def _validate(cls, values: dict[str, Any]) -> Settings:
@@ -79,6 +148,17 @@ class RuntimeSettingsService:
 
     def public_view(self) -> dict[str, Any]:
         s = self.settings
+        risk_thresholds = Thresholds(
+            degradation_tps=s.degradation_tps,
+            strong_degradation_tps=s.strong_degradation_tps,
+            minimum_output_tokens=s.minimum_output_tokens,
+            buffer_first_token_share=s.buffer_first_token_share,
+            min_generation_ms=s.min_generation_ms,
+            reasoning_zero_risk_enabled=s.reasoning_zero_risk_enabled,
+            media_input_observe_enabled=s.media_input_observe_enabled,
+            request_audit_risk_enabled=s.request_audit_risk_enabled,
+            risk_rule_overrides=tuple(s.risk_rule_overrides),
+        )
         return {
             "grok2apiBaseUrl": s.grok2api_base_url,
             "grok2apiAdminUsername": s.grok2api_admin_username,
@@ -135,6 +215,21 @@ class RuntimeSettingsService:
                 s.request_audit_live_refresh_seconds
             ),
             "requestAuditRiskEnabled": s.request_audit_risk_enabled,
+            "reasoningZeroRiskEnabled": risk_rule_enabled(
+                "reasoning_zero",
+                risk_thresholds,
+            ),
+            "mediaInputObserveEnabled": risk_rule_enabled(
+                "media_input_observe",
+                risk_thresholds,
+            ),
+            "riskRuleOverrides": s.risk_rule_overrides,
+            "riskRules": risk_rule_definitions(risk_thresholds),
+            "requestAuditTpsOnlyDeprioritizeEnabled": (
+                s.request_audit_tps_only_deprioritize_enabled
+            ),
+            "requestAuditTpsOnlyPriority": s.request_audit_tps_only_priority,
+            "requestAuditTpsOnlyMinCount": s.request_audit_tps_only_min_count,
             "requestAuditIsolationEnabled": s.request_audit_isolation_enabled,
             "requestAuditRetentionDays": s.request_audit_retention_days,
             "probeWorkerConcurrency": s.probe_worker_concurrency,

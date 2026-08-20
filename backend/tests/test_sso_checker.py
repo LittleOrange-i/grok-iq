@@ -66,7 +66,7 @@ def test_loader_treats_each_non_empty_line_as_one_sso() -> None:
 def test_only_bot_zero_is_clean() -> None:
     assert checker_for(page(0)).check(SsoCredential("TOKEN"))["verdict"] == "clean"
     assert checker_for(page(3)).check(SsoCredential("TOKEN"))["verdict"] == "flagged"
-    assert checker_for(page(None)).check(SsoCredential("TOKEN"))["verdict"] == "flagged"
+    assert checker_for(page(None)).check(SsoCredential("TOKEN"))["verdict"] == "clean"
 
 
 def test_proxy_shorthand_is_normalized() -> None:

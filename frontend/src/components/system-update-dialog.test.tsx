@@ -46,9 +46,7 @@ describe('SystemUpdateDialog', () => {
     await expect
       .element(screen.getByRole('dialog', { name: '发现 GrokIQ 新版本' }))
       .toBeInTheDocument()
-    await userEvent.click(
-      screen.getByRole('button', { name: '今日不再提醒' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: '今日不再提醒' }))
 
     expect(window.localStorage.getItem(SYSTEM_UPDATE_DISMISS_KEY)).toBe(
       JSON.stringify({ version: 'v1.1.0', date: localDateKey() })

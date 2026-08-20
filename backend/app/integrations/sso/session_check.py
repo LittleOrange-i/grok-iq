@@ -82,6 +82,7 @@ class SsoSessionCheck:
 
     def _base_result(self, credential: Any) -> dict[str, Any]:
         return {
+            "account_id": getattr(credential, "account_id", None),
             "label": credential.label,
             "expected_email": credential.expected_email,
             "checked_at": self.iso_now(),
@@ -177,7 +178,7 @@ class SsoSessionCheck:
         expected = expected_email.casefold()
         actual = str(account["email"]).casefold()
         email_match = bool(actual and actual == expected) if expected else None
-        flagged = bot_flag["source"] != 0
+        flagged = bot_flag["source"] not in {None, 0}
         bot_flag["flagged"] = flagged
         if email_match is False:
             verdict = "flagged_email_mismatch" if flagged else "email_mismatch"

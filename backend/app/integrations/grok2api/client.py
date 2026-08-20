@@ -567,6 +567,15 @@ class Grok2APIClient:
             "PATCH", f"/api/admin/v1/accounts/{account_id}", json={"enabled": enabled}
         )
 
+    async def set_account_priority(self, account_id: int, priority: int) -> dict[str, Any]:
+        """Adjust one upstream account's routing priority without changing state."""
+
+        return await self.admin_request(
+            "PATCH",
+            f"/api/admin/v1/accounts/{account_id}",
+            json={"priority": int(priority)},
+        )
+
     async def recover_account_at_priority(
         self,
         account_id: int,

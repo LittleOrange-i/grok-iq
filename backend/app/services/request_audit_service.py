@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import logging
 import math
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from app.analyzer import (
+    Classification,
+    Thresholds,
+    classification_enabled,
+    classify_audit_sample,
+    get_risk_rule,
+    risk_rule_definitions,
+    risk_rule_enabled,
+    rule_candidate_min_count,
+)
 from app.core.clock import APP_TIMEZONE, app_now, ensure_utc, to_app_timezone, utc_now
 from app.core.config import Settings
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.request_audit_repository import RequestAuditRepository
+
+if TYPE_CHECKING:
+    from app.services.account_service import AccountService
+    from app.services.sso_report_service import SsoReportService
 
 REQUEST_AUDIT_SCOPE = "grok_build_today"
 REQUEST_AUDIT_PAGE_SIZE = 500
@@ -25,6 +41,10 @@ REQUEST_AUDIT_SCAN_CRON = "*/5 * * * *"
 REQUEST_AUDIT_WINDOW_PRESETS = frozenset({"today", "1h", "3h", "6h", "24h", "7d", "30d"})
 REQUEST_AUDIT_ACTIVITY_MINUTES = 5
 REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS = 120
+REQUEST_AUDIT_MEDIA_BACKFILL_KEY = "request_audit_media_input_projection_v1"
+REQUEST_AUDIT_MEDIA_BACKFILL_MAX_PAGES = 10
+
+logger = logging.getLogger(__name__)
 
 
 def _finite_float(value: Any) -> float | None:
@@ -162,12 +182,16 @@ class RequestAuditService:
         repository: RequestAuditRepository,
         accounts: AccountRepository | None = None,
         probes: ProbeRepository | None = None,
+        sso_reports: SsoReportService | None = None,
+        account_service: AccountService | None = None,
     ):
         self.settings = settings
         self.client = client
         self.repository = repository
         self.accounts = accounts
         self.probes = probes
+        self.sso_reports = sso_reports
+        self.account_service = account_service
         self._scan_lock = asyncio.Lock()
         self._egress_cache_lock = asyncio.Lock()
         self._account_cache_lock = asyncio.Lock()
@@ -177,6 +201,8 @@ class RequestAuditService:
         self._account_cache_known_ids: set[int] = set()
         self._account_cache_at = 0.0
         self._account_cache_checked_at: datetime | None = None
+        self._rule_thresholds_cache_key: tuple[Any, ...] | None = None
+        self._rule_thresholds_cache: Thresholds | None = None
 
     @property
     def thresholds(self) -> dict[str, float]:
@@ -185,8 +211,119 @@ class RequestAuditService:
             "high": float(self.settings.strong_degradation_tps),
         }
 
+    @property
+    def rule_thresholds(self) -> Thresholds:
+        return self._rule_thresholds()
+
+    def _rule_thresholds(self) -> Thresholds:
+        overrides_key = tuple(
+            tuple(sorted((str(key), repr(value)) for key, value in item.items()))
+            for item in self.settings.risk_rule_overrides
+            if isinstance(item, dict)
+        )
+        cache_key = (
+            self.settings.degradation_tps,
+            self.settings.strong_degradation_tps,
+            self.settings.minimum_output_tokens,
+            self.settings.buffer_first_token_share,
+            self.settings.min_generation_ms,
+            self.settings.reasoning_zero_risk_enabled,
+            self.settings.media_input_observe_enabled,
+            self.settings.request_audit_risk_enabled,
+            overrides_key,
+        )
+        if (
+            self._rule_thresholds_cache is not None
+            and cache_key == self._rule_thresholds_cache_key
+        ):
+            return self._rule_thresholds_cache
+        value = Thresholds(
+            degradation_tps=self.settings.degradation_tps,
+            strong_degradation_tps=self.settings.strong_degradation_tps,
+            minimum_output_tokens=self.settings.minimum_output_tokens,
+            buffer_first_token_share=self.settings.buffer_first_token_share,
+            min_generation_ms=self.settings.min_generation_ms,
+            reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
+            media_input_observe_enabled=self.settings.media_input_observe_enabled,
+            request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
+            risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
+        )
+        self._rule_thresholds_cache_key = cache_key
+        self._rule_thresholds_cache = value
+        return value
+
     async def scan_scheduled(self) -> dict[str, Any]:
         return await self.scan(trigger="scheduled", window_preset="today")
+
+    async def _backfill_media_input_projection(self) -> dict[str, Any]:
+        raw_state = self.repository.metadata_value(REQUEST_AUDIT_MEDIA_BACKFILL_KEY)
+        if raw_state == "completed":
+            return {"complete": True, "pages": 0, "updated": 0, "error": ""}
+        try:
+            state = json.loads(raw_state) if raw_state else {}
+        except (TypeError, ValueError):
+            state = {}
+        cursor = str(state.get("cursor") or "") if isinstance(state, dict) else ""
+        pages = 0
+        updated = 0
+        try:
+            while pages < REQUEST_AUDIT_MEDIA_BACKFILL_MAX_PAGES:
+                payload = await self.client.list_request_audits(
+                    cursor=cursor,
+                    page_size=REQUEST_AUDIT_PAGE_SIZE,
+                    period="90d",
+                )
+                items = payload.get("items", [])
+                if not isinstance(items, list) or not items:
+                    self.repository.set_metadata_value(
+                        REQUEST_AUDIT_MEDIA_BACKFILL_KEY, "completed"
+                    )
+                    return {
+                        "complete": True,
+                        "pages": pages,
+                        "updated": updated,
+                        "error": "",
+                    }
+                pages += 1
+                updated += self.repository.refresh_media_input_counts(
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("provider") or "") == "grok_build"
+                )
+                next_cursor = str(payload.get("nextCursor") or "")
+                has_more = bool(payload.get("hasMore")) and bool(next_cursor)
+                if not has_more:
+                    self.repository.set_metadata_value(
+                        REQUEST_AUDIT_MEDIA_BACKFILL_KEY, "completed"
+                    )
+                    return {
+                        "complete": True,
+                        "pages": pages,
+                        "updated": updated,
+                        "error": "",
+                    }
+                if next_cursor == cursor:
+                    raise RuntimeError("Media Input 回填游标未推进")
+                cursor = next_cursor
+                self.repository.set_metadata_value(
+                    REQUEST_AUDIT_MEDIA_BACKFILL_KEY,
+                    json.dumps({"cursor": cursor}),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if getattr(exc, "error_code", "") == "invalidCursor":
+                self.repository.set_metadata_value(
+                    REQUEST_AUDIT_MEDIA_BACKFILL_KEY, ""
+                )
+            return {
+                "complete": False,
+                "pages": pages,
+                "updated": updated,
+                "error": str(exc),
+            }
+        return {"complete": False, "pages": pages, "updated": updated, "error": ""}
 
     def resolve_window(
         self,
@@ -345,6 +482,7 @@ class RequestAuditService:
             state = self.repository.reset_day(scope, identity)
 
         started_at = utc_now()
+        previous_success_at = ensure_utc(state.get("last_success_at"))
         if (
             not self.settings.grok2api_admin_username
             or not self.settings.grok2api_admin_password
@@ -395,6 +533,7 @@ class RequestAuditService:
         egress_error = ""
         egress_updated = 0
         try:
+            media_backfill = await self._backfill_media_input_projection()
             try:
                 egress_map = await self._egress_map()
             except Exception as exc:  # node labels are supplemental
@@ -546,6 +685,27 @@ class RequestAuditService:
                     self.settings.request_audit_retention_days
                 )
             )
+            # Do not trigger a batch of actions while the first historical
+            # import is still being established. Subsequent scans count TPS
+            # anomalies across the full local window, but only accounts with a
+            # newly discovered high-risk row (or a retryable prior action) may
+            # enter the mutation path. This prevents rescanning an old window
+            # from repeatedly reporting or applying historical actions.
+            trigger_account_ids = self._new_risk_account_ids(
+                all_records,
+                discovered_after=previous_success_at or started_at,
+            )
+            trigger_account_ids.update(
+                self.repository.retryable_verification_account_ids()
+            )
+            pre_disable_checks = await self._process_pre_disable_checks(
+                self._pre_disable_candidates(
+                    all_records,
+                    trigger_account_ids=trigger_account_ids,
+                )
+                if initial_complete
+                else []
+            )
             activity = self._activity_payload(
                 pages=pages,
                 initial_complete=complete,
@@ -566,6 +726,8 @@ class RequestAuditService:
                 "reachedOverlap": reached_overlap,
                 "egressUpdated": egress_updated,
                 "egressWarning": egress_error,
+                "mediaInputBackfill": media_backfill,
+                "preDisableChecks": pre_disable_checks,
                 "state": self._state_payload(saved_state, window=window),
                 "activity": activity,
                 "recommendedIntervalSeconds": activity["recommendedIntervalSeconds"],
@@ -608,6 +770,609 @@ class RequestAuditService:
                 "recommendedIntervalSeconds": activity["recommendedIntervalSeconds"],
             }
 
+    async def _process_pre_disable_checks(
+        self,
+        records: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        stats = {
+            "requested": len(records),
+            "flagged": 0,
+            "clean": 0,
+            "skipped": 0,
+            "disabled": 0,
+            "deprioritized": 0,
+            "failed": 0,
+        }
+        if not records:
+            return stats
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def run(record: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                return await self._process_pre_disable_candidate(record)
+
+        outcomes = await asyncio.gather(
+            *(run(record) for record in records),
+            return_exceptions=True,
+        )
+        failed_action_statuses = {
+            "action_failed",
+            "deprioritize_failed",
+            "task_protected",
+        }
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                stats["failed"] += 1
+                logger.error(
+                    "request audit pre-disable check failed",
+                    exc_info=(
+                        type(outcome),
+                        outcome,
+                        outcome.__traceback__,
+                    ),
+                )
+                continue
+            status = str(outcome.get("status") or "")
+            action_status = str(outcome.get("action_status") or "")
+            checked_at = ensure_utc(outcome.get("checked_at"))
+            completed_now = (
+                checked_at is not None
+                and checked_at >= utc_now() - timedelta(minutes=5)
+            )
+            if status == "flagged":
+                if completed_now:
+                    stats["flagged"] += 1
+            elif status == "clean":
+                if completed_now:
+                    stats["clean"] += 1
+            else:
+                stats["skipped"] += 1
+            if completed_now:
+                if action_status in {"disabled", "already_disabled"}:
+                    stats["disabled"] += 1
+                if action_status in {"deprioritized", "already_deprioritized"}:
+                    stats["deprioritized"] += 1
+            if status == "check_failed" or action_status in failed_action_statuses:
+                stats["failed"] += 1
+        return stats
+
+    def _pre_disable_candidates(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        trigger_account_ids: set[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Select one SSO/action candidate per account from registered rules."""
+
+        grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for row in records:
+            account_id = _positive_int(row.get("account_id"))
+            if account_id:
+                grouped[account_id].append(row)
+
+        candidates: list[dict[str, Any]] = []
+        thresholds = self._rule_thresholds()
+        for account_id, rows in grouped.items():
+            if (
+                trigger_account_ids is not None
+                and account_id not in trigger_account_ids
+            ):
+                continue
+            rows_by_rule: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for row in rows:
+                classified = self._classify_record_detail(row)
+                if classified.name != "high" or not classified.rule_id:
+                    continue
+                rule = get_risk_rule(classified.rule_id)
+                if rule is None or not rule.audit_action_mode:
+                    continue
+                rows_by_rule[rule.id].append(row)
+
+            matched: list[dict[str, Any]] = []
+            for rule_id, rule_rows in rows_by_rule.items():
+                rule = get_risk_rule(rule_id)
+                if rule is None:
+                    continue
+                min_count = rule_candidate_min_count(rule, thresholds)
+                if rule.audit_action_mode == "tps_only":
+                    min_count = max(
+                        min_count,
+                        int(self.settings.request_audit_tps_only_min_count),
+                    )
+                if len(rule_rows) < min_count:
+                    continue
+                latest = max(
+                    rule_rows,
+                    key=lambda row: ensure_utc(row.get("created_at"))
+                    or datetime.min.replace(tzinfo=UTC),
+                )
+                candidate = {
+                    **latest,
+                    "_action_mode": rule.audit_action_mode,
+                    "_risk_rule_id": rule.id,
+                    "_risk_rule_count": len(rule_rows),
+                    "_risk_rule_min_count": min_count,
+                }
+                if rule.audit_action_mode == "tps_only":
+                    candidate.update(
+                        {
+                            "_tps_anomaly_count": len(rule_rows),
+                            "_tps_min_count": min_count,
+                            "_tps_max": max(
+                                float(row.get("tps") or 0) for row in rule_rows
+                            ),
+                            "_tps_egress_node_ids": sorted(
+                                {
+                                    int(row["egress_node_id"])
+                                    for row in rule_rows
+                                    if _positive_int(row.get("egress_node_id"))
+                                    is not None
+                                }
+                            ),
+                        }
+                    )
+                matched.append(candidate)
+            if matched:
+                matched.sort(
+                    key=lambda row: (
+                        str(row.get("_action_mode")) == "quarantine",
+                        ensure_utc(row.get("created_at"))
+                        or datetime.min.replace(tzinfo=UTC),
+                    ),
+                    reverse=True,
+                )
+                candidates.append(matched[0])
+        return candidates
+
+    def _new_risk_account_ids(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        discovered_after: datetime,
+    ) -> set[int]:
+        boundary = ensure_utc(discovered_after) or utc_now()
+        result: set[int] = set()
+        for row in records:
+            account_id = _positive_int(row.get("account_id"))
+            if account_id is None:
+                continue
+            fetched_at = ensure_utc(row.get("fetched_at"))
+            if fetched_at is None or fetched_at <= boundary:
+                continue
+            if self._classify_record(row)[0] == "high":
+                result.add(account_id)
+        return result
+
+    async def _process_pre_disable_candidate(
+        self,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        account_id = int(record.get("account_id") or 0)
+        audit_id = str(record.get("upstream_id") or "")
+        action_mode = str(record.get("_action_mode") or "quarantine")
+        created_at = ensure_utc(record.get("created_at")) or utc_now()
+        verification = self.repository.create_verification(
+            {
+                "account_id": account_id,
+                "audit_upstream_id": audit_id,
+                "audit_created_at": created_at,
+                "audit_tps": float(record.get("tps") or 0),
+                "status": "pending",
+                "action_status": "pending",
+            }
+        )
+        existing_status = str(verification.get("status") or "")
+        if existing_status == "checking":
+            updated_at = ensure_utc(verification.get("updated_at"))
+            if updated_at is not None and updated_at > utc_now() - timedelta(
+                minutes=5
+            ):
+                return verification
+        elif existing_status != "pending":
+            if (
+                existing_status == "flagged"
+                and str(verification.get("action_status") or "")
+                in {"pending", "action_failed", "task_protected"}
+            ):
+                common = {
+                    "sso_verdict": str(verification.get("sso_verdict") or "flagged"),
+                    "bot_flag": verification.get("bot_flag") or {},
+                    "proxy_used": bool(verification.get("proxy_used")),
+                    "valid_session": verification.get("valid_session"),
+                    "email_match": verification.get("email_match"),
+                    "status_code": int(verification.get("status_code") or 0),
+                    "response_ms": int(verification.get("response_ms") or 0),
+                    "check_error": str(verification.get("check_error") or ""),
+                    "checked_at": verification.get("checked_at"),
+                }
+                return await self._apply_flagged_quarantine(
+                    record,
+                    verification,
+                    common=common,
+                )
+            if (
+                existing_status == "clean"
+                and action_mode == "tps_only"
+                and str(verification.get("action_status") or "")
+                in {
+                    "deprioritize_disabled",
+                    "deprioritize_failed",
+                    "task_protected",
+                }
+            ):
+                return await self._apply_clean_tps_action(
+                    record,
+                    verification,
+                    common={
+                        "sso_verdict": str(
+                            verification.get("sso_verdict") or "clean"
+                        ),
+                        "bot_flag": verification.get("bot_flag") or {},
+                        "proxy_used": bool(verification.get("proxy_used")),
+                        "valid_session": verification.get("valid_session"),
+                        "email_match": verification.get("email_match"),
+                        "status_code": int(verification.get("status_code") or 0),
+                        "response_ms": int(verification.get("response_ms") or 0),
+                        "check_error": str(verification.get("check_error") or ""),
+                        "checked_at": verification.get("checked_at"),
+                    },
+                )
+            return verification
+
+        if self.sso_reports is None or self.account_service is None:
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    "status": "check_failed",
+                    "action_status": "not_required",
+                    "check_error": "停用前 SSO 复检服务尚未接入",
+                },
+            ) or verification
+
+        self.repository.update_verification(
+            audit_id,
+            {"status": "checking", "action_status": "pending"},
+        )
+        try:
+            check = await self.sso_reports.check_account_once(
+                account_id,
+                require_proxy=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "request audit SSO check failed account=%s audit=%s",
+                account_id,
+                audit_id,
+            )
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    "status": "check_failed",
+                    "action_status": "not_required",
+                    "check_error": str(exc)[:1000],
+                    "checked_at": utc_now(),
+                },
+            ) or verification
+
+        check_status = str(check.get("status") or "check_failed")
+        proxy_used = bool(check.get("proxyUsed"))
+        if check_status != "completed":
+            normalized_status = (
+                check_status
+                if check_status in {"missing_sso", "proxy_required", "check_failed"}
+                else "check_failed"
+            )
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    "status": normalized_status,
+                    "proxy_used": proxy_used,
+                    "action_status": "not_required",
+                    "check_error": str(check.get("error") or "")[:1000],
+                    "checked_at": utc_now(),
+                },
+            ) or verification
+
+        result = check.get("result") if isinstance(check.get("result"), dict) else {}
+        bot_flag = (
+            result.get("bot_flag")
+            if isinstance(result.get("bot_flag"), dict)
+            else {}
+        )
+        verdict = str(result.get("verdict") or "error")
+        valid_session = bool(result.get("valid_session"))
+        email_match = (
+            result.get("email_match")
+            if isinstance(result.get("email_match"), bool)
+            else None
+        )
+        checked_at = _parse_datetime(result.get("checked_at")) or utc_now()
+        common = {
+            "sso_verdict": verdict,
+            "bot_flag": bot_flag,
+            "proxy_used": proxy_used,
+            "valid_session": valid_session,
+            "email_match": email_match,
+            "status_code": int(result.get("status_code") or 0),
+            "response_ms": int(result.get("response_ms") or 0),
+            "check_error": str(result.get("error") or "")[:1000],
+            "checked_at": checked_at,
+        }
+        if verdict == "error":
+            status = "check_failed"
+        elif not valid_session:
+            status = "invalid_session"
+        elif email_match is not True:
+            status = "email_mismatch"
+        elif verdict != "flagged" or not bool(bot_flag.get("flagged")):
+            status = "clean"
+        else:
+            status = "flagged"
+
+        if status != "flagged":
+            if status == "clean" and action_mode == "tps_only":
+                return await self._apply_clean_tps_action(
+                    record,
+                    verification,
+                    common=common,
+                )
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    **common,
+                    "status": status,
+                    "action_status": "not_required",
+                },
+            ) or verification
+
+        self.repository.update_verification(
+            audit_id,
+            {**common, "status": "flagged", "action_status": "pending"},
+        )
+        return await self._apply_flagged_quarantine(
+            record,
+            verification,
+            common=common,
+        )
+
+    async def _apply_clean_tps_action(
+        self,
+        record: dict[str, Any],
+        verification: dict[str, Any],
+        *,
+        common: dict[str, Any],
+    ) -> dict[str, Any]:
+        account_id = int(record.get("account_id") or 0)
+        audit_id = str(record.get("upstream_id") or "")
+        created_at = ensure_utc(record.get("created_at")) or utc_now()
+        verdict = str(common.get("sso_verdict") or "clean")
+        proxy_used = bool(common.get("proxy_used"))
+        if not record.get("_tps_anomaly_count"):
+            window_start, window_end = self._current_audit_window()
+            account_rows = [
+                row
+                for row in self.repository.records_for_range(window_start, window_end)
+                if int(row.get("account_id") or 0) == account_id
+            ]
+            tps_rows = [
+                row
+                for row in account_rows
+                if _finite_float(row.get("tps")) is not None
+                and float(row.get("tps") or 0)
+                >= float(self.settings.strong_degradation_tps)
+                and not self._reasoning_zero_signal(row)
+            ]
+            record = {
+                **record,
+                "_tps_anomaly_count": len(tps_rows),
+                "_tps_min_count": int(
+                    self.settings.request_audit_tps_only_min_count
+                ),
+                "_tps_max": max(
+                    (float(row.get("tps") or 0) for row in tps_rows),
+                    default=float(record.get("tps") or 0),
+                ),
+                "_tps_egress_node_ids": sorted(
+                    {
+                        int(row["egress_node_id"])
+                        for row in tps_rows
+                        if _positive_int(row.get("egress_node_id")) is not None
+                    }
+                ),
+            }
+        recommendation = self._egress_recommendation(
+            record,
+            status="clean",
+            action_status="pending",
+            checked_at=ensure_utc(common.get("checked_at")),
+            tps_anomaly_count=int(record.get("_tps_anomaly_count") or 0),
+        )
+        if self.account_service is None:
+            return verification
+        try:
+            action = await self.account_service.apply_tps_only_deprioritization(
+                account_id,
+                source="request_audit",
+                note="TPS 多次异常但代理 SSO 复检正常，建议更换出口节点",
+                detail={
+                    "auditId": audit_id,
+                    "riskRuleId": str(record.get("_risk_rule_id") or "fast_risk"),
+                    "riskRuleCount": int(
+                        record.get("_risk_rule_count")
+                        or record.get("_tps_anomaly_count")
+                        or 0
+                    ),
+                    "auditCreatedAt": _iso(created_at),
+                    "auditTps": round(float(record.get("tps") or 0), 2),
+                    "tpsAnomalyCount": int(record.get("_tps_anomaly_count") or 0),
+                    "maxTps": round(
+                        float(record.get("_tps_max") or record.get("tps") or 0),
+                        2,
+                    ),
+                    "ssoVerdict": verdict,
+                    "proxyUsed": proxy_used,
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "request audit TPS-only deprioritization failed account=%s audit=%s",
+                account_id,
+                audit_id,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    **common,
+                    "status": "clean",
+                    "action_status": "deprioritize_failed",
+                    "action_error": str(exc)[:1000],
+                    "egress_recommendation": recommendation,
+                },
+            ) or verification
+        action_status = str(action.get("actionStatus") or "deprioritize_failed")
+        return self.repository.update_verification(
+            audit_id,
+            {
+                **common,
+                "status": "clean",
+                "action_status": action_status,
+                "action_error": str(action.get("actionError") or "")[:1000],
+                "egress_recommendation": {
+                    **(recommendation or {}),
+                    "priorityAction": action_status,
+                    "priority": action.get("priority"),
+                },
+                "previous_priority": action.get("previousPriority"),
+                "applied_priority": action.get("priority"),
+            },
+        ) or verification
+
+    @staticmethod
+    def _current_audit_window() -> tuple[datetime, datetime]:
+        start, end = _day_bounds(current_day_key())
+        return start, end
+
+    async def _apply_flagged_quarantine(
+        self,
+        record: dict[str, Any],
+        verification: dict[str, Any],
+        *,
+        common: dict[str, Any],
+    ) -> dict[str, Any]:
+        account_id = int(record.get("account_id") or 0)
+        audit_id = str(record.get("upstream_id") or "")
+        created_at = ensure_utc(record.get("created_at")) or utc_now()
+        verdict = str(common.get("sso_verdict") or "flagged")
+        bot_flag = (
+            common.get("bot_flag")
+            if isinstance(common.get("bot_flag"), dict)
+            else {}
+        )
+        proxy_used = bool(common.get("proxy_used"))
+        _, risk_reasons = self._classify_record(record)
+        self.repository.clear_egress_recommendations_for_account(account_id)
+        if self.account_service is None:
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    **common,
+                    "status": "flagged",
+                    "action_status": "action_failed",
+                    "action_error": "自动停用服务尚未接入",
+                },
+            ) or verification
+        try:
+            action = await self.account_service.apply_auto_quarantine(
+                account_id,
+                source="request_audit",
+                note="请求审计高风险经代理 SSO 复检确认 bot 标记后自动隔离",
+                risk_score=max(float(self.settings.risk_high_floor), 85.0),
+                force=True,
+                permanent=True,
+                detail={
+                    "auditId": audit_id,
+                    "riskRuleId": str(record.get("_risk_rule_id") or ""),
+                    "riskRuleCount": int(record.get("_risk_rule_count") or 1),
+                    "auditCreatedAt": _iso(created_at),
+                    "auditTps": round(float(record.get("tps") or 0), 2),
+                    "reasoningTokens": int(record.get("reasoning_tokens") or 0),
+                    "riskReasons": risk_reasons,
+                    "ssoVerdict": verdict,
+                    "botFlag": bot_flag,
+                    "proxyUsed": proxy_used,
+                },
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "request audit auto quarantine failed account=%s audit=%s",
+                account_id,
+                audit_id,
+            )
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    **common,
+                    "status": "flagged",
+                    "action_status": "action_failed",
+                    "action_error": str(exc)[:1000],
+                },
+            ) or verification
+
+        action_status = str(action.get("actionStatus") or "action_failed")
+        self.repository.set_action_for_account_statuses(
+            account_id,
+            statuses={"flagged"},
+            action_status=action_status,
+        )
+        return self.repository.update_verification(
+            audit_id,
+            {
+                **common,
+                "status": "flagged",
+                "action_status": action_status,
+                "action_error": "",
+            },
+        ) or verification
+
+    @staticmethod
+    def _egress_recommendation(
+        record: dict[str, Any],
+        *,
+        status: str,
+        action_status: str,
+        checked_at: datetime | None,
+        tps_anomaly_count: int,
+    ) -> dict[str, Any] | None:
+        min_count = int(record.get("_tps_min_count") or 2)
+        if status != "clean" or tps_anomaly_count < min_count:
+            return None
+        return {
+            "type": "change_egress",
+            "label": "建议更换出口节点",
+            "reason": "TPS 多次异常，但代理 SSO 复检正常",
+            "highRiskCount": int(tps_anomaly_count),
+            "maxTps": round(float(record.get("_tps_max") or record.get("tps") or 0), 2),
+            "ssoVerdict": "clean",
+            "checkedAt": _iso(checked_at),
+            "priorityAction": action_status,
+            "egressNodeIds": sorted(
+                int(value)
+                for value in (
+                    record.get("_tps_egress_node_ids")
+                    or [record.get("egress_node_id")]
+                )
+                if _positive_int(value) is not None
+            ),
+        }
+
     @staticmethod
     def _window_payload(window: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -637,6 +1402,9 @@ class RequestAuditService:
         requests = len(recent)
         request_rate = requests / REQUEST_AUDIT_ACTIVITY_MINUTES
         max_tps = max(measured, default=0.0)
+        reasoning_zero_detected = any(
+            self._reasoning_zero_signal(row) for row in recent
+        )
         reasons: list[str] = []
 
         if scan_failed:
@@ -650,10 +1418,17 @@ class RequestAuditService:
             reasons.append(f"最近请求速率 {request_rate:.1f}/分钟达到忙时阈值")
         elif (
             self.settings.request_audit_risk_enabled
-            and max_tps >= self.settings.degradation_tps
+            and (
+                max_tps >= self.settings.degradation_tps
+                or reasoning_zero_detected
+            )
         ):
             level = "busy"
-            reasons.append(f"最近出现 {max_tps:.1f} Token/s 风险请求")
+            reasons.append(
+                "最近出现思考输出为 0 的风险请求"
+                if reasoning_zero_detected
+                else f"最近出现 {max_tps:.1f} Token/s 风险请求"
+            )
         elif requests > 0:
             level = "normal"
             reasons.append("最近窗口仍有请求活动")
@@ -792,14 +1567,18 @@ class RequestAuditService:
         egress_node_id = _positive_int(item.get("egressNodeId"))
         egress = egress_map.get(egress_node_id or 0, {})
         tps = calculate_audit_tps(item)
-        risk_level, reasons = (
-            classify_audit_tps(
-                tps,
-                self.settings.degradation_tps,
-                self.settings.strong_degradation_tps,
-            )
-            if self.settings.request_audit_risk_enabled
-            else ("normal", [])
+        status_code = _int_or_zero(item.get("statusCode"))
+        media_input_images = max(0, _int_or_zero(item.get("mediaInputImages")))
+        output_tokens = _int_or_zero(item.get("outputTokens"))
+        reasoning_tokens = _int_or_zero(item.get("reasoningTokens"))
+        risk_level, reasons = self._classify_values(
+            tps=tps,
+            status_code=status_code,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            first_token_ms=_nonnegative_int(item.get("firstTokenMs")),
+            duration_ms=_int_or_zero(item.get("durationMs")),
+            extra={"media_input_images": media_input_images},
         )
         raw_keys = (
             "id",
@@ -817,6 +1596,7 @@ class RequestAuditService:
             "statusCode",
             "streaming",
             "inputTokens",
+            "mediaInputImages",
             "outputTokens",
             "reasoningTokens",
             "totalTokens",
@@ -846,11 +1626,12 @@ class RequestAuditService:
             "egress_ip": "",
             "egress_mode": str(item.get("egressMode") or ""),
             "egress_scope": str(item.get("egressScope") or ""),
-            "status_code": _int_or_zero(item.get("statusCode")),
+            "status_code": status_code,
             "streaming": bool(item.get("streaming")),
             "input_tokens": _int_or_zero(item.get("inputTokens")),
-            "output_tokens": _int_or_zero(item.get("outputTokens")),
-            "reasoning_tokens": _int_or_zero(item.get("reasoningTokens")),
+            "media_input_images": media_input_images,
+            "output_tokens": output_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "total_tokens": _int_or_zero(item.get("totalTokens")),
             "first_token_ms": _nonnegative_int(item.get("firstTokenMs")),
             "duration_ms": _int_or_zero(item.get("durationMs")),
@@ -875,6 +1656,20 @@ class RequestAuditService:
             "liveRefreshEnabled": self.settings.request_audit_live_refresh_enabled,
             "liveRefreshSeconds": self.settings.request_audit_live_refresh_seconds,
             "riskEnabled": self.settings.request_audit_risk_enabled,
+            "reasoningZeroRiskEnabled": risk_rule_enabled(
+                "reasoning_zero",
+                self._rule_thresholds(),
+            ),
+            "mediaInputObserveEnabled": risk_rule_enabled(
+                "media_input_observe",
+                self._rule_thresholds(),
+            ),
+            "rules": risk_rule_definitions(self._rule_thresholds(), scope="audit"),
+            "tpsOnlyDeprioritizeEnabled": (
+                self.settings.request_audit_tps_only_deprioritize_enabled
+            ),
+            "tpsOnlyPriority": self.settings.request_audit_tps_only_priority,
+            "tpsOnlyMinCount": self.settings.request_audit_tps_only_min_count,
             "isolationEnabled": self.settings.request_audit_isolation_enabled,
             "retentionDays": self.settings.request_audit_retention_days,
         }
@@ -953,9 +1748,28 @@ class RequestAuditService:
             watch_threshold=self.settings.degradation_tps,
             high_threshold=self.settings.strong_degradation_tps,
             risk_enabled=self.settings.request_audit_risk_enabled,
+            reasoning_zero_risk_enabled=risk_rule_enabled(
+                "reasoning_zero",
+                self._rule_thresholds(),
+            ),
+            media_input_observe_enabled=risk_rule_enabled(
+                "media_input_observe",
+                self._rule_thresholds(),
+            ),
+            elevated_tps_risk_enabled=classification_enabled(
+                "elevated",
+                self._rule_thresholds(),
+            ),
+            fast_tps_risk_enabled=classification_enabled(
+                "fast_risk",
+                self._rule_thresholds(),
+            ),
         )
         probe_map = self._probe_sample_map(page_value["items"])
         account_ids = self._record_account_ids(page_value["items"])
+        verification_map = self.repository.verifications_for_audits(
+            str(item.get("upstream_id") or "") for item in page_value["items"]
+        )
         try:
             upstream_accounts = await self._upstream_account_map(account_ids)
         except Exception:
@@ -974,6 +1788,9 @@ class RequestAuditService:
                     upstream_account=upstream_accounts.get(int(item["account_id"]))
                     if item.get("account_id")
                     else None,
+                    verification=verification_map.get(
+                        str(item.get("upstream_id") or "")
+                    ),
                 )
                 for item in page_value["items"]
             ],
@@ -1108,6 +1925,7 @@ class RequestAuditService:
         records = self.repository.records_for_range(window["start"], window["end"])
         assessments = self._assessment_payloads(records)
         account_ids = self._record_account_ids(records)
+        verifications = self._latest_account_verifications(account_ids)
         upstream_result, nodes_result = await asyncio.gather(
             self._upstream_account_map(account_ids),
             self._egress_map(),
@@ -1121,6 +1939,7 @@ class RequestAuditService:
             records,
             assessments=assessments,
             upstream_accounts=upstream_accounts,
+            verifications=verifications,
         )
         if isinstance(nodes_result, BaseException):
             # Node metadata is supplemental. Retain the last good snapshot and
@@ -1148,6 +1967,7 @@ class RequestAuditService:
                 assessments=assessments,
                 nodes=nodes,
                 upstream_accounts=upstream_accounts,
+                verifications=verifications,
             ),
             "trend": self._trend_payload(window, records),
             "scan": self._state_payload(state, window=window),
@@ -1178,6 +1998,9 @@ class RequestAuditService:
             "averageTps": round(sum(measured) / len(measured), 1) if measured else 0,
             "p95Tps": round(_p95(measured), 1),
             "maxTps": round(max(measured, default=0), 1),
+            "reasoningZeroRequests": sum(
+                1 for row in records if self._reasoning_zero_signal(row)
+            ),
             "watchAccounts": watch,
             "highRiskAccounts": high,
             "accountCount": len(account_values),
@@ -1213,6 +2036,7 @@ class RequestAuditService:
         *,
         assessments: dict[int, dict[str, Any]] | None = None,
         upstream_accounts: dict[int, dict[str, Any]] | None = None,
+        verifications: dict[int, dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
@@ -1226,6 +2050,10 @@ class RequestAuditService:
         if assessments is None:
             assessments = self._assessment_payloads(records)
         upstream_accounts = upstream_accounts or {}
+        if verifications is None:
+            verifications = self._latest_account_verifications(
+                self._record_account_ids(records)
+            )
         result = [
             self._account_payload(
                 rows,
@@ -1239,14 +2067,30 @@ class RequestAuditService:
                     if rows[0].get("account_id")
                     else {}
                 ),
+                verification=(
+                    verifications.get(int(rows[0]["account_id"]), {})
+                    if rows[0].get("account_id")
+                    else {}
+                ),
             )
             for rows in groups.values()
         ]
-        rank = {"high": 2, "watch": 1, "normal": 0}
         result.sort(
-            key=lambda row: (rank[row["riskLevel"]], row["maxTps"]), reverse=True
+            key=lambda row: (
+                _parse_datetime(row.get("lastSeenAt"))
+                or datetime.min.replace(tzinfo=UTC)
+            ),
+            reverse=True,
         )
         return result
+
+    def _latest_account_verifications(
+        self,
+        account_ids: list[int],
+    ) -> dict[int, dict[str, Any]]:
+        if self.account_service is not None:
+            return self.account_service.latest_sso_verifications(account_ids)
+        return self.repository.latest_verifications_for_accounts(account_ids)
 
     def _account_payload(
         self,
@@ -1254,6 +2098,7 @@ class RequestAuditService:
         *,
         assessment: dict[str, Any],
         upstream_account: dict[str, Any],
+        verification: dict[str, Any],
     ) -> dict[str, Any]:
         speeds = [
             float(row["tps"])
@@ -1262,7 +2107,40 @@ class RequestAuditService:
             and float(row.get("tps") or 0) > 0
         ]
         max_tps = max(speeds, default=0.0)
-        risk_level, _ = self._classify(max_tps)
+        classifications = [self._classify_record_detail(row) for row in rows]
+        row_risks = [
+            value.name if value.name in {"watch", "high"} else "normal"
+            for value in classifications
+        ]
+        risk_rank = {"normal": 0, "watch": 1, "high": 2}
+        risk_level = max(row_risks, key=risk_rank.get, default="normal")
+        reasoning_zero_count = sum(
+            1 for value in classifications if value.rule_id == "reasoning_zero"
+        )
+        media_input_count = sum(
+            1 for row in rows if _int_or_zero(row.get("media_input_images")) > 0
+        )
+        media_input_images = sum(
+            max(0, _int_or_zero(row.get("media_input_images"))) for row in rows
+        )
+        media_observe_rows = [
+            row
+            for row, value in zip(rows, classifications, strict=True)
+            if value.rule_id == "media_input_observe"
+        ]
+        media_observe_count = len(media_observe_rows)
+        media_observe_images = sum(
+            max(0, _int_or_zero(row.get("media_input_images")))
+            for row in media_observe_rows
+        )
+        ordinary_risk_tps = max(
+            (
+                float(row.get("tps") or 0)
+                for row, value in zip(rows, classifications, strict=True)
+                if value.rule_id != "media_input_observe"
+            ),
+            default=0.0,
+        )
         latest = max(
             rows,
             key=lambda row: (
@@ -1281,15 +2159,13 @@ class RequestAuditService:
                 if str(row.get("egress_node_name") or row.get("egress_node_id") or "")
             }
         )
-        watch_count = (
-            sum(1 for value in speeds if value >= self.settings.degradation_tps)
-            if self.settings.request_audit_risk_enabled
-            else 0
-        )
-        high_count = (
-            sum(1 for value in speeds if value >= self.settings.strong_degradation_tps)
-            if self.settings.request_audit_risk_enabled
-            else 0
+        watch_count = sum(1 for value in row_risks if value in {"watch", "high"})
+        high_count = sum(1 for value in row_risks if value == "high")
+        verification_payload = self._verification_payload(verification)
+        egress_recommendation = (
+            verification_payload.get("egressRecommendation")
+            if verification_payload
+            else None
         )
         return {
             "accountId": account_id,
@@ -1305,8 +2181,16 @@ class RequestAuditService:
             ),
             "watchCount": watch_count,
             "highRiskCount": high_count,
+            "reasoningZeroCount": reasoning_zero_count,
+            "mediaInputCount": media_input_count,
+            "mediaInputImages": media_input_images,
             "riskLevel": risk_level,
-            "riskReasons": self._risk_reasons(max_tps),
+            "riskReasons": self._risk_reasons(
+                ordinary_risk_tps,
+                reasoning_zero_count=reasoning_zero_count,
+                media_input_count=media_observe_count,
+                media_input_images=media_observe_images,
+            ),
             "egressNodeIds": node_ids,
             "egressNodes": nodes,
             "monitorStatus": monitor_status,
@@ -1314,6 +2198,9 @@ class RequestAuditService:
             "quarantineUntil": _iso(assessment.get("quarantine_until")),
             "probeSampleCount": _int_or_zero(assessment.get("sample_count")),
             "probeAnomalyCount": _int_or_zero(assessment.get("anomaly_count")),
+            "probeReasoningZeroCount": _int_or_zero(
+                assessment.get("reasoning_zero_count")
+            ),
             "latestProbeSampleAt": _iso(assessment.get("latest_sample_at")),
             "upstreamAccountFound": bool(upstream_account),
             "upstreamEnabled": (
@@ -1322,6 +2209,13 @@ class RequestAuditService:
                 else None
             ),
             "upstreamAuthStatus": str(upstream_account.get("authStatus") or ""),
+            "preDisableCheck": verification_payload,
+            "egressRecommendation": egress_recommendation,
+            "priorityAction": (
+                verification_payload.get("actionStatus")
+                if verification_payload
+                else ""
+            ),
             "lastSeenAt": _iso(latest.get("created_at")),
         }
 
@@ -1332,6 +2226,7 @@ class RequestAuditService:
         assessments: dict[int, dict[str, Any]],
         nodes: dict[int, dict[str, Any]],
         upstream_accounts: dict[int, dict[str, Any]],
+        verifications: dict[int, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
@@ -1350,6 +2245,7 @@ class RequestAuditService:
                 rows,
                 assessments=assessments,
                 upstream_accounts=upstream_accounts,
+                verifications=verifications,
             )
             risky_accounts = [
                 value for value in account_values if value["riskLevel"] != "normal"
@@ -1361,7 +2257,40 @@ class RequestAuditService:
                 and float(row.get("tps") or 0) > 0
             ]
             max_tps = max(speeds, default=0.0)
-            risk_level, _ = self._classify(max_tps)
+            classifications = [self._classify_record_detail(row) for row in rows]
+            row_risks = [
+                value.name if value.name in {"watch", "high"} else "normal"
+                for value in classifications
+            ]
+            risk_rank = {"normal": 0, "watch": 1, "high": 2}
+            risk_level = max(row_risks, key=risk_rank.get, default="normal")
+            reasoning_zero_count = sum(
+                1 for value in classifications if value.rule_id == "reasoning_zero"
+            )
+            media_input_count = sum(
+                1 for row in rows if _int_or_zero(row.get("media_input_images")) > 0
+            )
+            media_input_images = sum(
+                max(0, _int_or_zero(row.get("media_input_images"))) for row in rows
+            )
+            media_observe_rows = [
+                row
+                for row, value in zip(rows, classifications, strict=True)
+                if value.rule_id == "media_input_observe"
+            ]
+            media_observe_count = len(media_observe_rows)
+            media_observe_images = sum(
+                max(0, _int_or_zero(row.get("media_input_images")))
+                for row in media_observe_rows
+            )
+            ordinary_risk_tps = max(
+                (
+                    float(row.get("tps") or 0)
+                    for row, value in zip(rows, classifications, strict=True)
+                    if value.rule_id != "media_input_observe"
+                ),
+                default=0.0,
+            )
             latest = max(
                 rows,
                 key=lambda row: (
@@ -1370,6 +2299,16 @@ class RequestAuditService:
                 ),
             )
             node_id = _positive_int(latest.get("egress_node_id"))
+            recommendations = [
+                value.get("egressRecommendation")
+                for value in account_values
+                if value.get("egressRecommendation")
+                and (
+                    not value["egressRecommendation"].get("egressNodeIds")
+                    or node_id
+                    in value["egressRecommendation"].get("egressNodeIds", [])
+                )
+            ]
             node = nodes.get(node_id or 0, {})
             node_name = str(node.get("name") or latest.get("egress_node_name") or "")
             proxy_pool = bool(node.get("proxyPool")) if "proxyPool" in node else None
@@ -1393,42 +2332,91 @@ class RequestAuditService:
                     ),
                     "p95Tps": round(_p95(speeds), 1),
                     "maxTps": round(max_tps, 1),
-                    "watchCount": (
-                        sum(
-                            1
-                            for value in speeds
-                            if value >= self.settings.degradation_tps
-                        )
-                        if self.settings.request_audit_risk_enabled
-                        else 0
+                    "watchCount": sum(
+                        1 for value in row_risks if value in {"watch", "high"}
                     ),
-                    "highRiskCount": (
-                        sum(
-                            1
-                            for value in speeds
-                            if value >= self.settings.strong_degradation_tps
-                        )
-                        if self.settings.request_audit_risk_enabled
-                        else 0
+                    "highRiskCount": sum(
+                        1 for value in row_risks if value == "high"
                     ),
+                    "reasoningZeroCount": reasoning_zero_count,
+                    "mediaInputCount": media_input_count,
+                    "mediaInputImages": media_input_images,
                     "riskLevel": risk_level,
-                    "riskReasons": self._risk_reasons(max_tps),
+                    "riskReasons": self._risk_reasons(
+                        ordinary_risk_tps,
+                        reasoning_zero_count=reasoning_zero_count,
+                        media_input_count=media_observe_count,
+                        media_input_images=media_observe_images,
+                    ),
                     "accountCount": len(account_values),
                     "riskAccountCount": len(risky_accounts),
                     "accounts": risky_accounts,
                     "lastSeenAt": _iso(latest.get("created_at")),
+                    "egressRecommendation": recommendations[0]
+                    if recommendations
+                    else None,
+                    "egressRecommendationCount": len(recommendations),
                 }
             )
-        rank = {"high": 2, "watch": 1, "normal": 0}
         result.sort(
             key=lambda row: (
-                rank[row["riskLevel"]],
-                row["riskAccountCount"],
-                row["maxTps"],
+                _parse_datetime(row.get("lastSeenAt"))
+                or datetime.min.replace(tzinfo=UTC)
             ),
             reverse=True,
         )
         return result
+
+    def _reasoning_zero_signal(self, row: dict[str, Any]) -> bool:
+        classification = self._classify_record_detail(row)
+        return classification.rule_id == "reasoning_zero"
+
+    def _classify_record_detail(self, row: dict[str, Any]) -> Classification:
+        return classify_audit_sample(
+            status_code=_int_or_zero(row.get("status_code")),
+            output_tokens=_int_or_zero(row.get("output_tokens")),
+            reasoning_tokens=_int_or_zero(row.get("reasoning_tokens")),
+            first_token_ms=_nonnegative_int(row.get("first_token_ms")),
+            duration_ms=_int_or_zero(row.get("duration_ms")),
+            tps=_finite_float(row.get("tps")),
+            thresholds=self._rule_thresholds(),
+            extra={
+                **row,
+                "media_input_images": _int_or_zero(row.get("media_input_images")),
+            },
+        )
+
+    def _classify_values(
+        self,
+        *,
+        tps: float | None,
+        status_code: int,
+        output_tokens: int,
+        reasoning_tokens: int,
+        first_token_ms: int | None = None,
+        duration_ms: int = 0,
+        extra: dict[str, Any] | None = None,
+    ) -> tuple[str, list[str]]:
+        result = classify_audit_sample(
+            status_code=status_code,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            first_token_ms=first_token_ms,
+            duration_ms=duration_ms,
+            tps=tps,
+            thresholds=self._rule_thresholds(),
+            extra=extra,
+        )
+        level = result.name if result.name in {"watch", "high"} else "normal"
+        return level, list(result.reasons if level != "normal" else ())
+
+    def _classify_record(
+        self,
+        row: dict[str, Any],
+    ) -> tuple[str, list[str]]:
+        result = self._classify_record_detail(row)
+        level = result.name if result.name in {"watch", "high"} else "normal"
+        return level, list(result.reasons if level != "normal" else ())
 
     def _classify(self, tps: float | None) -> tuple[str, list[str]]:
         if not self.settings.request_audit_risk_enabled:
@@ -1439,16 +2427,38 @@ class RequestAuditService:
             self.settings.strong_degradation_tps,
         )
 
-    def _risk_reasons(self, tps: float) -> list[str]:
+    def _risk_reasons(
+        self,
+        tps: float,
+        *,
+        reasoning_zero_count: int = 0,
+        media_input_count: int = 0,
+        media_input_images: int = 0,
+    ) -> list[str]:
         if not self.settings.request_audit_risk_enabled:
             return []
+        reasons: list[str] = []
+        if reasoning_zero_count:
+            reasons.append(
+                f"成功请求思考输出为 0 共 {reasoning_zero_count} 次"
+            )
+        if media_input_count and risk_rule_enabled(
+            "media_input_observe",
+            self._rule_thresholds(),
+        ):
+            reasons.append(
+                f"Media Input 请求 {media_input_count} 次 / {media_input_images} 张，"
+                "高 TPS 暂按观察"
+            )
         if tps >= self.settings.strong_degradation_tps:
-            return [
+            reasons.append(
                 f"峰值 {tps:.1f} Token/s ≥ {self.settings.strong_degradation_tps:g} TPS"
-            ]
-        if tps >= self.settings.degradation_tps:
-            return [f"峰值 {tps:.1f} Token/s ≥ {self.settings.degradation_tps:g} TPS"]
-        return []
+            )
+        elif tps >= self.settings.degradation_tps:
+            reasons.append(
+                f"峰值 {tps:.1f} Token/s ≥ {self.settings.degradation_tps:g} TPS"
+            )
+        return reasons
 
     def _trend_payload(
         self,
@@ -1514,15 +2524,75 @@ class RequestAuditService:
                 bucket["measuredRequests"] += 1
                 bucket["_values"].append(tps)
                 bucket["maxTps"] = round(max(bucket["maxTps"], tps), 1)
-                if self.settings.request_audit_risk_enabled:
-                    if tps >= self.settings.degradation_tps:
-                        bucket["watch"] += 1
-                    if tps >= self.settings.strong_degradation_tps:
-                        bucket["high"] += 1
+            risk_level, _ = self._classify_record(row)
+            if risk_level in {"watch", "high"}:
+                bucket["watch"] += 1
+            if risk_level == "high":
+                bucket["high"] += 1
         for bucket in buckets:
             values = bucket.pop("_values")
             bucket["averageTps"] = round(sum(values) / len(values), 1) if values else 0
         return buckets
+
+    @staticmethod
+    def _verification_payload(
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not value:
+            return None
+        bot_flag = value.get("bot_flag")
+        if not isinstance(bot_flag, dict):
+            bot_flag = {}
+        return {
+            "auditId": str(value.get("audit_upstream_id") or ""),
+            "auditCreatedAt": _iso(value.get("audit_created_at")),
+            "auditTps": round(float(value.get("audit_tps") or 0), 2),
+            "status": str(value.get("status") or "pending"),
+            "ssoVerdict": str(value.get("sso_verdict") or ""),
+            "proxyUsed": bool(value.get("proxy_used")),
+            "validSession": (
+                value.get("valid_session")
+                if isinstance(value.get("valid_session"), bool)
+                else None
+            ),
+            "emailMatch": (
+                value.get("email_match")
+                if isinstance(value.get("email_match"), bool)
+                else None
+            ),
+            "statusCode": int(value.get("status_code") or 0),
+            "responseMs": int(value.get("response_ms") or 0),
+            "checkError": str(value.get("check_error") or ""),
+            "botFlag": {
+                "found": bool(bot_flag.get("found")),
+                "source": bot_flag.get("source"),
+                "details": str(bot_flag.get("details") or ""),
+                "policy": str(bot_flag.get("policy") or ""),
+                "risk": bot_flag.get("risk"),
+                "event": str(bot_flag.get("event") or ""),
+                "denied": bool(bot_flag.get("denied")),
+                "flagged": bool(bot_flag.get("flagged")),
+            },
+            "actionStatus": str(value.get("action_status") or "pending"),
+            "actionError": str(value.get("action_error") or ""),
+            "egressRecommendation": (
+                value.get("egress_recommendation")
+                if isinstance(value.get("egress_recommendation"), dict)
+                else None
+            ),
+            "previousPriority": (
+                int(value["previous_priority"])
+                if value.get("previous_priority") is not None
+                else None
+            ),
+            "appliedPriority": (
+                int(value["applied_priority"])
+                if value.get("applied_priority") is not None
+                else None
+            ),
+            "checkedAt": _iso(value.get("checked_at")),
+            "updatedAt": _iso(value.get("updated_at")),
+        }
 
     def _record_payload(
         self,
@@ -1530,8 +2600,17 @@ class RequestAuditService:
         *,
         probe_samples: list[dict[str, Any]] | None = None,
         upstream_account: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        risk_level, risk_reasons = self._classify(_finite_float(row.get("tps")))
+        classification = self._classify_record_detail(row)
+        risk_level = (
+            classification.name
+            if classification.name in {"watch", "high"}
+            else "normal"
+        )
+        risk_reasons = list(
+            classification.reasons if risk_level != "normal" else ()
+        )
         upstream_account = upstream_account or {}
         return {
             "id": str(row.get("upstream_id") or ""),
@@ -1558,6 +2637,8 @@ class RequestAuditService:
             "statusCode": int(row.get("status_code") or 0),
             "streaming": bool(row.get("streaming")),
             "inputTokens": int(row.get("input_tokens") or 0),
+            "mediaInputImages": int(row.get("media_input_images") or 0),
+            "hasMediaInput": int(row.get("media_input_images") or 0) > 0,
             "outputTokens": int(row.get("output_tokens") or 0),
             "reasoningTokens": int(row.get("reasoning_tokens") or 0),
             "totalTokens": int(row.get("total_tokens") or 0),
@@ -1570,6 +2651,10 @@ class RequestAuditService:
             "tps": round(float(row["tps"]), 2) if row.get("tps") is not None else None,
             "riskLevel": risk_level,
             "riskReasons": risk_reasons,
+            "riskRuleId": classification.rule_id,
+            "riskRuleIds": list(classification.rule_ids),
+            "reasoningZeroRisk": self._reasoning_zero_signal(row),
+            "preDisableCheck": self._verification_payload(verification or {}),
             "probeSampleCount": len(probe_samples or []),
             "probeSamples": probe_samples or [],
             "createdAt": _iso(row.get("created_at")),

@@ -77,6 +77,9 @@ def build_settings_router(
             "buffer_first_token_share",
             "min_generation_ms",
             "minimum_output_tokens",
+            "reasoning_zero_risk_enabled",
+            "media_input_observe_enabled",
+            "risk_rule_overrides",
         }
         if risk_fields.intersection(changed):
             accounts.recalculate_all(
