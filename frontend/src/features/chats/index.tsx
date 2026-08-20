@@ -7,7 +7,6 @@ import {
   Edit,
   Paperclip,
   Phone,
-  ImagePlus,
   Plus,
   Search as SearchIcon,
   Send,
@@ -277,17 +276,8 @@ export function Chats() {
                         type='button'
                         variant='ghost'
                         className='hidden h-8 rounded-md lg:inline-flex'
-                      >
-                        <ImagePlus
-                          size={20}
-                          className='stroke-muted-foreground'
-                        />
-                      </Button>
-                      <Button
-                        size='icon'
-                        type='button'
-                        variant='ghost'
-                        className='hidden h-8 rounded-md lg:inline-flex'
+                        aria-label='添加图片或文件'
+                        title='添加图片或文件'
                       >
                         <Paperclip
                           size={20}
