@@ -429,6 +429,10 @@ export function Composer({
   onSubmit: (event?: FormEvent) => void
   onStop: () => void
 }) {
+  const selectedProvider = providers.find(
+    (provider) => provider.id === providerId
+  )
+
   return (
     <form
       onSubmit={onSubmit}
@@ -453,7 +457,7 @@ export function Composer({
           disabled={streaming}
           className='max-h-44 min-h-24 resize-none border-0 shadow-none focus-visible:ring-0'
         />
-        <div className='flex items-center gap-2 border-t px-2.5 py-2'>
+        <div className='flex items-center gap-2 border-t bg-muted/20 px-2.5 py-2'>
           <div className='flex min-w-0 flex-1 items-center gap-1.5'>
             <Select
               value={providerId}
@@ -463,21 +467,34 @@ export function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型提供商'
-                className='w-[min(8rem,28vw)] border-0 bg-muted/60 px-2 shadow-none sm:w-44'
+                className='h-10 w-[min(8.25rem,28vw)] justify-start gap-2 rounded-lg border-border/70 bg-background px-2.5 shadow-xs transition-colors hover:bg-accent focus-visible:ring-2 data-[state=open]:bg-accent sm:w-44'
               >
-                <SelectValue
-                  placeholder={providersLoading ? '读取提供商中' : '提供商'}
-                />
+                <span className='hidden size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary sm:flex'>
+                  <ServerCog className='size-3.5' />
+                </span>
+                <span className='min-w-0 flex-1 text-left leading-none'>
+                  <span className='mb-1 block text-[9px] font-medium tracking-wide text-muted-foreground'>
+                    提供商
+                  </span>
+                  <SelectValue
+                    className='block truncate text-xs font-medium text-foreground'
+                    placeholder={
+                      providersLoading ? '读取提供商中' : '选择提供商'
+                    }
+                  >
+                    {selectedProvider?.name}
+                  </SelectValue>
+                </span>
               </SelectTrigger>
               <SelectContent>
                 {providers.map((provider) => (
                   <SelectItem key={provider.id} value={provider.id}>
                     {provider.name}
+                    {provider.isDefault ? ' · 默认' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <span className='text-xs text-muted-foreground'>/</span>
             <Select
               value={model}
               onValueChange={onModelChange}
@@ -486,15 +503,30 @@ export function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型'
-                className='w-[min(10rem,34vw)] min-w-0 border-0 bg-muted/60 px-2 font-mono shadow-none sm:w-56'
+                className='h-10 w-[min(10rem,36vw)] min-w-0 justify-start gap-2 rounded-lg border-border/70 bg-background px-2.5 shadow-xs transition-colors hover:bg-accent focus-visible:ring-2 data-[state=open]:bg-accent sm:w-56'
               >
-                <SelectValue
-                  placeholder={modelsLoading ? '读取模型中' : '模型'}
-                />
+                <span className='hidden size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary sm:flex'>
+                  <BrainCircuit className='size-3.5' />
+                </span>
+                <span className='min-w-0 flex-1 text-left leading-none'>
+                  <span className='mb-1 block text-[9px] font-medium tracking-wide text-muted-foreground'>
+                    模型
+                  </span>
+                  <SelectValue
+                    className='block truncate font-mono text-xs font-medium text-foreground'
+                    placeholder={modelsLoading ? '读取模型中' : '选择模型'}
+                  >
+                    {model || undefined}
+                  </SelectValue>
+                </span>
               </SelectTrigger>
               <SelectContent>
                 {modelNames.map((modelName) => (
-                  <SelectItem key={modelName} value={modelName}>
+                  <SelectItem
+                    key={modelName}
+                    value={modelName}
+                    className='font-mono'
+                  >
                     {modelName}
                   </SelectItem>
                 ))}
@@ -506,21 +538,21 @@ export function Composer({
               type='button'
               size='sm'
               variant='outline'
-              className='shrink-0'
+              className='h-10 shrink-0 rounded-lg px-3 max-[360px]:size-10 max-[360px]:px-0'
               onClick={onStop}
             >
               <Square />
-              停止
+              <span className='max-[360px]:sr-only'>停止</span>
             </Button>
           ) : (
             <Button
               type='submit'
               size='sm'
-              className='shrink-0'
+              className='h-10 shrink-0 rounded-lg px-3 max-[360px]:size-10 max-[360px]:px-0'
               disabled={!input.trim() || !providerId || !model || !requestValid}
             >
               <Send />
-              发送
+              <span className='max-[360px]:sr-only'>发送</span>
             </Button>
           )}
         </div>
