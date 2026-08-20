@@ -458,7 +458,10 @@ export function Composer({
           className='max-h-44 min-h-24 resize-none border-0 shadow-none focus-visible:ring-0'
         />
         <div className='flex items-center gap-2 border-t bg-muted/20 px-2.5 py-2'>
-          <div className='flex min-w-0 flex-1 items-center gap-1.5'>
+          <ActionToolbar
+            label='快速选择模型'
+            className='min-w-0 flex-1 overflow-hidden'
+          >
             <Select
               value={providerId}
               onValueChange={onProviderChange}
@@ -467,24 +470,17 @@ export function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型提供商'
-                className='h-10 w-[min(8.25rem,28vw)] justify-start gap-2 rounded-lg border-border/70 bg-background px-2.5 shadow-xs transition-colors hover:bg-accent focus-visible:ring-2 data-[state=open]:bg-accent sm:w-44'
+                className='h-8 min-w-0 flex-1 justify-start border-0 bg-transparent px-2 shadow-none hover:bg-accent/70 focus-visible:ring-0 data-[state=open]:bg-accent sm:w-44 sm:flex-none'
               >
-                <span className='hidden size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary sm:flex'>
-                  <ServerCog className='size-3.5' />
-                </span>
-                <span className='min-w-0 flex-1 text-left leading-none'>
-                  <span className='mb-1 block text-[9px] font-medium tracking-wide text-muted-foreground'>
-                    提供商
-                  </span>
-                  <SelectValue
-                    className='block truncate text-xs font-medium text-foreground'
-                    placeholder={
-                      providersLoading ? '读取提供商中' : '选择提供商'
-                    }
-                  >
-                    {selectedProvider?.name}
-                  </SelectValue>
-                </span>
+                <ServerCog className='size-3.5 shrink-0 text-primary' />
+                <SelectValue
+                  className='min-w-0 truncate text-xs font-medium'
+                  placeholder={
+                    providersLoading ? '读取提供商中' : '选择提供商'
+                  }
+                >
+                  {selectedProvider?.name}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {providers.map((provider) => (
@@ -495,6 +491,7 @@ export function Composer({
                 ))}
               </SelectContent>
             </Select>
+            <span className='h-4 w-px shrink-0 bg-border' aria-hidden='true' />
             <Select
               value={model}
               onValueChange={onModelChange}
@@ -503,22 +500,15 @@ export function Composer({
               <SelectTrigger
                 size='sm'
                 aria-label='快速切换模型'
-                className='h-10 w-[min(10rem,36vw)] min-w-0 justify-start gap-2 rounded-lg border-border/70 bg-background px-2.5 shadow-xs transition-colors hover:bg-accent focus-visible:ring-2 data-[state=open]:bg-accent sm:w-56'
+                className='h-8 min-w-0 flex-[1.35] justify-start border-0 bg-transparent px-2 font-mono shadow-none hover:bg-accent/70 focus-visible:ring-0 data-[state=open]:bg-accent sm:w-56 sm:flex-none'
               >
-                <span className='hidden size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary sm:flex'>
-                  <BrainCircuit className='size-3.5' />
-                </span>
-                <span className='min-w-0 flex-1 text-left leading-none'>
-                  <span className='mb-1 block text-[9px] font-medium tracking-wide text-muted-foreground'>
-                    模型
-                  </span>
-                  <SelectValue
-                    className='block truncate font-mono text-xs font-medium text-foreground'
-                    placeholder={modelsLoading ? '读取模型中' : '选择模型'}
-                  >
-                    {model || undefined}
-                  </SelectValue>
-                </span>
+                <BrainCircuit className='size-3.5 shrink-0 text-primary' />
+                <SelectValue
+                  className='min-w-0 truncate text-xs font-medium'
+                  placeholder={modelsLoading ? '读取模型中' : '选择模型'}
+                >
+                  {model || undefined}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {modelNames.map((modelName) => (
@@ -532,7 +522,7 @@ export function Composer({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </ActionToolbar>
           {streaming ? (
             <Button
               type='button'
