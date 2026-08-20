@@ -47,7 +47,6 @@ import {
   createMessage,
   isJsonObject,
   markVariant,
-  nextRenderFrame,
   parseCompletionStreamEvent,
   readError,
   requestMessages,
@@ -301,6 +300,37 @@ export function PlaygroundPage() {
     variantIndex: number
   ) => {
     const controller = new AbortController()
+    let pending: CompletionStreamDelta = { content: '', reasoning: '' }
+    let animationFrame = 0
+    const flushPending = () => {
+      animationFrame = 0
+      if (!pending.content && !pending.reasoning) return
+      const delta = pending
+      pending = { content: '', reasoning: '' }
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === conversation.id
+            ? appendStreamDelta(item, assistantId, variantIndex, delta)
+            : item
+        )
+      )
+    }
+    const cancelPendingFlush = () => {
+      if (!animationFrame) return
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = 0
+    }
+    const complete = () => {
+      cancelPendingFlush()
+      flushPending()
+      markVariant(
+        conversation.id,
+        assistantId,
+        variantIndex,
+        'done',
+        setConversations
+      )
+    }
     abortRef.current = controller
     setStreaming(true)
     try {
@@ -353,25 +383,12 @@ export function PlaygroundPage() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      const appendDelta = (delta: CompletionStreamDelta) => {
-        setConversations((current) =>
-          current.map((item) =>
-            item.id === conversation.id
-              ? appendStreamDelta(item, assistantId, variantIndex, delta)
-              : item
-          )
-        )
+      const scheduleFlush = () => {
+        // Coalesce a burst into one render without slowing down SSE consumption.
+        if (animationFrame) return
+        animationFrame = window.requestAnimationFrame(flushPending)
       }
-      const complete = () => {
-        markVariant(
-          conversation.id,
-          assistantId,
-          variantIndex,
-          'done',
-          setConversations
-        )
-      }
-      const consumeEvent = async (event: string) => {
+      const consumeEvent = (event: string) => {
         const parsed = parseCompletionStreamEvent(event)
         if (!parsed) return false
         if (parsed.done) {
@@ -379,10 +396,9 @@ export function PlaygroundPage() {
           return true
         }
         if (parsed.delta.content || parsed.delta.reasoning) {
-          appendDelta(parsed.delta)
-          if (document.visibilityState === 'visible') {
-            await nextRenderFrame()
-          }
+          pending.content += parsed.delta.content
+          pending.reasoning += parsed.delta.reasoning
+          scheduleFlush()
         }
         return false
       }
@@ -394,18 +410,20 @@ export function PlaygroundPage() {
         const events = buffer.split('\n\n')
         buffer = events.pop() ?? ''
         for (const event of events) {
-          if (await consumeEvent(event)) return
+          if (consumeEvent(event)) return
         }
       }
       buffer += decoder.decode()
       buffer = buffer.replace(/\r\n/g, '\n')
-      if (buffer.trim() && (await consumeEvent(buffer))) return
+      if (buffer.trim() && consumeEvent(buffer)) return
       complete()
     } catch (error) {
       const aborted =
         error instanceof DOMException && error.name === 'AbortError'
       const authenticationFailure =
         error instanceof ApiError && isAuthenticationRequiredCode(error.code)
+      cancelPendingFlush()
+      flushPending()
       markVariant(
         conversation.id,
         assistantId,

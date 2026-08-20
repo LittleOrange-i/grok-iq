@@ -17,10 +17,6 @@ import type {
 const DB_NAME = 'grokiq-playground'
 const STORE = 'state'
 
-export function nextRenderFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()))
-}
-
 export function chatCompletionUrl(baseUrl: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
   return base.endsWith('/v1')
