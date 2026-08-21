@@ -5,6 +5,13 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from app.reasoning_policy import (
+    ReasoningModelPolicy,
+    default_reasoning_model_policies,
+    normalize_reasoning_model_policies,
+    resolve_reasoning_model_policy,
+)
+
 
 @dataclass(slots=True, frozen=True)
 class RuleContext:
@@ -326,6 +333,9 @@ class Thresholds:
     risk_suspect_floor: float = 50
     risk_high_floor: float = 75
     reasoning_zero_risk_enabled: bool = True
+    reasoning_model_policies: tuple[dict[str, Any], ...] | list[dict[str, Any]] = field(
+        default_factory=default_reasoning_model_policies
+    )
     media_input_observe_enabled: bool = True
     request_audit_risk_enabled: bool = True
     # A list/dict of {id, enabled, priority, ...} overrides.  Unknown IDs are
@@ -335,6 +345,11 @@ class Thresholds:
         default_factory=dict
     )
     _risk_rule_override_map: Mapping[str, Mapping[str, Any]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _reasoning_model_policies: tuple[ReasoningModelPolicy, ...] = field(
         init=False,
         repr=False,
         compare=False,
@@ -350,6 +365,27 @@ class Thresholds:
             "_risk_rule_override_map",
             MappingProxyType(normalized),
         )
+        object.__setattr__(
+            self,
+            "_reasoning_model_policies",
+            normalize_reasoning_model_policies(self.reasoning_model_policies),
+        )
+
+    def reasoning_policy(
+        self,
+        *,
+        model_upstream_model: str = "",
+        model_public_id: str = "",
+        operation: str = "",
+        media_input_images: int = 0,
+    ) -> ReasoningModelPolicy:
+        return resolve_reasoning_model_policy(
+            self._reasoning_model_policies,
+            model_upstream_model=model_upstream_model,
+            model_public_id=model_public_id,
+            operation=operation,
+            media_input_images=media_input_images,
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -361,6 +397,11 @@ class SampleMetrics:
     duration_ms: int
     egress_key: str
     expected_matched: bool | None = None
+    model_upstream_model: str = ""
+    model_public_id: str = ""
+    operation: str = "chat"
+    reasoning_tokens_reported: bool = False
+    media_input_images: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -438,19 +479,70 @@ def _rule_insufficient_output(
     return None
 
 
-def _rule_reasoning_zero(context: RuleContext, _thresholds: Thresholds) -> RuleMatch | None:
-    if (
-        context.status_code >= 200
+def reasoning_model_policy(
+    context: RuleContext,
+    thresholds: Thresholds,
+) -> ReasoningModelPolicy:
+    return thresholds.reasoning_policy(
+        model_upstream_model=str(
+            context.extra.get("model_upstream_model")
+            or context.extra.get("modelUpstreamModel")
+            or ""
+        ),
+        model_public_id=str(
+            context.extra.get("model_public_id")
+            or context.extra.get("modelPublicId")
+            or ""
+        ),
+        operation=str(context.extra.get("operation") or ""),
+        media_input_images=_media_input_images(context),
+    )
+
+
+def reasoning_zero_applicable(
+    context: RuleContext,
+    thresholds: Thresholds,
+) -> tuple[ReasoningModelPolicy, bool]:
+    policy = reasoning_model_policy(context, thresholds)
+    reported = context.extra.get("reasoning_tokens_reported")
+    if reported is None:
+        reported = context.extra.get("reasoningTokensReported")
+    applicable = bool(
+        policy.mode in {"required", "observe"}
+        and reported is True
+        and context.status_code >= 200
         and context.status_code < 300
-        and context.output_tokens > 0
+        and context.output_tokens >= policy.minimum_output_tokens
+    )
+    return policy, applicable
+
+
+def _rule_reasoning_zero(context: RuleContext, thresholds: Thresholds) -> RuleMatch | None:
+    policy, applicable = reasoning_zero_applicable(context, thresholds)
+    if (
+        applicable
         and context.reasoning_tokens <= 0
     ):
+        required = policy.mode == "required"
+        classification = "reasoning_zero" if required else "reasoning_zero_observe"
+        if required and context.scope == "audit":
+            reason = (
+                "思考输出为 0 候选；同账号、上游模型和请求类型连续 "
+                f"{policy.min_count} 次后升级高风险"
+            )
+        elif required:
+            reason = "模型策略要求思考输出，但本次思考 Token 为 0"
+        else:
+            reason = "当前模型与请求类型仅观察思考输出为 0"
         return RuleMatch(
-            "reasoning_zero",
-            severity=3,
+            classification,
+            severity=3 if required else 1,
             anomalous=True,
-            hard=True,
-            reason="成功请求的思考输出为 0",
+            # A single zero is an observation for every source. The audit
+            # evaluator and probe aggregation promote a consecutive required
+            # sequence only after its model policy threshold is reached.
+            hard=False,
+            reason=reason,
         )
     return None
 
@@ -572,16 +664,21 @@ for _builtin_rule in (
     RiskRule(
         "reasoning_zero",
         "思考输出为 0",
-        "成功请求有可见输出但思考 Token 为 0",
+        "按上游模型、请求类型、字段上报和连续次数识别思考输出为 0",
         _rule_reasoning_zero,
-        priority=50,
+        # Throughput and Media Input rules run first so an observed reasoning
+        # gap cannot hide an independently high TPS signal. Consecutive
+        # reasoning promotion is evaluated separately by the audit/probe
+        # aggregators and therefore remains available when another rule wins.
+        priority=110,
         classification="reasoning_zero",
         anomalous=True,
-        hard=True,
+        hard=False,
         reason_builder=lambda count, _thresholds: (
             f"成功请求思考输出为 0 共 {count} 次"
         ),
         audit_action_mode="quarantine",
+        audit_min_count=2,
     ),
     RiskRule(
         "media_input_observe",
@@ -663,6 +760,8 @@ def active_anomaly_classifications(thresholds: Thresholds | None = None) -> set[
             continue
         if rule.anomalous:
             result.add(rule.classification or rule.id)
+            if rule.id == "reasoning_zero":
+                result.add("reasoning_zero_observe")
     return result
 
 
@@ -675,7 +774,13 @@ def rule_metadata(rule_id: str) -> RuleMatch | None:
         "buffered_hard": RuleMatch("buffered_hard", severity=2, anomalous=True, hard=True),
         "fast_risk": RuleMatch("fast_risk", severity=4, anomalous=True, hard=True),
         "marker_miss": RuleMatch("marker_miss", severity=5, anomalous=True, hard=True),
-        "reasoning_zero": RuleMatch("reasoning_zero", severity=3, anomalous=True, hard=True),
+        # The persisted name represents both the initial observation and a
+        # promoted consecutive signal. ``ProbeSample.severity`` distinguishes
+        # the latter for hard-signal trend queries; the name alone is not hard.
+        "reasoning_zero": RuleMatch("reasoning_zero", severity=3, anomalous=True),
+        "reasoning_zero_observe": RuleMatch(
+            "reasoning_zero_observe", severity=1, anomalous=True
+        ),
     }
     if rule_id in mapping:
         return mapping[rule_id]
@@ -751,6 +856,13 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
         buffered=buffered,
         expected_matched=sample.expected_matched,
         scope="probe",
+        extra={
+            "model_upstream_model": sample.model_upstream_model,
+            "model_public_id": sample.model_public_id,
+            "operation": sample.operation,
+            "reasoning_tokens_reported": sample.reasoning_tokens_reported,
+            "media_input_images": sample.media_input_images,
+        },
     )
     evaluated = DEFAULT_RISK_RULES.evaluate(context, thresholds)
     if evaluated is None:

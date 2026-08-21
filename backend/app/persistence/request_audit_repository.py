@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, false, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.clock import utc_now
@@ -87,6 +87,7 @@ class RequestAuditRepository:
             "media_input_images",
             "output_tokens",
             "reasoning_tokens",
+            "reasoning_tokens_reported",
             "total_tokens",
             "first_token_ms",
             "duration_ms",
@@ -407,15 +408,7 @@ class RequestAuditRepository:
         page: int = 1,
         page_size: int = 50,
         account: str = "",
-        risk: str = "",
         egress_node_id: int | None = None,
-        watch_threshold: float = 150,
-        high_threshold: float = 500,
-        risk_enabled: bool = True,
-        reasoning_zero_risk_enabled: bool = True,
-        media_input_observe_enabled: bool = True,
-        elevated_tps_risk_enabled: bool = True,
-        fast_tps_risk_enabled: bool = True,
     ) -> dict[str, Any]:
         page = max(1, page)
         page_size = max(1, min(page_size, 200))
@@ -431,79 +424,6 @@ class RequestAuditRepository:
             if start is None and end is None and day_key:
                 query = query.where(RequestAuditRecord.day_key == day_key)
                 count_query = count_query.where(RequestAuditRecord.day_key == day_key)
-            # Risk is evaluated against the live runtime thresholds instead of
-            # the classification snapshot stored when the row was fetched.
-            # Settings changes therefore take effect immediately in filters.
-            reasoning_zero_clause = (
-                (RequestAuditRecord.status_code >= 200)
-                & (RequestAuditRecord.status_code < 300)
-                & (RequestAuditRecord.output_tokens > 0)
-                & (RequestAuditRecord.reasoning_tokens == 0)
-            )
-            if not reasoning_zero_risk_enabled:
-                reasoning_zero_clause = false()
-            media_input_clause = RequestAuditRecord.media_input_images > 0
-            media_observe_clause = (
-                media_input_clause
-                & (RequestAuditRecord.tps >= watch_threshold)
-                & ~reasoning_zero_clause
-                if media_input_observe_enabled
-                else false()
-            )
-            if not risk_enabled:
-                if risk in {"risky", "watch", "high"}:
-                    query = query.where(false())
-                    count_query = count_query.where(false())
-            elif risk == "risky":
-                tps_clause = false()
-                if elevated_tps_risk_enabled:
-                    tps_clause = (
-                        (RequestAuditRecord.tps >= watch_threshold)
-                        & (RequestAuditRecord.tps < high_threshold)
-                    )
-                if fast_tps_risk_enabled:
-                    tps_clause = tps_clause | (
-                        RequestAuditRecord.tps >= high_threshold
-                    )
-                clause = tps_clause | reasoning_zero_clause | media_observe_clause
-                query = query.where(clause)
-                count_query = count_query.where(clause)
-            elif risk == "high":
-                clause = reasoning_zero_clause
-                if fast_tps_risk_enabled:
-                    clause = clause | (
-                        (RequestAuditRecord.tps >= high_threshold)
-                        & ~media_observe_clause
-                    )
-                query = query.where(clause)
-                count_query = count_query.where(clause)
-            elif risk == "watch":
-                clause = false()
-                if elevated_tps_risk_enabled:
-                    clause = (
-                        (RequestAuditRecord.tps >= watch_threshold)
-                        & (RequestAuditRecord.tps < high_threshold)
-                        & ~reasoning_zero_clause
-                    )
-                clause = clause | media_observe_clause
-                query = query.where(clause)
-                count_query = count_query.where(clause)
-            elif risk == "normal":
-                risky_tps_clause = false()
-                if elevated_tps_risk_enabled:
-                    risky_tps_clause = risky_tps_clause | (
-                        (RequestAuditRecord.tps >= watch_threshold)
-                        & (RequestAuditRecord.tps < high_threshold)
-                    )
-                if fast_tps_risk_enabled:
-                    risky_tps_clause = risky_tps_clause | (
-                        RequestAuditRecord.tps >= high_threshold
-                    )
-                if media_input_observe_enabled:
-                    risky_tps_clause = risky_tps_clause & ~media_observe_clause
-                clause = ~risky_tps_clause & ~reasoning_zero_clause & ~media_observe_clause
-                query = query.where(clause)
-                count_query = count_query.where(clause)
             if egress_node_id is not None:
                 query = query.where(
                     RequestAuditRecord.egress_node_id == egress_node_id

@@ -178,6 +178,7 @@ const degradationClassifications = new Set([
   'fast_risk',
   'marker_miss',
   'reasoning_zero',
+  'reasoning_zero_observe',
 ])
 
 const RUNS_VIEW_STORAGE_KEY = 'grokiq.monitor.runs-view.v1'

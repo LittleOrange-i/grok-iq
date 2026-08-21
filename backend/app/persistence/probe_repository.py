@@ -47,6 +47,7 @@ DEGRADATION_CLASSIFICATIONS = frozenset(
         "fast_risk",
         "marker_miss",
         "reasoning_zero",
+        "reasoning_zero_observe",
     }
 )
 PROBE_DURATION_ESTIMATE_BACKFILL_KEY = _PROBE_DURATION_ESTIMATE_BACKFILL_KEY

@@ -406,6 +406,9 @@ class RuntimeSettingsInput(BaseModel):
     reasoning_zero_risk_enabled: bool | None = Field(
         default=None, alias="reasoningZeroRiskEnabled"
     )
+    reasoning_model_policies: list[dict[str, Any]] | None = Field(
+        default=None, alias="reasoningModelPolicies", max_length=200
+    )
     media_input_observe_enabled: bool | None = Field(
         default=None, alias="mediaInputObserveEnabled"
     )

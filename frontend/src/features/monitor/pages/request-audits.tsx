@@ -2,8 +2,6 @@ import {
   useDeferredValue,
   useMemo,
   useState,
-  type Dispatch,
-  type SetStateAction,
 } from 'react'
 import {
   keepPreviousData,
@@ -35,7 +33,6 @@ import {
   ScanSearch,
   Settings2,
   ShieldAlert,
-  SlidersHorizontal,
   Timer,
   UsersRound,
   Zap,
@@ -69,7 +66,6 @@ import {
   type RequestAuditThresholds,
   type RequestAuditWindowInput,
   type RequestAuditWindowPreset,
-  type RuntimeSettingsUpdate,
 } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
@@ -100,16 +96,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -223,11 +209,6 @@ type AuditProbeSelection = {
   accountIds: number[]
   disabledAccountCount: number
   sourceRecordCount: number
-}
-
-type AuditConfigDraft = RequestAuditConfig & {
-  watchTps: number
-  highTps: number
 }
 
 function uniqueAccountIds(values: Array<number | null | undefined>) {
@@ -401,17 +382,6 @@ function PreDisableCheckBadge({
   )
 }
 
-function configDraft(
-  config: RequestAuditConfig | undefined,
-  thresholds: RequestAuditThresholds | undefined
-): AuditConfigDraft {
-  return {
-    ...(config ?? fallbackConfig),
-    watchTps: thresholds?.watch ?? 150,
-    highTps: thresholds?.high ?? 500,
-  }
-}
-
 function toDateTimeLocal(value: Date) {
   const offset = value.getTimezoneOffset() * 60_000
   return new Date(value.getTime() - offset).toISOString().slice(0, 16)
@@ -516,14 +486,16 @@ function RiskBadge({
     value === 'normal'
       ? '正常'
       : value === 'watch'
-        ? `观察 ≥ ${formatNumber(thresholds.watch)} TPS`
-        : `高风险 / 思考 0`
+        ? '观察'
+        : '高风险'
   return (
     <Badge
       variant={riskVariant[value]}
       title={
         value === 'high'
-          ? '达到高 TPS 阈值，或命中已开启的思考输出为 0 信号'
+          ? `达到 ${formatNumber(thresholds.high)} TPS，或命中已启用的连续高风险规则`
+          : value === 'watch'
+            ? `达到 ${formatNumber(thresholds.watch)} TPS，或命中观察型规则`
           : undefined
       }
     >
@@ -661,344 +633,6 @@ function accountNodeLabel(account: RequestAuditAccountRisk) {
     return account.egressNodeIds.map((id) => `节点 #${id}`).join('、')
   }
   return '未映射代理节点'
-}
-
-function ToggleSetting({
-  title,
-  description,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  title: string
-  description: string
-  checked: boolean
-  disabled?: boolean
-  onCheckedChange: (checked: boolean) => void
-}) {
-  return (
-    <div className='flex min-h-14 items-center justify-between gap-4 rounded-lg border bg-muted/15 px-3 py-2.5'>
-      <div className='min-w-0'>
-        <div className='text-sm font-medium'>{title}</div>
-        <div className='mt-0.5 text-xs leading-5 text-muted-foreground'>
-          {description}
-        </div>
-      </div>
-      <Switch
-        checked={checked}
-        disabled={disabled}
-        aria-label={title}
-        onCheckedChange={onCheckedChange}
-      />
-    </div>
-  )
-}
-
-function AuditConfigurationSheet({
-  open,
-  onOpenChange,
-  draft,
-  setDraft,
-  saving,
-  onSave,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  draft: AuditConfigDraft
-  setDraft: Dispatch<SetStateAction<AuditConfigDraft>>
-  saving: boolean
-  onSave: () => void
-}) {
-  const update = <K extends keyof AuditConfigDraft>(
-    key: K,
-    value: AuditConfigDraft[K]
-  ) => setDraft((current) => ({ ...current, [key]: value }))
-
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className='w-[min(94vw,42rem)] sm:max-w-2xl'>
-        <SheetHeader className='border-b pb-4'>
-          <SheetTitle className='flex items-center gap-2'>
-            <SlidersHorizontal className='size-4 text-primary' />
-            请求审计运行配置
-          </SheetTitle>
-          <SheetDescription>
-            控制本地投影、自适应扫描、风险识别与页面后台刷新。设置保存后立即热应用。
-          </SheetDescription>
-        </SheetHeader>
-
-        <div className='min-h-0 flex-1 space-y-6 overflow-y-auto px-4 pb-4'>
-          <section className='space-y-3'>
-            <div>
-              <h3 className='text-sm font-semibold'>功能开关</h3>
-              <p className='mt-0.5 text-xs text-muted-foreground'>
-                主开关关闭后保留历史投影，只停止新的审计拉取。
-              </p>
-            </div>
-            <div className='grid gap-2 sm:grid-cols-2'>
-              <ToggleSetting
-                title='请求审计监控'
-                description='允许手动和自动扫描 grok_build 请求审计。'
-                checked={draft.enabled}
-                onCheckedChange={(value) => update('enabled', value)}
-              />
-              <ToggleSetting
-                title='自动增量扫描'
-                description='由任务中心持续拉取最新游标页。'
-                checked={draft.autoScanEnabled}
-                disabled={!draft.enabled}
-                onCheckedChange={(value) => update('autoScanEnabled', value)}
-              />
-              <ToggleSetting
-                title='TPS 风险识别'
-                description='按当前观察与高风险阈值标记账号和代理节点。'
-                checked={draft.riskEnabled}
-                disabled={!draft.enabled}
-                onCheckedChange={(value) => update('riskEnabled', value)}
-              />
-              <ToggleSetting
-                title='思考输出为 0 识别'
-                description='成功请求有输出但思考 Token 为 0 时，默认作为降智信号。'
-                checked={draft.reasoningZeroRiskEnabled}
-                disabled={!draft.enabled || !draft.riskEnabled}
-                onCheckedChange={(value) =>
-                  update('reasoningZeroRiskEnabled', value)
-                }
-              />
-              <ToggleSetting
-                title='Media Input 暂按观察'
-                description='含图片等媒体输入的请求，即使 TPS 偏高也先标记观察，不直接进入账号处置。'
-                checked={draft.mediaInputObserveEnabled}
-                disabled={!draft.enabled || !draft.riskEnabled}
-                onCheckedChange={(value) =>
-                  update('mediaInputObserveEnabled', value)
-                }
-              />
-              <ToggleSetting
-                title='TPS-only 自动降低优先级'
-                description='TPS 多次异常但代理 SSO 正常时保留账号、降低调度优先级并提示更换出口。'
-                checked={draft.tpsOnlyDeprioritizeEnabled}
-                disabled={!draft.enabled || !draft.riskEnabled}
-                onCheckedChange={(value) =>
-                  update('tpsOnlyDeprioritizeEnabled', value)
-                }
-              />
-              <ToggleSetting
-                title='账号隔离操作'
-                description='允许从账号或代理节点详情直接联动隔离。'
-                checked={draft.isolationEnabled}
-                disabled={!draft.riskEnabled}
-                onCheckedChange={(value) => update('isolationEnabled', value)}
-              />
-              <ToggleSetting
-                title='页面无感刷新'
-                description='保留当前内容，在后台更新本地聚合结果。'
-                checked={draft.liveRefreshEnabled}
-                onCheckedChange={(value) => update('liveRefreshEnabled', value)}
-              />
-              <ToggleSetting
-                title='自适应扫描节奏'
-                description='根据流量、风险峰值和分页积压动态安排下次扫描。'
-                checked={draft.adaptiveScanEnabled}
-                disabled={!draft.autoScanEnabled}
-                onCheckedChange={(value) =>
-                  update('adaptiveScanEnabled', value)
-                }
-              />
-            </div>
-          </section>
-
-          <Separator />
-
-          <section className='space-y-3'>
-            <div>
-              <h3 className='text-sm font-semibold'>TPS-only 处置</h3>
-              <p className='mt-0.5 text-xs text-muted-foreground'>
-                仅 TPS 达到高风险阈值且累计达到次数后执行；SSO
-                标记仍走立即停用。
-              </p>
-            </div>
-            <div className='grid gap-3 sm:grid-cols-2'>
-              <NumberField
-                label='累计异常次数'
-                value={draft.tpsOnlyMinCount}
-                min={2}
-                max={100}
-                disabled={!draft.tpsOnlyDeprioritizeEnabled}
-                onChange={(value) => update('tpsOnlyMinCount', value)}
-              />
-              <NumberField
-                label='降低后的账号优先级'
-                value={draft.tpsOnlyPriority}
-                min={-2000000000}
-                max={0}
-                disabled={!draft.tpsOnlyDeprioritizeEnabled}
-                onChange={(value) => update('tpsOnlyPriority', value)}
-              />
-            </div>
-          </section>
-
-          <Separator />
-
-          <section className='space-y-3'>
-            <div>
-              <h3 className='text-sm font-semibold'>忙闲识别与扫描节奏</h3>
-              <p className='mt-0.5 text-xs text-muted-foreground'>
-                忙时必须短于常态，常态必须短于闲时；最近风险请求也会进入忙时。
-              </p>
-            </div>
-            {draft.adaptiveScanEnabled ? (
-              <div className='grid gap-3 sm:grid-cols-2'>
-                <NumberField
-                  label='忙时扫描间隔（秒）'
-                  value={draft.busyScanIntervalSeconds}
-                  min={15}
-                  max={300}
-                  onChange={(value) => update('busyScanIntervalSeconds', value)}
-                />
-                <NumberField
-                  label='常态扫描间隔（秒）'
-                  value={draft.normalScanIntervalSeconds}
-                  min={30}
-                  max={1800}
-                  onChange={(value) =>
-                    update('normalScanIntervalSeconds', value)
-                  }
-                />
-                <NumberField
-                  label='闲时扫描间隔（秒）'
-                  value={draft.idleScanIntervalSeconds}
-                  min={60}
-                  max={3600}
-                  onChange={(value) => update('idleScanIntervalSeconds', value)}
-                />
-                <NumberField
-                  label='忙时请求阈值（次/分钟）'
-                  value={draft.busyRequestsPerMinute}
-                  min={1}
-                  max={100000}
-                  onChange={(value) => update('busyRequestsPerMinute', value)}
-                />
-              </div>
-            ) : (
-              <NumberField
-                label='固定扫描间隔（分钟）'
-                value={draft.fixedScanIntervalMinutes}
-                min={1}
-                max={1440}
-                onChange={(value) => update('fixedScanIntervalMinutes', value)}
-              />
-            )}
-            <div className='grid grid-cols-3 gap-2 rounded-lg border bg-muted/20 p-3 text-center'>
-              <div>
-                <div className='text-[11px] text-muted-foreground'>忙时</div>
-                <div className='mt-1 font-mono text-sm font-medium text-amber-700 dark:text-amber-300'>
-                  {formatInterval(draft.busyScanIntervalSeconds)}
-                </div>
-              </div>
-              <div className='border-x'>
-                <div className='text-[11px] text-muted-foreground'>常态</div>
-                <div className='mt-1 font-mono text-sm font-medium text-sky-700 dark:text-sky-300'>
-                  {formatInterval(draft.normalScanIntervalSeconds)}
-                </div>
-              </div>
-              <div>
-                <div className='text-[11px] text-muted-foreground'>闲时</div>
-                <div className='mt-1 font-mono text-sm font-medium text-emerald-700 dark:text-emerald-300'>
-                  {formatInterval(draft.idleScanIntervalSeconds)}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <Separator />
-
-          <section className='space-y-3'>
-            <div>
-              <h3 className='text-sm font-semibold'>风险阈值与本地投影</h3>
-              <p className='mt-0.5 text-xs text-muted-foreground'>
-                TPS 阈值沿用系统实际配置，修改后现有记录会立即重新分类。
-              </p>
-            </div>
-            <div className='grid gap-3 sm:grid-cols-2'>
-              <NumberField
-                label='观察阈值（TPS）'
-                value={draft.watchTps}
-                min={1}
-                onChange={(value) => update('watchTps', value)}
-              />
-              <NumberField
-                label='高风险阈值（TPS）'
-                value={draft.highTps}
-                min={1}
-                onChange={(value) => update('highTps', value)}
-              />
-              <NumberField
-                label='页面刷新间隔（秒）'
-                value={draft.liveRefreshSeconds}
-                min={10}
-                max={300}
-                disabled={!draft.liveRefreshEnabled}
-                onChange={(value) => update('liveRefreshSeconds', value)}
-              />
-              <NumberField
-                label='本地保留天数'
-                value={draft.retentionDays}
-                min={1}
-                max={90}
-                onChange={(value) => update('retentionDays', value)}
-              />
-            </div>
-          </section>
-        </div>
-
-        <SheetFooter className='border-t pt-4 sm:flex-row sm:justify-end'>
-          <Button
-            variant='outline'
-            onClick={() => onOpenChange(false)}
-            disabled={saving}
-          >
-            取消
-          </Button>
-          <Button onClick={onSave} disabled={saving}>
-            {saving ? <RefreshCw className='animate-spin' /> : <CheckCircle2 />}
-            保存并应用
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
-  )
-}
-
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  disabled,
-  onChange,
-}: {
-  label: string
-  value: number
-  min?: number
-  max?: number
-  disabled?: boolean
-  onChange: (value: number) => void
-}) {
-  return (
-    <div className='space-y-1.5'>
-      <Label className='text-xs'>{label}</Label>
-      <Input
-        type='number'
-        value={value}
-        min={min}
-        max={max}
-        disabled={disabled}
-        className='font-mono tabular-nums'
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </div>
-  )
 }
 
 function ScheduleStat({
@@ -1240,7 +874,7 @@ function AuditSchedulePanel({
               <Badge variant='secondary'>当前使用固定扫描间隔</Badge>
             )}
             {!config.riskEnabled && (
-              <Badge variant='warning'>TPS 风险识别已关闭</Badge>
+              <Badge variant='warning'>请求审计风险识别已关闭</Badge>
             )}
             {scan?.lastError && (
               <span className='text-xs text-destructive'>{scan.lastError}</span>
@@ -1292,13 +926,9 @@ export function RequestAuditsPage() {
   const [customRange, setCustomRange] = useState(() =>
     customRangeFromWindow(selectedWindow)
   )
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [auditDetailOpen, setAuditDetailOpen] = useState(false)
   const [selectedAuditRecord, setSelectedAuditRecord] =
     useState<RequestAuditRecord | null>(null)
-  const [settingsDraft, setSettingsDraft] = useState<AuditConfigDraft>(() =>
-    configDraft(undefined, undefined)
-  )
 
   const deferredWorkspaceSearch = useDeferredValue(workspaceSearch)
   const deferredAuditSearch = useDeferredValue(auditSearch)
@@ -1544,18 +1174,6 @@ export function RequestAuditsPage() {
       void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
       void queryClient.invalidateQueries({ queryKey: ['accounts'] })
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
-
-  const settingsMutation = useMutation({
-    mutationFn: (body: RuntimeSettingsUpdate) => api.updateSettings(body),
-    onSuccess: () => {
-      toast.success('请求审计配置已保存并热应用')
-      setSettingsOpen(false)
-      void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
-      void queryClient.invalidateQueries({ queryKey: ['settings'] })
-      void queryClient.invalidateQueries({ queryKey: ['scheduler'] })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -1898,53 +1516,6 @@ export function RequestAuditsPage() {
     setSampleAccount(account)
   }
 
-  const openSettings = () => {
-    setSettingsDraft(configDraft(status?.config, thresholds))
-    setSettingsOpen(true)
-  }
-
-  const saveSettings = () => {
-    if (settingsDraft.watchTps >= settingsDraft.highTps) {
-      toast.error('观察阈值必须小于高风险阈值')
-      return
-    }
-    if (
-      settingsDraft.busyScanIntervalSeconds >
-        settingsDraft.normalScanIntervalSeconds ||
-      settingsDraft.normalScanIntervalSeconds >
-        settingsDraft.idleScanIntervalSeconds
-    ) {
-      toast.error('扫描间隔必须满足忙时 ≤ 常态 ≤ 闲时')
-      return
-    }
-    settingsMutation.mutate({
-      requestAuditEnabled: settingsDraft.enabled,
-      requestAuditAutoScanEnabled: settingsDraft.autoScanEnabled,
-      requestAuditAdaptiveScanEnabled: settingsDraft.adaptiveScanEnabled,
-      requestAuditScanIntervalMinutes: settingsDraft.fixedScanIntervalMinutes,
-      requestAuditBusyScanIntervalSeconds:
-        settingsDraft.busyScanIntervalSeconds,
-      requestAuditNormalScanIntervalSeconds:
-        settingsDraft.normalScanIntervalSeconds,
-      requestAuditIdleScanIntervalSeconds:
-        settingsDraft.idleScanIntervalSeconds,
-      requestAuditBusyRequestsPerMinute: settingsDraft.busyRequestsPerMinute,
-      requestAuditLiveRefreshEnabled: settingsDraft.liveRefreshEnabled,
-      requestAuditLiveRefreshSeconds: settingsDraft.liveRefreshSeconds,
-      requestAuditRiskEnabled: settingsDraft.riskEnabled,
-      reasoningZeroRiskEnabled: settingsDraft.reasoningZeroRiskEnabled,
-      mediaInputObserveEnabled: settingsDraft.mediaInputObserveEnabled,
-      requestAuditTpsOnlyDeprioritizeEnabled:
-        settingsDraft.tpsOnlyDeprioritizeEnabled,
-      requestAuditTpsOnlyPriority: settingsDraft.tpsOnlyPriority,
-      requestAuditTpsOnlyMinCount: settingsDraft.tpsOnlyMinCount,
-      requestAuditIsolationEnabled: settingsDraft.isolationEnabled,
-      requestAuditRetentionDays: settingsDraft.retentionDays,
-      degradationTps: settingsDraft.watchTps,
-      strongDegradationTps: settingsDraft.highTps,
-    })
-  }
-
   const chooseWindow = (value: RequestAuditWindowPreset) => {
     if (value === 'custom') {
       setCustomOpen(true)
@@ -2024,9 +1595,23 @@ export function RequestAuditsPage() {
               刷新本地视图
             </Button>
             {mainView === 'schedule' && (
-              <Button variant='outline' onClick={openSettings}>
+              <Button
+                variant='outline'
+                onClick={() =>
+                  void navigate({ to: '/settings/request-audit' })
+                }
+              >
                 <Settings2 />
                 运行配置
+              </Button>
+            )}
+            {mainView !== 'schedule' && (
+              <Button
+                variant='outline'
+                onClick={() => void navigate({ to: '/settings/risk' })}
+              >
+                <Settings2 />
+                风险设置
               </Button>
             )}
             <Button
@@ -2476,8 +2061,8 @@ export function RequestAuditsPage() {
                     title='暂无异常代理节点'
                     description={
                       config.riskEnabled
-                        ? '当前窗口内没有代理节点包含超过系统 TPS 阈值的账号。'
-                        : '开启 TPS 风险识别后显示异常代理节点。'
+                        ? '当前窗口内没有代理节点包含命中已启用风险规则的账号。'
+                        : '开启请求审计风险识别后显示异常代理节点。'
                     }
                     icon={ShieldAlert}
                   />
@@ -3433,14 +3018,6 @@ export function RequestAuditsPage() {
         }}
       />
 
-      <AuditConfigurationSheet
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        draft={settingsDraft}
-        setDraft={setSettingsDraft}
-        saving={settingsMutation.isPending}
-        onSave={saveSettings}
-      />
     </Page>
   )
 }
@@ -4430,7 +4007,10 @@ function AccountRiskRow({
           <RiskBadge value={account.riskLevel} thresholds={thresholds} />
           {account.reasoningZeroCount > 0 && (
             <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
-              思考 0 ×{account.reasoningZeroCount}
+              {account.reasoningZeroStreak >= account.reasoningZeroMinCount &&
+              account.reasoningZeroMinCount > 0
+                ? `思考 0 连续 ${account.reasoningZeroStreak}/${account.reasoningZeroMinCount}`
+                : `思考 0 观察 ×${account.reasoningZeroCount}`}
             </Badge>
           )}
           {account.mediaInputCount > 0 && (
@@ -4655,7 +4235,10 @@ function AuditRow({
           <RiskBadge value={row.riskLevel} thresholds={thresholds} />
           {row.reasoningZeroRisk && (
             <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
-              思考输出 0
+              {row.reasoningZeroStreak >= row.reasoningZeroMinCount &&
+              row.reasoningZeroMinCount > 0
+                ? `思考 0 · ${row.reasoningZeroStreak}/${row.reasoningZeroMinCount}`
+                : '思考 0 · 观察'}
             </Badge>
           )}
           {row.hasMediaInput && (

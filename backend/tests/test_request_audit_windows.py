@@ -4,6 +4,7 @@ from datetime import timedelta
 from unittest.mock import MagicMock
 
 from app.core.clock import utc_now
+from app.core.config import Settings
 from app.services.request_audit_service import RequestAuditService
 
 
@@ -37,3 +38,39 @@ def test_custom_window_allows_end_after_now():
     )
     assert window["preset"] == "custom"
     assert window["end"] > now
+
+
+def test_repeated_reasoning_zero_keeps_strong_tps_as_primary_rule():
+    service = RequestAuditService(
+        settings=Settings(_env_file=None),
+        client=MagicMock(),
+        repository=MagicMock(),
+    )
+    now = utc_now()
+    records = [
+        {
+            "upstream_id": str(index),
+            "account_id": 7,
+            "status_code": 200,
+            "output_tokens": 600,
+            "reasoning_tokens": 0,
+            "reasoning_tokens_reported": True,
+            "first_token_ms": 100,
+            "duration_ms": 1100,
+            "tps": 600,
+            "model_upstream_model": "Build/grok-4.6",
+            "model_public_id": "grok-4.6",
+            "operation": "chat",
+            "media_input_images": 0,
+            "created_at": now + timedelta(seconds=index),
+        }
+        for index in (1, 2)
+    ]
+
+    evaluations = service._audit_risk_evaluations(records)
+    latest = evaluations["2"]
+
+    assert latest.classification.name == "high"
+    assert latest.classification.rule_id == "fast_risk"
+    assert "reasoning_zero" in latest.classification.rule_ids
+    assert latest.reasoning_streak == 2

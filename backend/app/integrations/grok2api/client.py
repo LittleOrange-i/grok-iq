@@ -162,6 +162,7 @@ class ChatProbeResult:
     response_sha256: str
     output_tokens: int
     reasoning_tokens: int
+    reasoning_tokens_reported: bool
     visible_tokens: int
     chunk_count: int
     first_token_ms: int
@@ -1020,6 +1021,7 @@ class Grok2APIClient:
             response_sha256=str(payload.get("responseSha256") or ""),
             output_tokens=output_tokens,
             reasoning_tokens=reasoning_tokens,
+            reasoning_tokens_reported="reasoningTokens" in payload,
             visible_tokens=visible_tokens,
             chunk_count=int(payload.get("chunkCount") or 0),
             first_token_ms=first_token_ms,

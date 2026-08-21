@@ -21,6 +21,7 @@ const labels: Record<string, string> = {
   fast_risk: '强降智信号',
   marker_miss: '预期缺失',
   reasoning_zero: '思考输出为 0',
+  reasoning_zero_observe: '思考输出为 0（观察）',
   error: '错误',
   unmeasurable: '无法测量',
   insufficient: '样本不足',
@@ -37,7 +38,9 @@ export function StatusBadge({ value }: { value?: string | null }) {
       : value === 'watch' ||
           value === 'queued' ||
           value === 'buffered_soft' ||
-          value === 'elevated'
+          value === 'elevated' ||
+          value === 'reasoning_zero' ||
+          value === 'reasoning_zero_observe'
         ? 'warning'
         : value === 'running' || value === 'recovering'
           ? 'info'

@@ -60,6 +60,7 @@ thresholds = Thresholds(
     risk_suspect_floor=settings.risk_suspect_floor,
     risk_high_floor=settings.risk_high_floor,
     reasoning_zero_risk_enabled=settings.reasoning_zero_risk_enabled,
+    reasoning_model_policies=tuple(settings.reasoning_model_policies),
     media_input_observe_enabled=settings.media_input_observe_enabled,
     request_audit_risk_enabled=settings.request_audit_risk_enabled,
     risk_rule_overrides=tuple(settings.risk_rule_overrides),

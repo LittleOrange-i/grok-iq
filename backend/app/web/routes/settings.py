@@ -78,6 +78,7 @@ def build_settings_router(
             "min_generation_ms",
             "minimum_output_tokens",
             "reasoning_zero_risk_enabled",
+            "reasoning_model_policies",
             "media_input_observe_enabled",
             "risk_rule_overrides",
         }

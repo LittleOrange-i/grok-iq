@@ -131,6 +131,11 @@ COMPATIBILITY_COLUMNS = {
             "retry_after_seconds",
             "ALTER TABLE probe_samples ADD COLUMN retry_after_seconds FLOAT NOT NULL DEFAULT 0",
         ),
+        (
+            "reasoning_tokens_reported",
+            "ALTER TABLE probe_samples ADD COLUMN reasoning_tokens_reported "
+            "BOOLEAN NOT NULL DEFAULT 0",
+        ),
     ],
     "sso_reports": [
         (
@@ -185,6 +190,11 @@ COMPATIBILITY_COLUMNS = {
             "media_input_images",
             "ALTER TABLE request_audit_records ADD COLUMN media_input_images "
             "INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "reasoning_tokens_reported",
+            "ALTER TABLE request_audit_records ADD COLUMN reasoning_tokens_reported "
+            "BOOLEAN NOT NULL DEFAULT 0",
         ),
     ],
     "request_audit_account_verifications": [
@@ -271,6 +281,8 @@ class DatabaseSchemaMigrator:
                 connection.exec_driver_sql(statement)
             self._backfill_probe_risk_rules(connection, table_names)
             self._backfill_media_input_counts(connection, table_names)
+            self._backfill_reasoning_tokens_reported(connection, table_names)
+            self._backfill_probe_reasoning_tokens_reported(connection, table_names)
             self._backfill_sso_reports(connection, table_names)
             self._backfill_plan_profiles(connection, table_names)
             self._backfill_register_sso_received_at(connection, table_names)
@@ -334,6 +346,38 @@ class DatabaseSchemaMigrator:
             "WHERE media_input_images = 0 "
             "AND json_valid(raw) "
             "AND COALESCE(json_extract(raw, '$.mediaInputImages'), 0) > 0"
+        )
+
+    @staticmethod
+    def _backfill_reasoning_tokens_reported(  # type: ignore[no-untyped-def]
+        connection, table_names: set[str]
+    ) -> None:
+        if "request_audit_records" not in table_names:
+            return
+        connection.exec_driver_sql(
+            "UPDATE request_audit_records SET reasoning_tokens_reported = 1 "
+            "WHERE reasoning_tokens_reported = 0 AND json_valid(raw) "
+            "AND json_type(raw, '$.reasoningTokens') IS NOT NULL"
+        )
+
+    @staticmethod
+    def _backfill_probe_reasoning_tokens_reported(  # type: ignore[no-untyped-def]
+        connection, table_names: set[str]
+    ) -> None:
+        if "probe_samples" not in table_names:
+            return
+        # Probe responses persist normalized usage JSON. Older rows had the
+        # numeric value but no presence bit, so recover the distinction before
+        # model-capability rules start evaluating historical evidence.
+        connection.exec_driver_sql(
+            "UPDATE probe_samples SET reasoning_tokens_reported = 1 "
+            "WHERE reasoning_tokens_reported = 0 AND ("
+            "reasoning_tokens > 0 "
+            "OR (json_valid(usage) AND ("
+            "json_type(usage, '$.completion_tokens_details.reasoning_tokens') IS NOT NULL "
+            "OR json_type(usage, '$.completionTokensDetails.reasoningTokens') IS NOT NULL"
+            "))"
+            ")"
         )
 
     @staticmethod

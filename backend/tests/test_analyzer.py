@@ -76,7 +76,7 @@ def test_media_input_observation_can_be_disabled():
     assert result.hard is True
 
 
-def test_reasoning_zero_still_precedes_media_input_observation():
+def test_media_input_policy_keeps_reasoning_zero_as_observation():
     result = classify_audit_sample(
         status_code=200,
         output_tokens=42,
@@ -85,11 +85,16 @@ def test_reasoning_zero_still_precedes_media_input_observation():
         duration_ms=3149,
         tps=4200,
         thresholds=Thresholds(),
-        extra={"media_input_images": 3},
+        extra={
+            "media_input_images": 3,
+            "model_upstream_model": "Build/grok-4.6",
+            "operation": "messages",
+            "reasoning_tokens_reported": True,
+        },
     )
 
-    assert result.name == "high"
-    assert result.rule_id == "reasoning_zero"
+    assert result.name == "watch"
+    assert result.rule_id == "media_input_observe"
 
 
 def test_low_tps_buffering_does_not_trigger_buffered_hard():
@@ -143,21 +148,24 @@ def test_classifies_sustained_high_speed_as_fast_risk():
     assert result.buffered is False
 
 
-def test_reasoning_zero_precedes_normal_tps_when_enabled():
+def test_single_required_reasoning_zero_is_an_observation():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
             output_tokens=300,
             reasoning_tokens=0,
             first_token_ms=1000,
-            duration_ms=2000,
+            duration_ms=5000,
             egress_key="node:3",
+            model_upstream_model="Build/grok-4.6",
+            operation="chat",
+            reasoning_tokens_reported=True,
         ),
         Thresholds(),
     )
     assert result.name == "reasoning_zero"
     assert result.anomalous is True
-    assert result.hard is True
+    assert result.hard is False
     assert result.rule_id == "reasoning_zero"
 
 

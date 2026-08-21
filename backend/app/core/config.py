@@ -7,6 +7,8 @@ from typing import Any, ClassVar
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.reasoning_policy import default_reasoning_model_policies
+
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().parents[2] / "data" / "grokiq.db"
 
 DEFAULT_REGISTER_PROBE_PROFILE_IDS = ["quality-marker"]
@@ -104,6 +106,12 @@ class Settings(BaseSettings):
     # A successful response with no reasoning tokens is a degradation signal
     # even when throughput remains below the TPS thresholds.
     reasoning_zero_risk_enabled: bool = True
+    # Reasoning output is only comparable when the actual upstream model and
+    # request operation are expected to emit it. Unknown combinations default
+    # to observation and never enter automatic account action directly.
+    reasoning_model_policies: list[dict[str, Any]] = Field(
+        default_factory=default_reasoning_model_policies
+    )
     media_input_observe_enabled: bool = True
     # Ordered per-rule overrides. Unknown IDs are preserved so rules supplied
     # by a later integration can be configured without adding another column.
@@ -202,6 +210,7 @@ class Settings(BaseSettings):
         "request_audit_live_refresh_seconds",
         "request_audit_risk_enabled",
         "reasoning_zero_risk_enabled",
+        "reasoning_model_policies",
         "media_input_observe_enabled",
         "risk_rule_overrides",
         "request_audit_tps_only_deprioritize_enabled",

@@ -278,6 +278,9 @@ class ProbeSample(Base):
     retry_after_seconds: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reasoning_tokens_reported: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     visible_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     first_token_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -343,6 +346,9 @@ class RequestAuditRecord(Base):
     media_input_images: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     output_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     reasoning_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    reasoning_tokens_reported: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     total_tokens: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     first_token_ms: Mapped[int | None] = mapped_column(BigInteger)
     duration_ms: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)

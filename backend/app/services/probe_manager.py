@@ -165,6 +165,7 @@ class ProbeManager:
             risk_suspect_floor=self.settings.risk_suspect_floor,
             risk_high_floor=self.settings.risk_high_floor,
             reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
+            reasoning_model_policies=tuple(self.settings.reasoning_model_policies),
             media_input_observe_enabled=self.settings.media_input_observe_enabled,
             request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
             risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
@@ -1144,6 +1145,9 @@ class ProbeManager:
             "retry_after_seconds": retry_after,
             "output_tokens": result.output_tokens if result is not None else 0,
             "reasoning_tokens": result.reasoning_tokens if result is not None else 0,
+            "reasoning_tokens_reported": (
+                bool(result.reasoning_tokens_reported) if result is not None else False
+            ),
             "visible_tokens": result.visible_tokens if result is not None else 0,
             "chunk_count": result.chunk_count if result is not None else 0,
             "first_token_ms": result.first_token_ms if result is not None else 0,

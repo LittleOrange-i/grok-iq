@@ -250,6 +250,8 @@ class ProbeRunExecutor:
             )
         else:
             self._record_success(
+                run=run,
+                profile=profile,
                 run_id=run_id,
                 account_id=account_id,
                 runtime=runtime,
@@ -360,6 +362,8 @@ class ProbeRunExecutor:
     def _record_success(
         self,
         *,
+        run: dict[str, Any],
+        profile: dict[str, Any],
         run_id: str,
         account_id: int,
         runtime: WorkerRuntime,
@@ -379,6 +383,14 @@ class ProbeRunExecutor:
                 duration_ms=result.duration_ms,
                 egress_key=target_key,
                 expected_matched=result.expected_matched,
+                model_upstream_model=str(profile.get("model") or ""),
+                model_public_id=state.public_model,
+                operation=(
+                    "chat"
+                    if str(run.get("execution_mode") or "chat") == "chat"
+                    else "quality_test"
+                ),
+                reasoning_tokens_reported=result.reasoning_tokens_reported,
             ),
             manager.thresholds,
         )
@@ -400,6 +412,7 @@ class ProbeRunExecutor:
                 "status_code": result.status_code,
                 "output_tokens": result.output_tokens,
                 "reasoning_tokens": result.reasoning_tokens,
+                "reasoning_tokens_reported": result.reasoning_tokens_reported,
                 "visible_tokens": result.visible_tokens,
                 "chunk_count": result.chunk_count,
                 "first_token_ms": result.first_token_ms,

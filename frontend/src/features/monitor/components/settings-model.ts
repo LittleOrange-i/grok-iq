@@ -35,7 +35,21 @@ export type SettingsForm = {
   probeTransientRetryMaxSeconds: number
   probeRoutePrefix: string
   probeDiagnosticPriority: number
+  requestAuditEnabled: boolean
+  requestAuditAutoScanEnabled: boolean
+  requestAuditAdaptiveScanEnabled: boolean
+  requestAuditScanIntervalMinutes: number
+  requestAuditBusyScanIntervalSeconds: number
+  requestAuditNormalScanIntervalSeconds: number
+  requestAuditIdleScanIntervalSeconds: number
+  requestAuditBusyRequestsPerMinute: number
+  requestAuditLiveRefreshEnabled: boolean
+  requestAuditLiveRefreshSeconds: number
+  requestAuditRetentionDays: number
+  requestAuditRiskEnabled: boolean
+  requestAuditIsolationEnabled: boolean
   reasoningZeroRiskEnabled: boolean
+  reasoningModelPolicies: EditableRuntimeSettings['reasoningModelPolicies']
   mediaInputObserveEnabled: boolean
   riskRuleOverrides: EditableRuntimeSettings['riskRuleOverrides']
   riskRules: EditableRuntimeSettings['riskRules']
@@ -178,7 +192,40 @@ export function toSettingsForm(
     probeTransientRetryMaxSeconds: settings.probeTransientRetryMaxSeconds ?? 30,
     probeRoutePrefix: settings.probeRoutePrefix,
     probeDiagnosticPriority: settings.probeDiagnosticPriority,
+    requestAuditEnabled: settings.requestAuditEnabled ?? true,
+    requestAuditAutoScanEnabled: settings.requestAuditAutoScanEnabled ?? true,
+    requestAuditAdaptiveScanEnabled:
+      settings.requestAuditAdaptiveScanEnabled ?? true,
+    requestAuditScanIntervalMinutes:
+      settings.requestAuditScanIntervalMinutes ?? 5,
+    requestAuditBusyScanIntervalSeconds:
+      settings.requestAuditBusyScanIntervalSeconds ?? 30,
+    requestAuditNormalScanIntervalSeconds:
+      settings.requestAuditNormalScanIntervalSeconds ?? 120,
+    requestAuditIdleScanIntervalSeconds:
+      settings.requestAuditIdleScanIntervalSeconds ?? 300,
+    requestAuditBusyRequestsPerMinute:
+      settings.requestAuditBusyRequestsPerMinute ?? 20,
+    requestAuditLiveRefreshEnabled:
+      settings.requestAuditLiveRefreshEnabled ?? true,
+    requestAuditLiveRefreshSeconds:
+      settings.requestAuditLiveRefreshSeconds ?? 30,
+    requestAuditRetentionDays: settings.requestAuditRetentionDays ?? 90,
+    requestAuditRiskEnabled: settings.requestAuditRiskEnabled ?? true,
+    requestAuditIsolationEnabled:
+      settings.requestAuditIsolationEnabled ?? true,
     reasoningZeroRiskEnabled: settings.reasoningZeroRiskEnabled ?? true,
+    reasoningModelPolicies: (settings.reasoningModelPolicies ?? []).map(
+      (policy) => ({
+        ...policy,
+        model: policy.model ?? '*',
+        operation: policy.operation ?? '*',
+        mode: policy.mode ?? 'observe',
+        minimumOutputTokens: policy.minimumOutputTokens ?? 32,
+        minCount: policy.minCount ?? 2,
+        mediaInputMode: policy.mediaInputMode ?? 'inherit',
+      })
+    ),
     mediaInputObserveEnabled: settings.mediaInputObserveEnabled ?? true,
     riskRuleOverrides: settings.riskRuleOverrides ?? [],
     riskRules: settings.riskRules ?? [],
@@ -245,7 +292,25 @@ export function buildSettingsPayload(
     probeTransientRetryMaxSeconds: form.probeTransientRetryMaxSeconds,
     probeRoutePrefix: form.probeRoutePrefix.trim(),
     probeDiagnosticPriority: form.probeDiagnosticPriority,
+    requestAuditEnabled: form.requestAuditEnabled,
+    requestAuditAutoScanEnabled: form.requestAuditAutoScanEnabled,
+    requestAuditAdaptiveScanEnabled: form.requestAuditAdaptiveScanEnabled,
+    requestAuditScanIntervalMinutes: form.requestAuditScanIntervalMinutes,
+    requestAuditBusyScanIntervalSeconds:
+      form.requestAuditBusyScanIntervalSeconds,
+    requestAuditNormalScanIntervalSeconds:
+      form.requestAuditNormalScanIntervalSeconds,
+    requestAuditIdleScanIntervalSeconds:
+      form.requestAuditIdleScanIntervalSeconds,
+    requestAuditBusyRequestsPerMinute:
+      form.requestAuditBusyRequestsPerMinute,
+    requestAuditLiveRefreshEnabled: form.requestAuditLiveRefreshEnabled,
+    requestAuditLiveRefreshSeconds: form.requestAuditLiveRefreshSeconds,
+    requestAuditRetentionDays: form.requestAuditRetentionDays,
+    requestAuditRiskEnabled: form.requestAuditRiskEnabled,
+    requestAuditIsolationEnabled: form.requestAuditIsolationEnabled,
     reasoningZeroRiskEnabled: form.reasoningZeroRiskEnabled,
+    reasoningModelPolicies: form.reasoningModelPolicies,
     mediaInputObserveEnabled: form.mediaInputObserveEnabled,
     riskRuleOverrides: form.riskRuleOverrides,
     requestAuditTpsOnlyDeprioritizeEnabled:
@@ -357,6 +422,39 @@ export function setRiskRulePriority(
 }
 
 export function validateSettings(form: SettingsForm) {
+  if (
+    form.requestAuditAdaptiveScanEnabled &&
+    !(
+      form.requestAuditBusyScanIntervalSeconds <=
+        form.requestAuditNormalScanIntervalSeconds &&
+      form.requestAuditNormalScanIntervalSeconds <=
+        form.requestAuditIdleScanIntervalSeconds
+    )
+  ) {
+    throw new Error('请求审计扫描间隔必须满足忙时 ≤ 常态 ≤ 闲时')
+  }
+  const policyKeys = new Set<string>()
+  for (const policy of form.reasoningModelPolicies) {
+    const model = policy.model.trim()
+    if (!model) throw new Error('思考模型策略必须填写上游模型')
+    const canonicalModel = model.toLowerCase().replace(/^build\//, '')
+    const key = `${canonicalModel}::${policy.operation}`
+    if (policyKeys.has(key)) {
+      throw new Error(
+        `思考模型策略重复或别名冲突：${model} / ${policy.operation}`
+      )
+    }
+    policyKeys.add(key)
+    if (policy.minimumOutputTokens < 1 || policy.minimumOutputTokens > 4096) {
+      throw new Error('思考模型策略最低输出 Token 必须在 1–4096 之间')
+    }
+    if (policy.minCount < 2 || policy.minCount > 100) {
+      throw new Error('思考模型策略连续命中次数必须在 2–100 之间')
+    }
+  }
+  if (!policyKeys.has('*::*')) {
+    throw new Error('思考模型策略必须保留 * / * 默认观察规则')
+  }
   if (form.degradationTps >= form.strongDegradationTps) {
     throw new Error('降智信号 TPS 下限必须小于强降智信号 TPS 下限')
   }

@@ -1,16 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, KeyRound, Network, Save, TestTube2 } from 'lucide-react'
+import { Outlet, useLocation } from '@tanstack/react-router'
+import {
+  Activity,
+  KeyRound,
+  Network,
+  Save,
+  TestTube2,
+  type LucideIcon,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type SecretSettingName } from '@/lib/api'
-import { getErrorMessage } from '@/lib/utils'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn, getErrorMessage } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
-import { StatusCard } from '@/features/monitor/components/settings-components'
-import { SettingsConnectionTab } from '@/features/monitor/components/settings-connection-tab'
-import { SettingsExecutionTab } from '@/features/monitor/components/settings-execution-tab'
-import { SettingsIntegrationTab } from '@/features/monitor/components/settings-integration-tab'
+import { settingsSections } from '@/components/layout/data/settings-navigation'
 import {
   RECOMMENDED_RISK_SCORING,
   buildSettingsPayload,
@@ -21,12 +27,14 @@ import {
   type SettingsForm,
   type SettingsSetter,
 } from '@/features/monitor/components/settings-model'
-import { SettingsNotificationsTab } from '@/features/monitor/components/settings-notifications-tab'
-import { SettingsRiskTab } from '@/features/monitor/components/settings-risk-tab'
-import { SettingsVersionTab } from '@/features/monitor/components/settings-version-tab'
+import {
+  SettingsWorkspaceContext,
+  type SettingsWorkspaceValue,
+} from './settings-workspace'
 
-export function SettingsPage() {
+export function SettingsLayout() {
   const queryClient = useQueryClient()
+  const pathname = useLocation({ select: (location) => location.pathname })
   const settings = useQuery({
     queryKey: ['settings', 'editor'],
     queryFn: api.editableSettings,
@@ -45,8 +53,7 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!settings.data) return
-    // The query result is the external source for this editable draft. A refetch
-    // intentionally replaces unsaved fields so the page never edits stale runtime settings.
+    // 切换子路由不会卸载此 Provider，因此未保存内容会保留。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm(toSettingsForm(settings.data))
     setClearSecrets([])
@@ -80,6 +87,7 @@ export function SettingsPage() {
       toast.success('运行时设置已保存并热应用')
       void queryClient.invalidateQueries({ queryKey: ['health'] })
       void queryClient.invalidateQueries({ queryKey: ['scheduler'] })
+      void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -87,17 +95,30 @@ export function SettingsPage() {
   const testMutation = useMutation({
     mutationFn: async () => {
       if (!form || !settings.data) throw new Error('设置尚未加载')
-      validateSettings(form)
+      const submittedForm = form
+      const submittedClearSecrets = [...clearSecrets]
+      validateSettings(submittedForm)
       const value = await api.updateSettings(
-        buildSettingsPayload(form, clearSecrets, settings.data)
+        buildSettingsPayload(
+          submittedForm,
+          submittedClearSecrets,
+          settings.data
+        )
+      )
+      const result = await api.testGrok2api()
+      return { value, submittedForm, submittedClearSecrets, result }
+    },
+    onSuccess: ({ value, submittedForm, submittedClearSecrets, result }) => {
+      const editableValue = mergeEditableSettings(
+        value,
+        submittedForm,
+        submittedClearSecrets
       )
       queryClient.setQueryData(['settings'], value)
-      return api.testGrok2api()
-    },
-    onSuccess: (result) => {
+      queryClient.setQueryData(['settings', 'editor'], editableValue)
+      setForm(toSettingsForm(editableValue))
       setClearSecrets([])
       toast.success(`连接测试通过：${result.baseUrl}`)
-      void queryClient.invalidateQueries({ queryKey: ['settings'] })
       void queryClient.invalidateQueries({ queryKey: ['health'] })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
@@ -116,7 +137,6 @@ export function SettingsPage() {
           settings.data
         )
       )
-      queryClient.setQueryData(['settings'], value)
       const result = await api.testWechat()
       return { value, submittedForm, submittedClearSecrets, result }
     },
@@ -126,6 +146,7 @@ export function SettingsPage() {
         submittedForm,
         submittedClearSecrets
       )
+      queryClient.setQueryData(['settings'], value)
       queryClient.setQueryData(['settings', 'editor'], editableValue)
       setForm(toSettingsForm(editableValue))
       setClearSecrets([])
@@ -133,6 +154,26 @@ export function SettingsPage() {
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
+
+  const originalForm = useMemo(
+    () => (settings.data ? toSettingsForm(settings.data) : null),
+    [settings.data]
+  )
+  const dirty = Boolean(
+    form &&
+      originalForm &&
+      (clearSecrets.length > 0 ||
+        JSON.stringify(form) !== JSON.stringify(originalForm))
+  )
+
+  useEffect(() => {
+    if (!dirty) return undefined
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [dirty])
 
   if (settings.isError) {
     return (
@@ -193,121 +234,147 @@ export function SettingsPage() {
     >
     set(field, '' as SettingsForm[typeof field])
   }
+
+  const activeSection =
+    settingsSections.find(
+      (section) =>
+        pathname === section.href || pathname.startsWith(`${section.href}/`)
+    ) ??
+    settingsSections[0]
+  const workspaceValue: SettingsWorkspaceValue = {
+    form,
+    settings: settingsValue,
+    clearSecrets,
+    set,
+    toggleSecretClear,
+    profiles: profiles.data ?? [],
+    profilesLoading: profiles.isLoading,
+    registerTokenReady,
+    webhookUrl,
+    busy,
+    wechatTestPending: wechatTestMutation.isPending,
+    testWechat: () => wechatTestMutation.mutate(),
+    restoreRecommendedRiskScoring,
+  }
+
   return (
-    <Page>
-      <PageHeader
-        title='系统设置'
-        description='除启动监听、数据库路径和 CORS 外，连接、队列及风险参数均可在此保存并热应用。'
-        descriptionAsHint
-        actions={
-          <ActionToolbar label='系统设置操作'>
-            <ToolbarAction
-              label='保存设置并测试 grok2api 连接'
-              disabled={busy}
-              pending={testMutation.isPending}
-              onClick={() => testMutation.mutate()}
-            >
-              <TestTube2 />
-            </ToolbarAction>
-            <ToolbarAction
-              label='保存并热应用设置'
-              disabled={busy}
-              pending={saveMutation.isPending}
-              onClick={() => saveMutation.mutate()}
-            >
-              <Save />
-            </ToolbarAction>
-          </ActionToolbar>
-        }
-      />
-
-      <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
-        <StatusCard
-          icon={Network}
-          label='grok2api'
-          value={upstream.available ? '连接正常' : '连接异常'}
-          detail={form.grok2apiBaseUrl}
-          healthy={upstream.available === true}
+    <SettingsWorkspaceContext.Provider value={workspaceValue}>
+      <Page className='space-y-4'>
+        <PageHeader
+          title={activeSection.title}
+          description={activeSection.description}
+          actions={
+            <div className='flex items-center gap-2'>
+              {dirty && <Badge variant='warning'>有未保存修改</Badge>}
+              <ActionToolbar label='系统设置操作'>
+                {activeSection.value === 'connection' && (
+                  <ToolbarAction
+                    label='保存设置并测试 grok2api 连接'
+                    disabled={busy}
+                    pending={testMutation.isPending}
+                    onClick={() => testMutation.mutate()}
+                  >
+                    <TestTube2 />
+                  </ToolbarAction>
+                )}
+                <ToolbarAction
+                  label='保存全部设置并热应用'
+                  disabled={busy || !dirty}
+                  pending={saveMutation.isPending}
+                  onClick={() => saveMutation.mutate()}
+                >
+                  <Save />
+                </ToolbarAction>
+              </ActionToolbar>
+            </div>
+          }
         />
-        <StatusCard
-          icon={KeyRound}
-          label='管理鉴权'
-          value={integration.adminConfigured ? '已配置' : '待配置'}
-          detail='管理员用户名和密码 · 会话自动刷新'
-          healthy={integration.adminConfigured === true}
-        />
-        <StatusCard
-          icon={Activity}
-          label='任务 Worker'
-          value={`${form.probeWorkerConcurrency} 个`}
-          detail={`不同账号并行 · 队列容量 ${form.probeQueueLimit}`}
-          healthy
-        />
-      </div>
 
-      <Tabs defaultValue='connection' className='space-y-4'>
-        <TabsList className='h-auto w-full justify-start overflow-x-auto bg-muted/60 p-1'>
-          <TabsTrigger value='connection'>连接与凭据</TabsTrigger>
-          <TabsTrigger value='execution'>任务队列</TabsTrigger>
-          <TabsTrigger value='risk'>风险与隔离</TabsTrigger>
-          <TabsTrigger value='notifications'>通知推送</TabsTrigger>
-          <TabsTrigger value='integration'>联动与启动项</TabsTrigger>
-          <TabsTrigger value='version'>版本更新</TabsTrigger>
-        </TabsList>
+        <Card className='py-0'>
+          <CardContent className='grid gap-0 p-0 sm:grid-cols-3'>
+            <SettingsStatus
+              icon={Network}
+              label='grok2api'
+              value={upstream.available ? '连接正常' : '连接异常'}
+              detail={form.grok2apiBaseUrl}
+              healthy={upstream.available === true}
+            />
+            <SettingsStatus
+              icon={KeyRound}
+              label='管理鉴权'
+              value={integration.adminConfigured ? '已配置' : '待配置'}
+              detail='管理员会话自动刷新'
+              healthy={integration.adminConfigured === true}
+              divided
+            />
+            <SettingsStatus
+              icon={Activity}
+              label='任务 Worker'
+              value={`${form.probeWorkerConcurrency} 个并发`}
+              detail={`队列容量 ${form.probeQueueLimit}`}
+              healthy
+              divided
+            />
+          </CardContent>
+        </Card>
 
-        <TabsContent value='connection'>
-          <SettingsConnectionTab
-            form={form}
-            settings={settingsValue}
-            clearSecrets={clearSecrets}
-            set={set}
-            toggleSecretClear={toggleSecretClear}
-          />
-        </TabsContent>
-
-        <TabsContent value='execution'>
-          <SettingsExecutionTab form={form} set={set} />
-        </TabsContent>
-
-        <TabsContent value='risk'>
-          <SettingsRiskTab
-            form={form}
-            set={set}
-            restoreRecommendedRiskScoring={restoreRecommendedRiskScoring}
-          />
-        </TabsContent>
-
-        <TabsContent value='notifications'>
-          <SettingsNotificationsTab
-            form={form}
-            settings={settingsValue}
-            clearSecrets={clearSecrets}
-            busy={busy}
-            testPending={wechatTestMutation.isPending}
-            set={set}
-            toggleSecretClear={toggleSecretClear}
-            onTest={() => wechatTestMutation.mutate()}
-          />
-        </TabsContent>
-
-        <TabsContent value='integration'>
-          <SettingsIntegrationTab
-            form={form}
-            settings={settingsValue}
-            clearSecrets={clearSecrets}
-            profiles={profiles.data ?? []}
-            profilesLoading={profiles.isLoading}
-            registerTokenReady={registerTokenReady}
-            webhookUrl={webhookUrl}
-            set={set}
-            toggleSecretClear={toggleSecretClear}
-          />
-        </TabsContent>
-
-        <TabsContent value='version'>
-          <SettingsVersionTab />
-        </TabsContent>
-      </Tabs>
-    </Page>
+        <main
+          key={activeSection.value}
+          className='min-w-0 animate-in fade-in-0 slide-in-from-end-1 duration-150 motion-reduce:animate-none'
+        >
+          <Outlet />
+        </main>
+      </Page>
+    </SettingsWorkspaceContext.Provider>
   )
+}
+
+function SettingsStatus({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  healthy,
+  divided = false,
+}: {
+  icon: LucideIcon
+  label: string
+  value: string
+  detail: string
+  healthy: boolean
+  divided?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'flex min-w-0 items-center gap-3 px-4 py-3.5',
+        divided && 'border-t sm:border-t-0 sm:border-l'
+      )}
+    >
+      <div
+        className={cn(
+          'flex size-8 shrink-0 items-center justify-center rounded-lg',
+          healthy
+            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+        )}
+      >
+        <Icon className='size-4' />
+      </div>
+      <div className='min-w-0'>
+        <div className='text-[11px] text-muted-foreground'>{label}</div>
+        <div className='truncate text-sm font-semibold'>{value}</div>
+        <div
+          className='truncate text-[11px] text-muted-foreground'
+          title={detail}
+        >
+          {detail}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function SettingsRouteContent({ children }: { children: ReactNode }) {
+  return <div className='min-w-0'>{children}</div>
 }

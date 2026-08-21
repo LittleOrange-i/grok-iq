@@ -42,8 +42,14 @@ import { Route as AuthenticatedRunsIndexRouteImport } from './routes/_authentica
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_authenticated/settings/account'
 import { Route as AuthenticatedSettingsAppearanceRouteImport } from './routes/_authenticated/settings/appearance'
+import { Route as AuthenticatedSettingsConnectionRouteImport } from './routes/_authenticated/settings/connection'
 import { Route as AuthenticatedSettingsDisplayRouteImport } from './routes/_authenticated/settings/display'
+import { Route as AuthenticatedSettingsExecutionRouteImport } from './routes/_authenticated/settings/execution'
+import { Route as AuthenticatedSettingsIntegrationsRouteImport } from './routes/_authenticated/settings/integrations'
 import { Route as AuthenticatedSettingsNotificationsRouteImport } from './routes/_authenticated/settings/notifications'
+import { Route as AuthenticatedSettingsRequestAuditRouteImport } from './routes/_authenticated/settings/request-audit'
+import { Route as AuthenticatedSettingsRiskRouteImport } from './routes/_authenticated/settings/risk'
+import { Route as AuthenticatedSettingsVersionRouteImport } from './routes/_authenticated/settings/version'
 import { Route as AuthenticatedSsoReportsIndexRouteImport } from './routes/_authenticated/sso-reports/index'
 import { Route as AuthenticatedTasksIndexRouteImport } from './routes/_authenticated/tasks/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
@@ -225,16 +231,52 @@ const AuthenticatedSettingsAppearanceRoute =
     path: '/appearance',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
+const AuthenticatedSettingsConnectionRoute =
+  AuthenticatedSettingsConnectionRouteImport.update({
+    id: '/connection',
+    path: '/connection',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
 const AuthenticatedSettingsDisplayRoute =
   AuthenticatedSettingsDisplayRouteImport.update({
     id: '/display',
     path: '/display',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
+const AuthenticatedSettingsExecutionRoute =
+  AuthenticatedSettingsExecutionRouteImport.update({
+    id: '/execution',
+    path: '/execution',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
+const AuthenticatedSettingsIntegrationsRoute =
+  AuthenticatedSettingsIntegrationsRouteImport.update({
+    id: '/integrations',
+    path: '/integrations',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
 const AuthenticatedSettingsNotificationsRoute =
   AuthenticatedSettingsNotificationsRouteImport.update({
     id: '/notifications',
     path: '/notifications',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
+const AuthenticatedSettingsRequestAuditRoute =
+  AuthenticatedSettingsRequestAuditRouteImport.update({
+    id: '/request-audit',
+    path: '/request-audit',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
+const AuthenticatedSettingsRiskRoute =
+  AuthenticatedSettingsRiskRouteImport.update({
+    id: '/risk',
+    path: '/risk',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
+const AuthenticatedSettingsVersionRoute =
+  AuthenticatedSettingsVersionRouteImport.update({
+    id: '/version',
+    path: '/version',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
 const AuthenticatedSsoReportsIndexRoute =
@@ -295,8 +337,14 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
+  '/settings/execution': typeof AuthenticatedSettingsExecutionRoute
+  '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
+  '/settings/request-audit': typeof AuthenticatedSettingsRequestAuditRoute
+  '/settings/risk': typeof AuthenticatedSettingsRiskRoute
+  '/settings/version': typeof AuthenticatedSettingsVersionRoute
   '/clerk/sign-in': typeof ClerkauthSignInRoute
   '/clerk/sign-up': typeof ClerkauthSignUpRoute
   '/clerk/user-management': typeof ClerkAuthenticatedUserManagementRoute
@@ -335,8 +383,14 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
+  '/settings/execution': typeof AuthenticatedSettingsExecutionRoute
+  '/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
+  '/settings/request-audit': typeof AuthenticatedSettingsRequestAuditRoute
+  '/settings/risk': typeof AuthenticatedSettingsRiskRoute
+  '/settings/version': typeof AuthenticatedSettingsVersionRoute
   '/clerk/sign-in': typeof ClerkauthSignInRoute
   '/clerk/sign-up': typeof ClerkauthSignUpRoute
   '/clerk/user-management': typeof ClerkAuthenticatedUserManagementRoute
@@ -380,8 +434,14 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/_authenticated/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/_authenticated/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/_authenticated/settings/display': typeof AuthenticatedSettingsDisplayRoute
+  '/_authenticated/settings/execution': typeof AuthenticatedSettingsExecutionRoute
+  '/_authenticated/settings/integrations': typeof AuthenticatedSettingsIntegrationsRoute
   '/_authenticated/settings/notifications': typeof AuthenticatedSettingsNotificationsRoute
+  '/_authenticated/settings/request-audit': typeof AuthenticatedSettingsRequestAuditRoute
+  '/_authenticated/settings/risk': typeof AuthenticatedSettingsRiskRoute
+  '/_authenticated/settings/version': typeof AuthenticatedSettingsVersionRoute
   '/clerk/(auth)/sign-in': typeof ClerkauthSignInRoute
   '/clerk/(auth)/sign-up': typeof ClerkauthSignUpRoute
   '/clerk/_authenticated/user-management': typeof ClerkAuthenticatedUserManagementRoute
@@ -423,8 +483,14 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/settings/account'
     | '/settings/appearance'
+    | '/settings/connection'
     | '/settings/display'
+    | '/settings/execution'
+    | '/settings/integrations'
     | '/settings/notifications'
+    | '/settings/request-audit'
+    | '/settings/risk'
+    | '/settings/version'
     | '/clerk/sign-in'
     | '/clerk/sign-up'
     | '/clerk/user-management'
@@ -463,8 +529,14 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/settings/account'
     | '/settings/appearance'
+    | '/settings/connection'
     | '/settings/display'
+    | '/settings/execution'
+    | '/settings/integrations'
     | '/settings/notifications'
+    | '/settings/request-audit'
+    | '/settings/risk'
+    | '/settings/version'
     | '/clerk/sign-in'
     | '/clerk/sign-up'
     | '/clerk/user-management'
@@ -507,8 +579,14 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/settings/account'
     | '/_authenticated/settings/appearance'
+    | '/_authenticated/settings/connection'
     | '/_authenticated/settings/display'
+    | '/_authenticated/settings/execution'
+    | '/_authenticated/settings/integrations'
     | '/_authenticated/settings/notifications'
+    | '/_authenticated/settings/request-audit'
+    | '/_authenticated/settings/risk'
+    | '/_authenticated/settings/version'
     | '/clerk/(auth)/sign-in'
     | '/clerk/(auth)/sign-up'
     | '/clerk/_authenticated/user-management'
@@ -780,6 +858,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsAppearanceRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
+    '/_authenticated/settings/connection': {
+      id: '/_authenticated/settings/connection'
+      path: '/connection'
+      fullPath: '/settings/connection'
+      preLoaderRoute: typeof AuthenticatedSettingsConnectionRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
     '/_authenticated/settings/display': {
       id: '/_authenticated/settings/display'
       path: '/display'
@@ -787,11 +872,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsDisplayRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
+    '/_authenticated/settings/execution': {
+      id: '/_authenticated/settings/execution'
+      path: '/execution'
+      fullPath: '/settings/execution'
+      preLoaderRoute: typeof AuthenticatedSettingsExecutionRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
+    '/_authenticated/settings/integrations': {
+      id: '/_authenticated/settings/integrations'
+      path: '/integrations'
+      fullPath: '/settings/integrations'
+      preLoaderRoute: typeof AuthenticatedSettingsIntegrationsRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
     '/_authenticated/settings/notifications': {
       id: '/_authenticated/settings/notifications'
       path: '/notifications'
       fullPath: '/settings/notifications'
       preLoaderRoute: typeof AuthenticatedSettingsNotificationsRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
+    '/_authenticated/settings/request-audit': {
+      id: '/_authenticated/settings/request-audit'
+      path: '/request-audit'
+      fullPath: '/settings/request-audit'
+      preLoaderRoute: typeof AuthenticatedSettingsRequestAuditRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
+    '/_authenticated/settings/risk': {
+      id: '/_authenticated/settings/risk'
+      path: '/risk'
+      fullPath: '/settings/risk'
+      preLoaderRoute: typeof AuthenticatedSettingsRiskRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
+    '/_authenticated/settings/version': {
+      id: '/_authenticated/settings/version'
+      path: '/version'
+      fullPath: '/settings/version'
+      preLoaderRoute: typeof AuthenticatedSettingsVersionRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
     '/_authenticated/sso-reports/': {
@@ -849,8 +969,14 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedSettingsRouteRouteChildren {
   AuthenticatedSettingsAccountRoute: typeof AuthenticatedSettingsAccountRoute
   AuthenticatedSettingsAppearanceRoute: typeof AuthenticatedSettingsAppearanceRoute
+  AuthenticatedSettingsConnectionRoute: typeof AuthenticatedSettingsConnectionRoute
   AuthenticatedSettingsDisplayRoute: typeof AuthenticatedSettingsDisplayRoute
+  AuthenticatedSettingsExecutionRoute: typeof AuthenticatedSettingsExecutionRoute
+  AuthenticatedSettingsIntegrationsRoute: typeof AuthenticatedSettingsIntegrationsRoute
   AuthenticatedSettingsNotificationsRoute: typeof AuthenticatedSettingsNotificationsRoute
+  AuthenticatedSettingsRequestAuditRoute: typeof AuthenticatedSettingsRequestAuditRoute
+  AuthenticatedSettingsRiskRoute: typeof AuthenticatedSettingsRiskRoute
+  AuthenticatedSettingsVersionRoute: typeof AuthenticatedSettingsVersionRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
 }
 
@@ -858,9 +984,17 @@ const AuthenticatedSettingsRouteRouteChildren: AuthenticatedSettingsRouteRouteCh
   {
     AuthenticatedSettingsAccountRoute: AuthenticatedSettingsAccountRoute,
     AuthenticatedSettingsAppearanceRoute: AuthenticatedSettingsAppearanceRoute,
+    AuthenticatedSettingsConnectionRoute: AuthenticatedSettingsConnectionRoute,
     AuthenticatedSettingsDisplayRoute: AuthenticatedSettingsDisplayRoute,
+    AuthenticatedSettingsExecutionRoute: AuthenticatedSettingsExecutionRoute,
+    AuthenticatedSettingsIntegrationsRoute:
+      AuthenticatedSettingsIntegrationsRoute,
     AuthenticatedSettingsNotificationsRoute:
       AuthenticatedSettingsNotificationsRoute,
+    AuthenticatedSettingsRequestAuditRoute:
+      AuthenticatedSettingsRequestAuditRoute,
+    AuthenticatedSettingsRiskRoute: AuthenticatedSettingsRiskRoute,
+    AuthenticatedSettingsVersionRoute: AuthenticatedSettingsVersionRoute,
     AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
   }
 

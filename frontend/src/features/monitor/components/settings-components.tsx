@@ -763,22 +763,33 @@ export function SwitchRow({
   label,
   description,
   checked,
+  disabled = false,
   onCheckedChange,
 }: {
   label: string
   description: string
   checked: boolean
+  disabled?: boolean
   onCheckedChange: (value: boolean) => void
 }) {
   return (
-    <div className='flex items-center justify-between gap-4 rounded-lg border p-3'>
+    <div
+      className={cn(
+        'flex items-center justify-between gap-4 rounded-lg border p-3',
+        disabled && 'bg-muted/20 text-muted-foreground'
+      )}
+    >
       <div>
         <div className='flex items-center gap-1.5 text-sm font-medium'>
           {label}
           <InfoTooltip label={label} content={description} />
         </div>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+      />
     </div>
   )
 }

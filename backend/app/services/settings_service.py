@@ -155,6 +155,7 @@ class RuntimeSettingsService:
             buffer_first_token_share=s.buffer_first_token_share,
             min_generation_ms=s.min_generation_ms,
             reasoning_zero_risk_enabled=s.reasoning_zero_risk_enabled,
+            reasoning_model_policies=tuple(s.reasoning_model_policies),
             media_input_observe_enabled=s.media_input_observe_enabled,
             request_audit_risk_enabled=s.request_audit_risk_enabled,
             risk_rule_overrides=tuple(s.risk_rule_overrides),
@@ -219,6 +220,7 @@ class RuntimeSettingsService:
                 "reasoning_zero",
                 risk_thresholds,
             ),
+            "reasoningModelPolicies": s.reasoning_model_policies,
             "mediaInputObserveEnabled": risk_rule_enabled(
                 "media_input_observe",
                 risk_thresholds,

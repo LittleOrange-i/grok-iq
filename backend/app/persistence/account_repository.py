@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from app.analyzer import (
+    SampleMetrics,
     Thresholds,
     active_anomaly_classifications,
     aggregate_rule_reasons,
+    classify_sample,
     maximum_anomaly_streak,
+    risk_rule_enabled,
     risk_status,
     rule_metadata,
 )
 from app.core.clock import ensure_utc, utc_now
+from app.reasoning_policy import canonical_reasoning_model
 
 from .database import Database
 from .models import (
@@ -22,6 +28,8 @@ from .models import (
     Alert,
     AppSetting,
     MetadataRow,
+    ProbeProfile,
+    ProbeRun,
     ProbeSample,
     model_dict,
 )
@@ -32,6 +40,7 @@ HARD_ANOMALY_NAMES = {
     for name in ANOMALY_NAMES
     if ((metadata := rule_metadata(name)) is not None and bool(metadata.hard))
 }
+PROMOTED_REASONING_ZERO_SEVERITY = 4
 FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
 ALL_EGRESS_RISK_MIGRATION_KEY = "all_egress_risk_formula_v1"
 
@@ -146,36 +155,206 @@ class AccountRepository:
     def recalculate(self, account_id: int, thresholds: Thresholds, window_hours: int) -> dict[str, Any]:
         cutoff = utc_now() - timedelta(hours=window_hours)
         with self.database.transaction() as session:
-            rows = session.scalars(
-                select(ProbeSample)
+            values = session.execute(
+                select(ProbeSample, ProbeRun, ProbeProfile)
+                .join(ProbeRun, ProbeSample.run_id == ProbeRun.id, isouter=True)
+                .join(
+                    ProbeProfile,
+                    ProbeRun.profile_id == ProbeProfile.id,
+                    isouter=True,
+                )
                 .where(
                     ProbeSample.account_id == account_id,
                     ProbeSample.created_at >= cutoff,
                 )
                 .order_by(ProbeSample.created_at.asc(), ProbeSample.id.asc())
             ).all()
-            anomaly_names = active_anomaly_classifications(thresholds)
-            anomalies = [
-                row
-                for row in rows
-                if row.classification in anomaly_names
-            ]
-            hard = [
-                row
-                for row in anomalies
-                if (
-                    (metadata := rule_metadata(row.classification)) is not None
-                    and bool(metadata.hard)
+            rows = [sample for sample, _run, _profile in values]
+            classifications = []
+            reasoning_zero_signals: list[bool] = []
+            reasoning_streaks: dict[tuple[str, str], int] = defaultdict(int)
+            reasoning_rule_active = risk_rule_enabled(
+                "reasoning_zero",
+                thresholds,
+            )
+            for sample, run, profile in values:
+                upstream_model = str(getattr(profile, "model", "") or "")
+                public_model = str(
+                    getattr(run, "temporary_public_model", "") or ""
                 )
+                execution_mode = str(
+                    getattr(run, "execution_mode", "chat") or "chat"
+                )
+                operation = "chat" if execution_mode == "chat" else "quality_test"
+                classified = classify_sample(
+                    SampleMetrics(
+                        # A probe can fail local verification after receiving a
+                        # successful upstream response (for example, audited
+                        # account/node drift).  Preserve that operational error
+                        # during risk recomputation instead of reclassifying the
+                        # row as merely unmeasurable because timing is ignored
+                        # for failed samples.
+                        status_code=(
+                            sample.status_code if sample.status == "done" else 0
+                        ),
+                        output_tokens=sample.output_tokens,
+                        reasoning_tokens=sample.reasoning_tokens,
+                        first_token_ms=(
+                            sample.first_token_ms
+                            if sample.status == "done"
+                            else None
+                        ),
+                        duration_ms=sample.duration_ms,
+                        egress_key=sample.target_key,
+                        expected_matched=sample.expected_matched,
+                        model_upstream_model=upstream_model,
+                        model_public_id=public_model,
+                        operation=operation,
+                        reasoning_tokens_reported=bool(
+                            sample.reasoning_tokens_reported
+                        ),
+                    ),
+                    thresholds,
+                )
+                policy = thresholds.reasoning_policy(
+                    model_upstream_model=upstream_model,
+                    model_public_id=public_model,
+                    operation=operation,
+                )
+                group_key = (
+                    canonical_reasoning_model(
+                        upstream_model or public_model
+                    ),
+                    operation.casefold(),
+                )
+                applicable = bool(
+                    reasoning_rule_active
+                    and classified.name
+                    not in {"error", "unmeasurable", "insufficient"}
+                    and policy.mode in {"required", "observe"}
+                    and 200 <= int(sample.status_code or 0) < 300
+                    and bool(sample.reasoning_tokens_reported)
+                    and int(sample.output_tokens or 0)
+                    >= policy.minimum_output_tokens
+                )
+                reasoning_zero_detected = bool(
+                    applicable and int(sample.reasoning_tokens or 0) <= 0
+                )
+                reasoning_zero_signals.append(reasoning_zero_detected)
+                if policy.mode != "required" or not applicable:
+                    reasoning_streaks[group_key] = 0
+                elif int(sample.reasoning_tokens or 0) > 0:
+                    reasoning_streaks[group_key] = 0
+                else:
+                    reasoning_streaks[group_key] += 1
+                    streak = reasoning_streaks[group_key]
+                    if streak >= policy.min_count:
+                        reason = (
+                            "同账号、上游模型和探针请求类型的思考输出连续为 0 "
+                            f"{streak} 次，达到 {policy.min_count} 次阈值"
+                        )
+                        rule_ids = tuple(
+                            dict.fromkeys((*classified.rule_ids, "reasoning_zero"))
+                        )
+                        reasons = tuple(
+                            dict.fromkeys((*classified.reasons, reason))
+                        )
+                        # Keep an already-strong primary diagnosis such as
+                        # fast_risk. Otherwise expose reasoning_zero as the
+                        # promoted primary classification and persist severity
+                        # 4 so dashboard hard-signal trends can distinguish it
+                        # from a single observation.
+                        promoted_primary = classified.hard
+                        classified = replace(
+                            classified,
+                            name=(
+                                classified.name
+                                if promoted_primary
+                                else "reasoning_zero"
+                            ),
+                            severity=max(
+                                classified.severity,
+                                PROMOTED_REASONING_ZERO_SEVERITY,
+                            ),
+                            anomalous=True,
+                            hard=True,
+                            rule_id=(
+                                classified.rule_id
+                                if promoted_primary
+                                else "reasoning_zero"
+                            ),
+                            rule_ids=rule_ids,
+                            reasons=reasons,
+                        )
+                if reasoning_zero_detected:
+                    reasoning_reason = (
+                        classified.reasons[-1]
+                        if classified.rule_id == "reasoning_zero"
+                        and classified.reasons
+                        else (
+                            "模型策略要求思考输出，但本次思考 Token 为 0"
+                            if policy.mode == "required"
+                            else "当前模型与请求类型仅观察思考输出为 0"
+                        )
+                    )
+                    if not classified.anomalous:
+                        classified = replace(
+                            classified,
+                            name=(
+                                "reasoning_zero"
+                                if policy.mode == "required"
+                                else "reasoning_zero_observe"
+                            ),
+                            severity=3 if policy.mode == "required" else 1,
+                            anomalous=True,
+                            rule_id="reasoning_zero",
+                            rule_ids=("reasoning_zero",),
+                            reasons=(reasoning_reason,),
+                        )
+                    else:
+                        classified = replace(
+                            classified,
+                            rule_ids=tuple(
+                                dict.fromkeys(
+                                    (*classified.rule_ids, "reasoning_zero")
+                                )
+                            ),
+                            reasons=tuple(
+                                dict.fromkeys(
+                                    (*classified.reasons, reasoning_reason)
+                                )
+                            ),
+                        )
+                sample.classification = classified.name
+                sample.risk_rule_id = classified.rule_id
+                sample.risk_rule_ids = list(classified.rule_ids)
+                sample.risk_reasons = list(classified.reasons)
+                sample.severity = classified.severity
+                classifications.append(classified)
+            anomaly_names = active_anomaly_classifications(thresholds)
+            anomaly_pairs = [
+                (row, classified)
+                for row, classified in zip(rows, classifications, strict=True)
+                if classified.anomalous and classified.name in anomaly_names
             ]
-            fast = [row for row in anomalies if row.classification == "fast_risk"]
-            marker = [row for row in anomalies if row.classification == "marker_miss"]
+            anomalies = [row for row, _classified in anomaly_pairs]
+            hard = [row for row, classified in anomaly_pairs if classified.hard]
+            fast = [row for row, classified in anomaly_pairs if classified.name == "fast_risk"]
+            marker = [
+                row for row, classified in anomaly_pairs if classified.name == "marker_miss"
+            ]
             reasoning_zero = [
-                row for row in anomalies if row.classification == "reasoning_zero"
+                row
+                for row, detected in zip(
+                    rows,
+                    reasoning_zero_signals,
+                    strict=True,
+                )
+                if detected
             ]
             egress_count = len({self._observed_egress_key(row) for row in anomalies})
             streak = maximum_anomaly_streak(
-                (row.classification for row in rows),
+                (classified.name for classified in classifications),
                 anomaly_names,
             )
             measurable = [row for row in rows if row.status == "done" and row.tps > 0]
@@ -190,10 +369,15 @@ class AccountRepository:
                 thresholds=thresholds,
             )
             rule_counts: dict[str, int] = {}
-            for row in anomalies:
-                rule_counts[row.classification] = (
-                    rule_counts.get(row.classification, 0) + 1
+            for _row, classified in anomaly_pairs:
+                rule_counts[classified.name] = (
+                    rule_counts.get(classified.name, 0) + 1
                 )
+            if reasoning_zero:
+                # Reasoning is an independent aggregate signal and can share a
+                # sample with a TPS/marker primary classification. Report the
+                # complete count instead of only rows where it won precedence.
+                rule_counts["reasoning_zero"] = len(reasoning_zero)
             generic_rule_reasons = aggregate_rule_reasons(rule_counts, thresholds)
             legacy_special_reasons = {
                 "fast_risk": f"持续生成型高速样本 {len(fast)} 次",
@@ -455,7 +639,20 @@ class AccountRepository:
                         func.max(ProbeSample.tps).label("max_tps"),
                         func.sum(
                             case(
-                                (ProbeSample.classification.in_(HARD_ANOMALY_NAMES), 1),
+                                (
+                                    or_(
+                                        ProbeSample.classification.in_(
+                                            HARD_ANOMALY_NAMES
+                                        ),
+                                        and_(
+                                            ProbeSample.classification
+                                            == "reasoning_zero",
+                                            ProbeSample.severity
+                                            >= PROMOTED_REASONING_ZERO_SEVERITY,
+                                        ),
+                                    ),
+                                    1,
+                                ),
                                 else_=0,
                             )
                         ).label("hard"),

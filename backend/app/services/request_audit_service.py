@@ -6,13 +6,13 @@ import json
 import logging
 import math
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.analyzer import (
     Classification,
     Thresholds,
-    classification_enabled,
     classify_audit_sample,
     get_risk_rule,
     risk_rule_definitions,
@@ -25,6 +25,7 @@ from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.request_audit_repository import RequestAuditRepository
+from app.reasoning_policy import canonical_reasoning_model
 
 if TYPE_CHECKING:
     from app.services.account_service import AccountService
@@ -45,6 +46,15 @@ REQUEST_AUDIT_MEDIA_BACKFILL_KEY = "request_audit_media_input_projection_v1"
 REQUEST_AUDIT_MEDIA_BACKFILL_MAX_PAGES = 10
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, frozen=True)
+class AuditRiskEvaluation:
+    classification: Classification
+    reasoning_mode: str = ""
+    reasoning_min_count: int = 0
+    reasoning_streak: int = 0
+    reasoning_detected: bool = False
 
 
 def _finite_float(value: Any) -> float | None:
@@ -228,6 +238,11 @@ class RequestAuditService:
             self.settings.buffer_first_token_share,
             self.settings.min_generation_ms,
             self.settings.reasoning_zero_risk_enabled,
+            tuple(
+                tuple(sorted((str(key), repr(value)) for key, value in item.items()))
+                for item in self.settings.reasoning_model_policies
+                if isinstance(item, dict)
+            ),
             self.settings.media_input_observe_enabled,
             self.settings.request_audit_risk_enabled,
             overrides_key,
@@ -244,6 +259,7 @@ class RequestAuditService:
             buffer_first_token_share=self.settings.buffer_first_token_share,
             min_generation_ms=self.settings.min_generation_ms,
             reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
+            reasoning_model_policies=tuple(self.settings.reasoning_model_policies),
             media_input_observe_enabled=self.settings.media_input_observe_enabled,
             request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
             risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
@@ -661,6 +677,7 @@ class RequestAuditService:
                     )
 
             all_records = self.repository.records_for_range(start, end)
+            evaluations = self._audit_risk_evaluations(all_records)
             complete = bool(reached_day_start or not has_more or reached_overlap)
             boundary_id = scan_head_id or previous_boundary_id
             boundary_created_at = (
@@ -694,6 +711,7 @@ class RequestAuditService:
             trigger_account_ids = self._new_risk_account_ids(
                 all_records,
                 discovered_after=previous_success_at or started_at,
+                evaluations=evaluations,
             )
             trigger_account_ids.update(
                 self.repository.retryable_verification_account_ids()
@@ -702,6 +720,7 @@ class RequestAuditService:
                 self._pre_disable_candidates(
                     all_records,
                     trigger_account_ids=trigger_account_ids,
+                    evaluations=evaluations,
                 )
                 if initial_complete
                 else []
@@ -710,7 +729,9 @@ class RequestAuditService:
                 pages=pages,
                 initial_complete=complete,
             )
-            summary = self._summary_payload(window, all_records)
+            summary = self._summary_payload(
+                window, all_records, evaluations=evaluations
+            )
             return {
                 "ok": True,
                 "trigger": trigger,
@@ -842,6 +863,7 @@ class RequestAuditService:
         records: list[dict[str, Any]],
         *,
         trigger_account_ids: set[int] | None = None,
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> list[dict[str, Any]]:
         """Select one SSO/action candidate per account from registered rules."""
 
@@ -859,18 +881,26 @@ class RequestAuditService:
                 and account_id not in trigger_account_ids
             ):
                 continue
-            rows_by_rule: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            rows_by_rule: dict[
+                str, list[tuple[dict[str, Any], AuditRiskEvaluation]]
+            ] = defaultdict(list)
             for row in rows:
-                classified = self._classify_record_detail(row)
+                evaluation = self._evaluation_for(row, evaluations)
+                classified = evaluation.classification
                 if classified.name != "high" or not classified.rule_id:
                     continue
                 rule = get_risk_rule(classified.rule_id)
                 if rule is None or not rule.audit_action_mode:
                     continue
-                rows_by_rule[rule.id].append(row)
+                if (
+                    rule.id == "reasoning_zero"
+                    and evaluation.reasoning_streak < evaluation.reasoning_min_count
+                ):
+                    continue
+                rows_by_rule[rule.id].append((row, evaluation))
 
             matched: list[dict[str, Any]] = []
-            for rule_id, rule_rows in rows_by_rule.items():
+            for rule_id, rule_pairs in rows_by_rule.items():
                 rule = get_risk_rule(rule_id)
                 if rule is None:
                     continue
@@ -880,24 +910,44 @@ class RequestAuditService:
                         min_count,
                         int(self.settings.request_audit_tps_only_min_count),
                     )
-                if len(rule_rows) < min_count:
+                evidence_count = max(
+                    len(rule_pairs),
+                    max(
+                        (
+                            pair[1].reasoning_streak
+                            for pair in rule_pairs
+                            if pair[1].reasoning_streak > 0
+                        ),
+                        default=0,
+                    ),
+                )
+                if evidence_count < min_count:
                     continue
+                rule_rows = [pair[0] for pair in rule_pairs]
                 latest = max(
                     rule_rows,
                     key=lambda row: ensure_utc(row.get("created_at"))
                     or datetime.min.replace(tzinfo=UTC),
                 )
+                latest_evaluation = next(
+                    evaluation
+                    for row, evaluation in rule_pairs
+                    if row is latest
+                )
                 candidate = {
                     **latest,
                     "_action_mode": rule.audit_action_mode,
                     "_risk_rule_id": rule.id,
-                    "_risk_rule_count": len(rule_rows),
+                    "_risk_rule_count": evidence_count,
                     "_risk_rule_min_count": min_count,
+                    "_risk_reasons": list(latest_evaluation.classification.reasons),
+                    "_reasoning_streak": latest_evaluation.reasoning_streak,
+                    "_reasoning_min_count": latest_evaluation.reasoning_min_count,
                 }
                 if rule.audit_action_mode == "tps_only":
                     candidate.update(
                         {
-                            "_tps_anomaly_count": len(rule_rows),
+                            "_tps_anomaly_count": evidence_count,
                             "_tps_min_count": min_count,
                             "_tps_max": max(
                                 float(row.get("tps") or 0) for row in rule_rows
@@ -930,6 +980,7 @@ class RequestAuditService:
         records: list[dict[str, Any]],
         *,
         discovered_after: datetime,
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> set[int]:
         boundary = ensure_utc(discovered_after) or utc_now()
         result: set[int] = set()
@@ -940,7 +991,10 @@ class RequestAuditService:
             fetched_at = ensure_utc(row.get("fetched_at"))
             if fetched_at is None or fetched_at <= boundary:
                 continue
-            if self._classify_record(row)[0] == "high":
+            if (
+                self._evaluation_for(row, evaluations).classification.name
+                == "high"
+            ):
                 result.add(account_id)
         return result
 
@@ -1157,13 +1211,23 @@ class RequestAuditService:
                 for row in self.repository.records_for_range(window_start, window_end)
                 if int(row.get("account_id") or 0) == account_id
             ]
+            evaluations = self._audit_risk_evaluations(account_rows)
             tps_rows = [
                 row
                 for row in account_rows
-                if _finite_float(row.get("tps")) is not None
-                and float(row.get("tps") or 0)
-                >= float(self.settings.strong_degradation_tps)
-                and not self._reasoning_zero_signal(row)
+                if (
+                    (rule := get_risk_rule(
+                        self._evaluation_for(
+                            row, evaluations
+                        ).classification.rule_id
+                    ))
+                    is not None
+                    and rule.audit_action_mode == "tps_only"
+                    and self._evaluation_for(
+                        row, evaluations
+                    ).classification.name
+                    == "high"
+                )
             ]
             record = {
                 **record,
@@ -1275,8 +1339,24 @@ class RequestAuditService:
             else {}
         )
         proxy_used = bool(common.get("proxy_used"))
-        _, risk_reasons = self._classify_record(record)
+        raw_risk_reasons = record.get("_risk_reasons")
+        if isinstance(raw_risk_reasons, (list, tuple)):
+            risk_reasons = [str(value) for value in raw_risk_reasons if str(value)]
+        else:
+            risk_reasons = list(
+                self._evaluation_for(record).classification.reasons
+            )
         self.repository.clear_egress_recommendations_for_account(account_id)
+        if not self.settings.request_audit_isolation_enabled:
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    **common,
+                    "status": "flagged",
+                    "action_status": "auto_quarantine_disabled",
+                    "action_error": "",
+                },
+            ) or verification
         if self.account_service is None:
             return self.repository.update_verification(
                 audit_id,
@@ -1402,8 +1482,10 @@ class RequestAuditService:
         requests = len(recent)
         request_rate = requests / REQUEST_AUDIT_ACTIVITY_MINUTES
         max_tps = max(measured, default=0.0)
+        recent_evaluations = self._audit_risk_evaluations(recent)
         reasoning_zero_detected = any(
-            self._reasoning_zero_signal(row) for row in recent
+            self._evaluation_for(row, recent_evaluations).reasoning_detected
+            for row in recent
         )
         reasons: list[str] = []
 
@@ -1578,7 +1660,13 @@ class RequestAuditService:
             reasoning_tokens=reasoning_tokens,
             first_token_ms=_nonnegative_int(item.get("firstTokenMs")),
             duration_ms=_int_or_zero(item.get("durationMs")),
-            extra={"media_input_images": media_input_images},
+            extra={
+                "media_input_images": media_input_images,
+                "model_upstream_model": str(item.get("modelUpstreamModel") or ""),
+                "model_public_id": str(item.get("modelPublicId") or ""),
+                "operation": str(item.get("operation") or ""),
+                "reasoning_tokens_reported": "reasoningTokens" in item,
+            },
         )
         raw_keys = (
             "id",
@@ -1632,6 +1720,7 @@ class RequestAuditService:
             "media_input_images": media_input_images,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "reasoning_tokens_reported": "reasoningTokens" in item,
             "total_tokens": _int_or_zero(item.get("totalTokens")),
             "first_token_ms": _nonnegative_int(item.get("firstTokenMs")),
             "duration_ms": _int_or_zero(item.get("durationMs")),
@@ -1737,38 +1826,63 @@ class RequestAuditService:
             start_at=start_at,
             end_at=end_at,
         )
-        page_value = self.repository.list_records(
-            start=window["start"],
-            end=window["end"],
-            page=page,
-            page_size=page_size,
-            account=account,
-            risk=risk,
-            egress_node_id=egress_node_id,
-            watch_threshold=self.settings.degradation_tps,
-            high_threshold=self.settings.strong_degradation_tps,
-            risk_enabled=self.settings.request_audit_risk_enabled,
-            reasoning_zero_risk_enabled=risk_rule_enabled(
-                "reasoning_zero",
-                self._rule_thresholds(),
-            ),
-            media_input_observe_enabled=risk_rule_enabled(
-                "media_input_observe",
-                self._rule_thresholds(),
-            ),
-            elevated_tps_risk_enabled=classification_enabled(
-                "elevated",
-                self._rule_thresholds(),
-            ),
-            fast_tps_risk_enabled=classification_enabled(
-                "fast_risk",
-                self._rule_thresholds(),
-            ),
+        window_items = self.repository.records_for_range(
+            window["start"],
+            window["end"],
         )
-        probe_map = self._probe_sample_map(page_value["items"])
-        account_ids = self._record_account_ids(page_value["items"])
+        # Consecutive reasoning state belongs to the complete time window. A
+        # text/egress filter must not rewrite a row's risk level by hiding the
+        # preceding samples that established its streak.
+        evaluations = self._audit_risk_evaluations(window_items)
+        all_items = window_items
+        account_needle = account.strip().casefold()
+        if account_needle:
+            try:
+                account_id_filter = int(account_needle)
+            except ValueError:
+                account_id_filter = 0
+            all_items = [
+                item
+                for item in all_items
+                if account_needle in str(item.get("account_name") or "").casefold()
+                or account_needle in str(item.get("request_id") or "").casefold()
+                or (account_id_filter > 0 and item.get("account_id") == account_id_filter)
+            ]
+        if egress_node_id is not None:
+            all_items = [
+                item
+                for item in all_items
+                if item.get("egress_node_id") == egress_node_id
+            ]
+        filtered_items = [
+            item
+            for item in all_items
+            if self._risk_filter_matches(
+                self._evaluation_for(item, evaluations).classification,
+                risk,
+            )
+        ]
+        # Risk streaks are evaluated chronologically above, but the workbench
+        # is an operator-facing ledger and must show the newest request first.
+        # Keep the two concerns separate so pagination never hides the latest
+        # evidence behind older rows.
+        filtered_items.sort(
+            key=lambda item: (
+                ensure_utc(item.get("created_at"))
+                or datetime.min.replace(tzinfo=UTC),
+                str(item.get("upstream_id") or ""),
+            ),
+            reverse=True,
+        )
+        total = len(filtered_items)
+        page = max(1, page)
+        page_size = max(1, min(page_size, 200))
+        offset = (page - 1) * page_size
+        page_items = filtered_items[offset : offset + page_size]
+        probe_map = self._probe_sample_map(page_items)
+        account_ids = self._record_account_ids(page_items)
         verification_map = self.repository.verifications_for_audits(
-            str(item.get("upstream_id") or "") for item in page_value["items"]
+            str(item.get("upstream_id") or "") for item in page_items
         )
         try:
             upstream_accounts = await self._upstream_account_map(account_ids)
@@ -1791,14 +1905,31 @@ class RequestAuditService:
                     verification=verification_map.get(
                         str(item.get("upstream_id") or "")
                     ),
+                    evaluation=self._evaluation_for(item, evaluations),
                 )
-                for item in page_value["items"]
+                for item in page_items
             ],
-            "total": page_value["total"],
-            "page": page_value["page"],
-            "pageSize": page_value["page_size"],
+            "total": total,
+            "page": page,
+            "pageSize": page_size,
             "thresholds": self.thresholds,
         }
+
+    @staticmethod
+    def _risk_filter_matches(
+        classification: Classification,
+        risk: str,
+    ) -> bool:
+        level = (
+            classification.name
+            if classification.name in {"watch", "high"}
+            else "normal"
+        )
+        if not risk or risk == "all":
+            return True
+        if risk == "risky":
+            return level in {"watch", "high"}
+        return level == risk
 
     @staticmethod
     def _record_lookup_keys(row: dict[str, Any]) -> tuple[str, ...]:
@@ -1923,6 +2054,7 @@ class RequestAuditService:
             end_at=end_at,
         )
         records = self.repository.records_for_range(window["start"], window["end"])
+        evaluations = self._audit_risk_evaluations(records)
         assessments = self._assessment_payloads(records)
         account_ids = self._record_account_ids(records)
         verifications = self._latest_account_verifications(account_ids)
@@ -1940,6 +2072,7 @@ class RequestAuditService:
             assessments=assessments,
             upstream_accounts=upstream_accounts,
             verifications=verifications,
+            evaluations=evaluations,
         )
         if isinstance(nodes_result, BaseException):
             # Node metadata is supplemental. Retain the last good snapshot and
@@ -1960,7 +2093,9 @@ class RequestAuditService:
             "upstreamAccountSnapshotAt": (
                 _iso(self._account_cache_checked_at) if account_ids else None
             ),
-            "summary": self._summary_payload(window, records, accounts),
+            "summary": self._summary_payload(
+                window, records, accounts, evaluations=evaluations
+            ),
             "accounts": accounts,
             "nodes": self._node_payloads(
                 records,
@@ -1968,8 +2103,9 @@ class RequestAuditService:
                 nodes=nodes,
                 upstream_accounts=upstream_accounts,
                 verifications=verifications,
+                evaluations=evaluations,
             ),
-            "trend": self._trend_payload(window, records),
+            "trend": self._trend_payload(window, records, evaluations=evaluations),
             "scan": self._state_payload(state, window=window),
         }
 
@@ -1978,6 +2114,8 @@ class RequestAuditService:
         window: dict[str, Any],
         records: list[dict[str, Any]],
         account_values: list[dict[str, Any]] | None = None,
+        *,
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> dict[str, Any]:
         measured = [
             float(row["tps"])
@@ -1986,7 +2124,10 @@ class RequestAuditService:
             and float(row.get("tps") or 0) > 0
         ]
         if account_values is None:
-            account_values = self._account_payloads(records)
+            evaluations = evaluations or self._audit_risk_evaluations(records)
+            account_values = self._account_payloads(
+                records, evaluations=evaluations
+            )
         watch = sum(
             1 for row in account_values if row["riskLevel"] in {"watch", "high"}
         )
@@ -1999,7 +2140,9 @@ class RequestAuditService:
             "p95Tps": round(_p95(measured), 1),
             "maxTps": round(max(measured, default=0), 1),
             "reasoningZeroRequests": sum(
-                1 for row in records if self._reasoning_zero_signal(row)
+                1
+                for row in records
+                if self._evaluation_for(row, evaluations).reasoning_detected
             ),
             "watchAccounts": watch,
             "highRiskAccounts": high,
@@ -2037,6 +2180,7 @@ class RequestAuditService:
         assessments: dict[int, dict[str, Any]] | None = None,
         upstream_accounts: dict[int, dict[str, Any]] | None = None,
         verifications: dict[int, dict[str, Any]] | None = None,
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
@@ -2072,6 +2216,7 @@ class RequestAuditService:
                     if rows[0].get("account_id")
                     else {}
                 ),
+                evaluations=evaluations,
             )
             for rows in groups.values()
         ]
@@ -2099,6 +2244,7 @@ class RequestAuditService:
         assessment: dict[str, Any],
         upstream_account: dict[str, Any],
         verification: dict[str, Any],
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> dict[str, Any]:
         speeds = [
             float(row["tps"])
@@ -2107,15 +2253,25 @@ class RequestAuditService:
             and float(row.get("tps") or 0) > 0
         ]
         max_tps = max(speeds, default=0.0)
-        classifications = [self._classify_record_detail(row) for row in rows]
+        classifications = [
+            self._evaluation_for(row, evaluations).classification for row in rows
+        ]
         row_risks = [
             value.name if value.name in {"watch", "high"} else "normal"
             for value in classifications
         ]
         risk_rank = {"normal": 0, "watch": 1, "high": 2}
         risk_level = max(row_risks, key=risk_rank.get, default="normal")
+        reasoning_evaluations = [
+            self._evaluation_for(row, evaluations) for row in rows
+        ]
         reasoning_zero_count = sum(
-            1 for value in classifications if value.rule_id == "reasoning_zero"
+            1
+            for value in reasoning_evaluations
+            if value.reasoning_detected
+        )
+        reasoning_zero_streak, reasoning_zero_min_count = (
+            self._reasoning_progress(reasoning_evaluations)
         )
         media_input_count = sum(
             1 for row in rows if _int_or_zero(row.get("media_input_images")) > 0
@@ -2182,12 +2338,16 @@ class RequestAuditService:
             "watchCount": watch_count,
             "highRiskCount": high_count,
             "reasoningZeroCount": reasoning_zero_count,
+            "reasoningZeroStreak": reasoning_zero_streak,
+            "reasoningZeroMinCount": reasoning_zero_min_count,
             "mediaInputCount": media_input_count,
             "mediaInputImages": media_input_images,
             "riskLevel": risk_level,
             "riskReasons": self._risk_reasons(
                 ordinary_risk_tps,
                 reasoning_zero_count=reasoning_zero_count,
+                reasoning_zero_streak=reasoning_zero_streak,
+                reasoning_zero_min_count=reasoning_zero_min_count,
                 media_input_count=media_observe_count,
                 media_input_images=media_observe_images,
             ),
@@ -2227,6 +2387,7 @@ class RequestAuditService:
         nodes: dict[int, dict[str, Any]],
         upstream_accounts: dict[int, dict[str, Any]],
         verifications: dict[int, dict[str, Any]],
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> list[dict[str, Any]]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for row in records:
@@ -2246,6 +2407,7 @@ class RequestAuditService:
                 assessments=assessments,
                 upstream_accounts=upstream_accounts,
                 verifications=verifications,
+                evaluations=evaluations,
             )
             risky_accounts = [
                 value for value in account_values if value["riskLevel"] != "normal"
@@ -2257,15 +2419,26 @@ class RequestAuditService:
                 and float(row.get("tps") or 0) > 0
             ]
             max_tps = max(speeds, default=0.0)
-            classifications = [self._classify_record_detail(row) for row in rows]
+            classifications = [
+                self._evaluation_for(row, evaluations).classification
+                for row in rows
+            ]
             row_risks = [
                 value.name if value.name in {"watch", "high"} else "normal"
                 for value in classifications
             ]
             risk_rank = {"normal": 0, "watch": 1, "high": 2}
             risk_level = max(row_risks, key=risk_rank.get, default="normal")
+            reasoning_evaluations = [
+                self._evaluation_for(row, evaluations) for row in rows
+            ]
             reasoning_zero_count = sum(
-                1 for value in classifications if value.rule_id == "reasoning_zero"
+                1
+                for value in reasoning_evaluations
+                if value.reasoning_detected
+            )
+            reasoning_zero_streak, reasoning_zero_min_count = (
+                self._reasoning_progress(reasoning_evaluations)
             )
             media_input_count = sum(
                 1 for row in rows if _int_or_zero(row.get("media_input_images")) > 0
@@ -2339,12 +2512,16 @@ class RequestAuditService:
                         1 for value in row_risks if value == "high"
                     ),
                     "reasoningZeroCount": reasoning_zero_count,
+                    "reasoningZeroStreak": reasoning_zero_streak,
+                    "reasoningZeroMinCount": reasoning_zero_min_count,
                     "mediaInputCount": media_input_count,
                     "mediaInputImages": media_input_images,
                     "riskLevel": risk_level,
                     "riskReasons": self._risk_reasons(
                         ordinary_risk_tps,
                         reasoning_zero_count=reasoning_zero_count,
+                        reasoning_zero_streak=reasoning_zero_streak,
+                        reasoning_zero_min_count=reasoning_zero_min_count,
                         media_input_count=media_observe_count,
                         media_input_images=media_observe_images,
                     ),
@@ -2367,9 +2544,213 @@ class RequestAuditService:
         )
         return result
 
-    def _reasoning_zero_signal(self, row: dict[str, Any]) -> bool:
+    @staticmethod
+    def _reasoning_progress(
+        evaluations: list[AuditRiskEvaluation],
+    ) -> tuple[int, int]:
+        """Return a threshold/streak pair from one policy, never two maxima.
+
+        A grouped account can contain several model policies. Pairing the
+        largest streak with the largest threshold made the UI report a
+        threshold that belonged to a different model. Prefer an actually
+        promoted high evaluation, then the furthest active streak.
+        """
+
+        candidates = [
+            value
+            for value in evaluations
+            if value.reasoning_mode == "required"
+            and value.reasoning_min_count > 0
+            and value.reasoning_streak > 0
+        ]
+        if not candidates:
+            return 0, 0
+        promoted = [
+            value
+            for value in candidates
+            if value.classification.rule_id == "reasoning_zero"
+            and value.reasoning_streak >= value.reasoning_min_count
+        ]
+        chosen = max(
+            promoted or candidates,
+            key=lambda value: (
+                value.reasoning_streak >= value.reasoning_min_count,
+                value.reasoning_streak,
+                -value.reasoning_min_count,
+            ),
+        )
+        return chosen.reasoning_streak, chosen.reasoning_min_count
+
+    @staticmethod
+    def _audit_row_key(row: dict[str, Any]) -> str:
+        return str(row.get("upstream_id") or row.get("request_id") or "")
+
+    def _audit_risk_evaluations(
+        self,
+        records: list[dict[str, Any]],
+    ) -> dict[str, AuditRiskEvaluation]:
+        """Classify rows once, then promote repeated required reasoning gaps.
+
+        A single explicitly reported zero remains an observation. Only a
+        consecutive sequence for the same account, upstream model and request
+        operation becomes high risk. This keeps row display, filters,
+        aggregation and the SSO action candidate path on one decision source.
+        """
+
+        thresholds = self._rule_thresholds()
+        result: dict[str, AuditRiskEvaluation] = {}
+        streaks: dict[tuple[int, str, str], int] = defaultdict(int)
+        reasoning_rule_active = bool(
+            thresholds.request_audit_risk_enabled
+            and risk_rule_enabled("reasoning_zero", thresholds)
+        )
+        ordered = sorted(
+            records,
+            key=lambda row: (
+                ensure_utc(row.get("created_at"))
+                or datetime.min.replace(tzinfo=UTC),
+                self._audit_row_key(row),
+            ),
+        )
+        for row in ordered:
+            row_key = self._audit_row_key(row)
+            classification = self._classify_record_detail(row)
+            policy = thresholds.reasoning_policy(
+                model_upstream_model=str(row.get("model_upstream_model") or ""),
+                model_public_id=str(row.get("model_public_id") or ""),
+                operation=str(row.get("operation") or ""),
+                media_input_images=_int_or_zero(row.get("media_input_images")),
+            )
+            evaluation = AuditRiskEvaluation(
+                classification=classification,
+                reasoning_mode=policy.mode,
+                reasoning_min_count=policy.min_count,
+            )
+            account_id = _positive_int(row.get("account_id"))
+            group_key = (
+                account_id or 0,
+                canonical_reasoning_model(
+                    str(
+                        row.get("model_upstream_model")
+                        or row.get("model_public_id")
+                        or ""
+                    )
+                ),
+                str(row.get("operation") or "").strip().lower(),
+            )
+            applicable = bool(
+                reasoning_rule_active
+                and account_id is not None
+                and policy.mode in {"required", "observe"}
+                and 200 <= _int_or_zero(row.get("status_code")) < 300
+                and bool(row.get("reasoning_tokens_reported"))
+                and _int_or_zero(row.get("output_tokens"))
+                >= policy.minimum_output_tokens
+            )
+            reasoning_detected = bool(
+                applicable and _int_or_zero(row.get("reasoning_tokens")) <= 0
+            )
+            if policy.mode != "required" or not applicable:
+                streaks[group_key] = 0
+            elif _int_or_zero(row.get("reasoning_tokens")) > 0:
+                streaks[group_key] = 0
+            else:
+                streaks[group_key] += 1
+                streak = streaks[group_key]
+                evaluation = replace(evaluation, reasoning_streak=streak)
+
+            if reasoning_detected:
+                reason = (
+                    classification.reasons[-1]
+                    if classification.rule_id == "reasoning_zero"
+                    and classification.reasons
+                    else (
+                        "模型策略要求思考输出，但本次思考 Token 为 0"
+                        if policy.mode == "required"
+                        else "当前模型与请求类型仅观察思考输出为 0"
+                    )
+                )
+                combined_rule_ids = tuple(
+                    dict.fromkeys((*classification.rule_ids, "reasoning_zero"))
+                )
+                combined_reasons = tuple(
+                    dict.fromkeys((*classification.reasons, reason))
+                )
+                if classification.name not in {"watch", "high"}:
+                    classification = replace(
+                        classification,
+                        name="watch",
+                        severity=3 if policy.mode == "required" else 1,
+                        anomalous=True,
+                        hard=False,
+                        rule_id="reasoning_zero",
+                        rule_ids=combined_rule_ids,
+                        reasons=combined_reasons,
+                    )
+                else:
+                    classification = replace(
+                        classification,
+                        rule_ids=combined_rule_ids,
+                        reasons=combined_reasons,
+                    )
+
+                streak = evaluation.reasoning_streak
+                if policy.mode == "required" and streak >= policy.min_count:
+                    promoted_reason = (
+                        "同账号、上游模型和请求类型的思考输出连续为 0 "
+                        f"{streak} 次，达到 {policy.min_count} 次阈值"
+                    )
+                    # Keep an independently strong primary rule such as
+                    # fast_risk. A clean proxy SSO verdict can then still take
+                    # the TPS-only deprioritization/change-egress path, while a
+                    # flagged verdict is quarantined by the shared SSO flow.
+                    # Reasoning remains visible in rule_ids and reasons.
+                    preserve_primary = bool(
+                        classification.hard
+                        and classification.rule_id
+                        and classification.rule_id != "reasoning_zero"
+                    )
+                    classification = replace(
+                        classification,
+                        name="high",
+                        severity=max(classification.severity, 3),
+                        anomalous=True,
+                        hard=True,
+                        rule_id=(
+                            classification.rule_id
+                            if preserve_primary
+                            else "reasoning_zero"
+                        ),
+                        rule_ids=tuple(
+                            dict.fromkeys(
+                                (*classification.rule_ids, "reasoning_zero")
+                            )
+                        ),
+                        reasons=tuple(
+                            dict.fromkeys(
+                                (*classification.reasons, promoted_reason)
+                            )
+                        ),
+                    )
+                evaluation = replace(
+                    evaluation,
+                    classification=classification,
+                    reasoning_detected=True,
+                )
+            result[row_key] = evaluation
+        return result
+
+    def _evaluation_for(
+        self,
+        row: dict[str, Any],
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
+    ) -> AuditRiskEvaluation:
+        if evaluations is not None:
+            value = evaluations.get(self._audit_row_key(row))
+            if value is not None:
+                return value
         classification = self._classify_record_detail(row)
-        return classification.rule_id == "reasoning_zero"
+        return AuditRiskEvaluation(classification=classification)
 
     def _classify_record_detail(self, row: dict[str, Any]) -> Classification:
         return classify_audit_sample(
@@ -2383,6 +2764,12 @@ class RequestAuditService:
             extra={
                 **row,
                 "media_input_images": _int_or_zero(row.get("media_input_images")),
+                "model_upstream_model": str(row.get("model_upstream_model") or ""),
+                "model_public_id": str(row.get("model_public_id") or ""),
+                "operation": str(row.get("operation") or ""),
+                "reasoning_tokens_reported": bool(
+                    row.get("reasoning_tokens_reported")
+                ),
             },
         )
 
@@ -2432,6 +2819,8 @@ class RequestAuditService:
         tps: float,
         *,
         reasoning_zero_count: int = 0,
+        reasoning_zero_streak: int = 0,
+        reasoning_zero_min_count: int = 0,
         media_input_count: int = 0,
         media_input_images: int = 0,
     ) -> list[str]:
@@ -2439,9 +2828,14 @@ class RequestAuditService:
             return []
         reasons: list[str] = []
         if reasoning_zero_count:
-            reasons.append(
-                f"成功请求思考输出为 0 共 {reasoning_zero_count} 次"
-            )
+            if reasoning_zero_streak >= reasoning_zero_min_count > 0:
+                reasons.append(
+                    f"思考输出为 0 已连续 {reasoning_zero_streak} 次，达到高风险阈值"
+                )
+            else:
+                reasons.append(
+                    f"成功请求思考输出为 0 共 {reasoning_zero_count} 次，当前仅观察"
+                )
         if media_input_count and risk_rule_enabled(
             "media_input_observe",
             self._rule_thresholds(),
@@ -2464,6 +2858,8 @@ class RequestAuditService:
         self,
         window: dict[str, Any],
         records: list[dict[str, Any]],
+        *,
+        evaluations: dict[str, AuditRiskEvaluation] | None = None,
     ) -> list[dict[str, Any]]:
         start = window["start"]
         end = window["end"]
@@ -2524,7 +2920,12 @@ class RequestAuditService:
                 bucket["measuredRequests"] += 1
                 bucket["_values"].append(tps)
                 bucket["maxTps"] = round(max(bucket["maxTps"], tps), 1)
-            risk_level, _ = self._classify_record(row)
+            classification = self._evaluation_for(row, evaluations).classification
+            risk_level = (
+                classification.name
+                if classification.name in {"watch", "high"}
+                else "normal"
+            )
             if risk_level in {"watch", "high"}:
                 bucket["watch"] += 1
             if risk_level == "high":
@@ -2601,8 +3002,10 @@ class RequestAuditService:
         probe_samples: list[dict[str, Any]] | None = None,
         upstream_account: dict[str, Any] | None = None,
         verification: dict[str, Any] | None = None,
+        evaluation: AuditRiskEvaluation | None = None,
     ) -> dict[str, Any]:
-        classification = self._classify_record_detail(row)
+        evaluation = evaluation or self._evaluation_for(row)
+        classification = evaluation.classification
         risk_level = (
             classification.name
             if classification.name in {"watch", "high"}
@@ -2641,6 +3044,7 @@ class RequestAuditService:
             "hasMediaInput": int(row.get("media_input_images") or 0) > 0,
             "outputTokens": int(row.get("output_tokens") or 0),
             "reasoningTokens": int(row.get("reasoning_tokens") or 0),
+            "reasoningTokensReported": bool(row.get("reasoning_tokens_reported")),
             "totalTokens": int(row.get("total_tokens") or 0),
             "firstTokenMs": (
                 int(row["first_token_ms"])
@@ -2653,7 +3057,13 @@ class RequestAuditService:
             "riskReasons": risk_reasons,
             "riskRuleId": classification.rule_id,
             "riskRuleIds": list(classification.rule_ids),
-            "reasoningZeroRisk": self._reasoning_zero_signal(row),
+            "reasoningZeroRisk": classification.rule_id in {
+                "reasoning_zero",
+                "reasoning_zero_observe",
+            }
+            or evaluation.reasoning_detected,
+            "reasoningZeroStreak": evaluation.reasoning_streak,
+            "reasoningZeroMinCount": evaluation.reasoning_min_count,
             "preDisableCheck": self._verification_payload(verification or {}),
             "probeSampleCount": len(probe_samples or []),
             "probeSamples": probe_samples or [],

@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.core.config import Settings
 from app.integrations.sso import normalize_proxy
+from app.reasoning_policy import normalize_reasoning_model_policies
 
 
 class RuntimeSettingsValidator:
@@ -17,6 +18,7 @@ class RuntimeSettingsValidator:
         candidate = Settings.model_validate(values | fixed_strategy)
         self._validate_risk(candidate)
         self._normalize_risk_rules(candidate)
+        self._normalize_reasoning_model_policies(candidate)
         self._validate_request_audit(candidate)
         self._validate_retry(candidate)
         self._validate_connection(candidate)
@@ -86,6 +88,15 @@ class RuntimeSettingsValidator:
                     item[str(key)] = value
             normalized.append(item)
         candidate.risk_rule_overrides = normalized
+
+    @staticmethod
+    def _normalize_reasoning_model_policies(candidate: Settings) -> None:
+        candidate.reasoning_model_policies = [
+            policy.public_dict()
+            for policy in normalize_reasoning_model_policies(
+                candidate.reasoning_model_policies
+            )
+        ]
 
     @staticmethod
     def _validate_retry(candidate: Settings) -> None:

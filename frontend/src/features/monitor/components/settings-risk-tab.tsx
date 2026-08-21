@@ -31,6 +31,7 @@ import {
   type SettingsForm,
   type SettingsSetter,
 } from './settings-model'
+import { SettingsReasoningPolicyCard } from './settings-reasoning-policy-card'
 
 export function SettingsRiskTab({
   form,
@@ -190,6 +191,8 @@ export function SettingsRiskTab({
         </SettingsCard>
       </div>
 
+      <SettingsReasoningPolicyCard form={form} set={set} />
+
       <SettingsCard
         icon={Calculator}
         title='风险评分规则'
@@ -243,7 +246,7 @@ export function SettingsRiskTab({
           />
           <RiskFactorRow
             title='强信号'
-            description='buffered_hard、fast_risk、marker_miss、reasoning_zero 等强规则每出现 1 次先在本项加分；部分规则还会进入专项计分。'
+            description='buffered_hard、fast_risk、marker_miss，以及达到模型策略连续次数后的 reasoning_zero 会计为强信号；单次思考为 0 仅观察。'
             weight={form.riskHardWeight}
             cap={form.riskHardCap}
             onWeightChange={(value) => set('riskHardWeight', value)}
@@ -346,9 +349,13 @@ export function SettingsRiskTab({
       <SettingsCard
         icon={ShieldCheck}
         title='风控规则目录'
-        description='所有样本规则按优先级从小到大执行。新增规则只需在后端注册，即会自动出现在这里；关闭规则后会按剩余规则重算账号。'
+        description='目录中的数字是执行顺序，不是风险分：数值越小越先判断，单次样本命中主规则后停止向后分类。新增规则在后端注册后会自动出现；关闭规则后按剩余规则重算账号。'
         descriptionAsHint
       >
+        <div className='mb-4 rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2.5 text-xs leading-5 text-muted-foreground'>
+          例如 <span className='font-mono text-foreground'>10</span> 会先于{' '}
+          <span className='font-mono text-foreground'>100</span> 执行；它们只控制规则先后，不会给账号增加 10 分或 100 分。思考连续信号由聚合阶段单独累计，因此不会被 TPS 主分类遮蔽。
+        </div>
         <div className='overflow-hidden rounded-xl border'>
           {form.riskRules.length ? (
             [...form.riskRules]
@@ -377,7 +384,7 @@ export function SettingsRiskTab({
                           {rule.label}
                         </span>
                         <Badge variant='outline'>
-                          #{override?.priority ?? rule.priority}
+                          顺序 {override?.priority ?? rule.priority}
                         </Badge>
                         {rule.scopes.map((scope) => (
                           <Badge key={scope} variant='secondary'>
@@ -453,16 +460,18 @@ export function SettingsRiskTab({
       >
         <div className='mb-4 grid overflow-hidden rounded-xl border sm:grid-cols-2'>
           <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
-            <div className='text-sm font-medium'>思考输出为 0 识别</div>
+            <div className='flex items-center gap-1.5 text-sm font-medium'>
+              请求审计账号处置
+              <InfoTooltip
+                label='请求审计账号处置'
+                content='控制请求审计工作台和自动复检流程是否可以停用或调整账号；关闭后仍保存风险证据。'
+              />
+            </div>
             <Switch
-              checked={form.reasoningZeroRiskEnabled}
-              onCheckedChange={(value) => {
-                set('reasoningZeroRiskEnabled', value)
-                set(
-                  'riskRuleOverrides',
-                  setRiskRuleEnabled(form, 'reasoning_zero', value)
-                )
-              }}
+              checked={form.requestAuditIsolationEnabled}
+              onCheckedChange={(value) =>
+                set('requestAuditIsolationEnabled', value)
+              }
             />
           </div>
           <div className='flex min-h-20 items-center justify-between gap-4 border-t px-4 py-3 sm:border-t-0 sm:border-l'>

@@ -505,11 +505,14 @@ function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
       icon: Activity,
       title: '思考输出为 0',
       badge: <StatusBadge value='reasoning_zero' />,
-      summary: '请求成功且有可见输出，但 reasoning Token 为 0。',
+      summary: '仅在模型能力策略适用、字段明确上报且输出达到策略下限时检查 reasoning Token。',
       conditions: thresholds.reasoningZeroRiskEnabled
-        ? ['记录 1 次疑似降智', '同时计为强降智信号']
+        ? [
+            '单次为 0 先记录观察信号',
+            '同账号、稳定模型和请求类型连续达到策略次数后升级为强信号',
+          ]
         : ['当前规则已关闭'],
-      tone: thresholds.reasoningZeroRiskEnabled ? 'danger' : 'default',
+      tone: thresholds.reasoningZeroRiskEnabled ? 'warning' : 'default',
     },
     {
       icon: CheckCircle2,

@@ -469,6 +469,7 @@ export type RequestAuditRecord = {
   hasMediaInput: boolean
   outputTokens: number
   reasoningTokens: number
+  reasoningTokensReported: boolean
   totalTokens: number
   firstTokenMs: number | null
   durationMs: number
@@ -478,6 +479,8 @@ export type RequestAuditRecord = {
   riskRuleId: string
   riskRuleIds: string[]
   reasoningZeroRisk: boolean
+  reasoningZeroStreak: number
+  reasoningZeroMinCount: number
   preDisableCheck: RequestAuditPreDisableCheck | null
   probeSampleCount: number
   probeSamples: RequestAuditProbeContext[]
@@ -579,6 +582,8 @@ export type RequestAuditAccountRisk = {
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
   reasoningZeroCount: number
+  reasoningZeroStreak: number
+  reasoningZeroMinCount: number
   mediaInputCount: number
   mediaInputImages: number
   probeReasoningZeroCount: number
@@ -618,6 +623,8 @@ export type RequestAuditNodeRisk = {
   riskLevel: RequestAuditRiskLevel
   riskReasons: string[]
   reasoningZeroCount: number
+  reasoningZeroStreak: number
+  reasoningZeroMinCount: number
   mediaInputCount: number
   mediaInputImages: number
   accountCount: number
@@ -1044,6 +1051,7 @@ export type ProbeSample = {
   retry_after_seconds?: number
   output_tokens: number
   reasoning_tokens: number
+  reasoning_tokens_reported?: boolean
   visible_tokens?: number
   chunk_count?: number
   first_token_ms: number
@@ -1085,6 +1093,23 @@ export type RiskRuleOverride = {
   [key: string]: string | number | boolean | null | undefined
 }
 
+export type ReasoningPolicyMode =
+  | 'required'
+  | 'observe'
+  | 'optional'
+  | 'unsupported'
+
+export type ReasoningMediaInputMode = 'inherit' | 'observe' | 'ignore'
+
+export type ReasoningModelPolicy = {
+  model: string
+  operation: '*' | 'chat' | 'responses' | 'messages'
+  mode: ReasoningPolicyMode
+  minimumOutputTokens: number
+  minCount: number
+  mediaInputMode: ReasoningMediaInputMode
+}
+
 export type RuntimeSettings = {
   grok2apiBaseUrl: string
   grok2apiAdminUsername: string
@@ -1122,6 +1147,7 @@ export type RuntimeSettings = {
   requestAuditLiveRefreshSeconds: number
   requestAuditRiskEnabled: boolean
   reasoningZeroRiskEnabled: boolean
+  reasoningModelPolicies: ReasoningModelPolicy[]
   mediaInputObserveEnabled: boolean
   riskRuleOverrides: RiskRuleOverride[]
   riskRules: RiskRuleDefinition[]
@@ -1221,6 +1247,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'requestAuditLiveRefreshSeconds'
     | 'requestAuditRiskEnabled'
     | 'reasoningZeroRiskEnabled'
+    | 'reasoningModelPolicies'
     | 'mediaInputObserveEnabled'
     | 'riskRuleOverrides'
     | 'requestAuditTpsOnlyDeprioritizeEnabled'
@@ -1314,6 +1341,8 @@ type RuntimeSettingsWire = Omit<
   | 'requestAuditLiveRefreshSeconds'
   | 'requestAuditRiskEnabled'
   | 'reasoningZeroRiskEnabled'
+  | 'reasoningModelPolicies'
+  | 'mediaInputObserveEnabled'
   | 'riskRuleOverrides'
   | 'riskRules'
   | 'requestAuditTpsOnlyDeprioritizeEnabled'
@@ -1365,6 +1394,7 @@ type RuntimeSettingsWire = Omit<
   requestAuditLiveRefreshSeconds?: number
   requestAuditRiskEnabled?: boolean
   reasoningZeroRiskEnabled?: boolean
+  reasoningModelPolicies?: ReasoningModelPolicy[]
   mediaInputObserveEnabled?: boolean
   riskRuleOverrides?: RiskRuleOverride[]
   riskRules?: RiskRuleDefinition[]
@@ -1376,6 +1406,64 @@ type RuntimeSettingsWire = Omit<
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
+  const defaultReasoningModelPolicies: ReasoningModelPolicy[] = [
+    {
+      model: 'Build/grok-4.5',
+      operation: 'chat',
+      mode: 'required',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+    {
+      model: 'Build/grok-4.5',
+      operation: 'responses',
+      mode: 'required',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+    {
+      model: 'Build/grok-4.6',
+      operation: 'chat',
+      mode: 'required',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+    {
+      model: 'Build/grok-4.6',
+      operation: 'responses',
+      mode: 'required',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+    {
+      model: 'Build/grok-4.6',
+      operation: 'messages',
+      mode: 'required',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'observe',
+    },
+    {
+      model: 'Build/grok-composer-2.5-fast',
+      operation: '*',
+      mode: 'observe',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+    {
+      model: '*',
+      operation: '*',
+      mode: 'observe',
+      minimumOutputTokens: 32,
+      minCount: 2,
+      mediaInputMode: 'inherit',
+    },
+  ]
   return {
     ...value,
     registerProbeProfileIds: value.registerProbeProfileIds ?? [
@@ -1414,6 +1502,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     requestAuditLiveRefreshSeconds: value.requestAuditLiveRefreshSeconds ?? 30,
     requestAuditRiskEnabled: value.requestAuditRiskEnabled ?? true,
     reasoningZeroRiskEnabled: value.reasoningZeroRiskEnabled ?? true,
+    reasoningModelPolicies:
+      value.reasoningModelPolicies ?? defaultReasoningModelPolicies,
     mediaInputObserveEnabled: value.mediaInputObserveEnabled ?? true,
     riskRuleOverrides: value.riskRuleOverrides ?? [],
     riskRules: value.riskRules ?? [],

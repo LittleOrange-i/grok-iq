@@ -240,6 +240,7 @@ class ChatProbeRunner:
         details = usage.get("completion_tokens_details") or {}
         output_tokens = int(usage.get("completion_tokens") or 0)
         reasoning_tokens = int(details.get("reasoning_tokens") or 0)
+        reasoning_tokens_reported = "reasoning_tokens" in details
         visible_tokens = max(output_tokens - reasoning_tokens, 0)
         if visible_tokens == 0 and response_text:
             visible_tokens = max(1, (len(response_text) + 3) // 4)
@@ -254,6 +255,7 @@ class ChatProbeRunner:
             response_sha256=hashlib.sha256(response_text.encode()).hexdigest(),
             output_tokens=output_tokens,
             reasoning_tokens=reasoning_tokens,
+            reasoning_tokens_reported=reasoning_tokens_reported,
             visible_tokens=visible_tokens,
             chunk_count=state.chunk_count,
             first_token_ms=first_token_ms,
