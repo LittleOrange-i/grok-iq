@@ -43,7 +43,7 @@ export function SettingsRiskTab({
   restoreRecommendedRiskScoring: () => void
 }) {
   return (
-    <>
+    <div className='space-y-4'>
       <div className='grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(22rem,0.85fr)]'>
         <SettingsCard
           icon={Activity}
@@ -549,6 +549,6 @@ export function SettingsRiskTab({
           </div>
         </div>
       </SettingsCard>
-    </>
+    </div>
   )
 }

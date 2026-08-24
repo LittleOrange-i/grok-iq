@@ -67,7 +67,7 @@ export function SettingsIntegrationTab({
   toggleSecretClear: (name: SecretSettingName) => void
 }) {
   return (
-    <>
+    <div className='space-y-4'>
       <section className='overflow-hidden rounded-xl border bg-card shadow-sm'>
         <div className='grid gap-5 border-b bg-muted/15 p-5 md:p-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-center'>
           <div className='flex min-w-0 items-start gap-4'>
@@ -378,6 +378,6 @@ export function SettingsIntegrationTab({
           />
         </div>
       </section>
-    </>
+    </div>
   )
 }

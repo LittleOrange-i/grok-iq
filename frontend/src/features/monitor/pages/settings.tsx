@@ -376,5 +376,5 @@ function SettingsStatus({
 }
 
 export function SettingsRouteContent({ children }: { children: ReactNode }) {
-  return <div className='min-w-0'>{children}</div>
+  return <div className='min-w-0 space-y-4'>{children}</div>
 }
