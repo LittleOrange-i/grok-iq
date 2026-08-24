@@ -33,6 +33,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         monitor_status: str = Query(default="", alias="monitorStatus"),
         recovery_guarded: str = Query(default="", alias="recoveryGuarded"),
         sso_risk: str = Query(default="", alias="ssoRisk"),
+        egress_node_id: str = Query(default="", alias="egressNodeId"),
     ) -> dict[str, Any]:
         return await service.list_accounts(
             page=page,
@@ -43,6 +44,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             monitor_status=monitor_status,
             recovery_guarded=recovery_guarded,
             sso_risk=sso_risk,
+            egress_node_id=egress_node_id,
         )
 
     @router.get("/accounts/selection")
@@ -53,6 +55,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         monitor_status: str = Query(default="", alias="monitorStatus"),
         recovery_guarded: str = Query(default="", alias="recoveryGuarded"),
         sso_risk: str = Query(default="", alias="ssoRisk"),
+        egress_node_id: str = Query(default="", alias="egressNodeId"),
     ) -> dict[str, Any]:
         return await service.select_account_ids(
             search=search,
@@ -61,6 +64,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             monitor_status=monitor_status,
             recovery_guarded=recovery_guarded,
             sso_risk=sso_risk,
+            egress_node_id=egress_node_id,
         )
 
     @router.get("/accounts/options")

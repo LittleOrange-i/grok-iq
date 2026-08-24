@@ -52,6 +52,7 @@ class AccountService:
         monitor_status: str = "",
         recovery_guarded: str = "",
         sso_risk: str = "",
+        egress_node_id: str = "",
     ) -> dict[str, Any]:
         upstream_filters = self._upstream_status_filter(upstream_status)
         if (
@@ -59,6 +60,7 @@ class AccountService:
             or recovery_guarded in {"true", "false"}
             or enabled in {"true", "false"}
             or sso_risk not in {"", "all"}
+            or bool(str(egress_node_id or "").strip())
         ):
             upstream = await self.client.list_all_accounts(**upstream_filters)
             account_ids = [int(item.get("id") or 0) for item in upstream]
@@ -74,6 +76,7 @@ class AccountService:
                 )
                 for item in upstream
                 if self._matches(item, search=search, enabled=enabled)
+                and self._matches_egress(item, egress_node_id)
                 and self._matches_assessment(
                     assessments.get(int(item.get("id") or 0)),
                     monitor_status=monitor_status,
@@ -154,6 +157,7 @@ class AccountService:
         monitor_status: str = "",
         recovery_guarded: str = "",
         sso_risk: str = "",
+        egress_node_id: str = "",
     ) -> dict[str, Any]:
         """Return every probe-capable account matching the current UI filters."""
 
@@ -185,6 +189,7 @@ class AccountService:
                 sso_available=int(item.get("id") or 0) in sso_account_ids,
                 sso_risk=sso_risk,
             )
+            and self._matches_egress(item, egress_node_id)
         ]
         selectable = [item for item in matched if self._is_probe_selectable(item)]
         return {
@@ -897,6 +902,15 @@ class AccountService:
             or token in str(item.get("email") or "").lower()
             or token == str(item.get("id") or "")
         )
+
+    @staticmethod
+    def _matches_egress(item: dict[str, Any], egress_node_id: str) -> bool:
+        requested = str(egress_node_id or "").strip().lower()
+        if not requested or requested == "all":
+            return True
+        if requested in {"unbound", "none"}:
+            return not str(item.get("egressNodeId") or "").strip()
+        return str(item.get("egressNodeId") or "").strip() == requested
 
     @staticmethod
     def _matches_assessment(

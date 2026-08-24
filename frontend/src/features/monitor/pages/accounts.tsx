@@ -23,6 +23,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   Undo2,
   UsersRound,
@@ -55,6 +56,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -115,6 +117,22 @@ type SsoRiskFilter =
   | 'failed'
   | 'change_egress'
 
+function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <Badge variant='secondary' className='gap-1 pr-1 font-normal'>
+      <span className='max-w-56 truncate'>{label}</span>
+      <button
+        type='button'
+        className='rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground'
+        aria-label={`移除${label}`}
+        onClick={onClear}
+      >
+        <CircleX className='size-3' />
+      </button>
+    </Badge>
+  )
+}
+
 const ACCOUNTS_VIEW_STORAGE_KEY = 'grokiq.monitor.accounts-view.v1'
 const defaultAccountsView = {
   page: 1,
@@ -124,6 +142,7 @@ const defaultAccountsView = {
   upstreamStatus: 'all',
   recoveryGuarded: 'all',
   ssoRisk: 'all' as SsoRiskFilter,
+  egressNodeId: 'all',
 }
 
 const accountMonitorStatusLabels: Record<string, string> = {
@@ -161,6 +180,7 @@ export function AccountsPage() {
     upstreamStatus,
     recoveryGuarded,
     ssoRisk,
+    egressNodeId = 'all',
   } = accountsView.value
   const updateAccountsView = (patch: Partial<typeof defaultAccountsView>) =>
     accountsView.setValue((current) => ({ ...current, ...patch }))
@@ -174,6 +194,7 @@ export function AccountsPage() {
       upstreamStatus,
       recoveryGuarded,
       ssoRisk,
+      egressNodeId,
     }),
     [
       deferredSearch,
@@ -183,6 +204,7 @@ export function AccountsPage() {
       ssoRisk,
       status,
       upstreamStatus,
+      egressNodeId,
     ]
   )
   // Apply filter/page query after the overlay and select close have painted.
@@ -208,7 +230,8 @@ export function AccountsPage() {
     tableQuery.status !== committedQuery.status ||
     tableQuery.upstreamStatus !== committedQuery.upstreamStatus ||
     tableQuery.recoveryGuarded !== committedQuery.recoveryGuarded ||
-    tableQuery.ssoRisk !== committedQuery.ssoRisk
+    tableQuery.ssoRisk !== committedQuery.ssoRisk ||
+    tableQuery.egressNodeId !== committedQuery.egressNodeId
   const settings = useQuery({
     queryKey: ['settings'],
     queryFn: api.settings,
@@ -225,6 +248,7 @@ export function AccountsPage() {
       tableQuery.upstreamStatus,
       tableQuery.recoveryGuarded,
       tableQuery.ssoRisk,
+      tableQuery.egressNodeId,
     ],
     queryFn: ({ signal }) =>
       api.accounts(
@@ -242,6 +266,8 @@ export function AccountsPage() {
               ? ''
               : tableQuery.recoveryGuarded,
           ssoRisk: tableQuery.ssoRisk === 'all' ? '' : tableQuery.ssoRisk,
+          egressNodeId:
+            tableQuery.egressNodeId === 'all' ? '' : tableQuery.egressNodeId,
         },
         signal
       ),
@@ -302,6 +328,7 @@ export function AccountsPage() {
     tableQuery.upstreamStatus,
     tableQuery.recoveryGuarded,
     tableQuery.ssoRisk,
+    tableQuery.egressNodeId,
   ].join('|')
   const appliedFilterKeyRef = useRef(tableFilterKey)
   useEffect(() => {
@@ -344,6 +371,8 @@ export function AccountsPage() {
             ? ''
             : tableQuery.recoveryGuarded,
         ssoRisk: tableQuery.ssoRisk === 'all' ? '' : tableQuery.ssoRisk,
+        egressNodeId:
+          tableQuery.egressNodeId === 'all' ? '' : tableQuery.egressNodeId,
       }),
     onSuccess: (result) => {
       setSelected(result.accountIds)
@@ -595,8 +624,20 @@ export function AccountsPage() {
         ? '恢复保护'
         : '未标记恢复保护',
     ssoRiskLabels[ssoRisk],
+    egressNodeId === 'all' ? '全部出口绑定' : `出口节点 ${egressNodeId}`,
     `第 ${page} 页 · 每页 ${pageSize} 条`,
   ].join(' · ')
+  const activeFilterCount = [
+    status !== 'all',
+    upstreamStatus !== 'all',
+    recoveryGuarded !== 'all',
+    ssoRisk !== 'all',
+    egressNodeId !== 'all',
+  ].filter(Boolean).length
+  const egressFilterLabel =
+    egressNodeId === 'unbound'
+      ? '未绑定'
+      : getEgressNodeName(egressNodeNames, egressNodeId) ?? `节点 #${egressNodeId}`
 
   return (
     <Page>
@@ -729,108 +770,85 @@ export function AccountsPage() {
       />
       <Card>
         <CardContent className='p-4'>
-          <div
-            className='mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(4,minmax(10rem,auto))]'
-            aria-busy={showTableLoading}
-          >
-            <div className='relative flex-1'>
-              <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
-              <Input
-                value={search}
-                onChange={(event) => {
-                  updateAccountsView({ search: event.target.value, page: 1 })
-                }}
-                placeholder='搜索名称、邮箱或账号 ID'
-                className='pr-9 pl-9'
-              />
-              {showTableLoading && (
-                <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
-              )}
+          <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
+            <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+              <div className='relative min-w-0 flex-1'>
+                <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+                <Input
+                  value={search}
+                  onChange={(event) => updateAccountsView({ search: event.target.value, page: 1 })}
+                  placeholder='搜索名称、邮箱或账号 ID'
+                  className='h-10 pr-9 pl-9'
+                />
+                {showTableLoading && <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />}
+              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant='outline' className='h-10 shrink-0 gap-2 px-3'>
+                    <SlidersHorizontal className='size-4' />
+                    筛选条件
+                    {activeFilterCount > 0 && <Badge variant='secondary' className='min-w-5 justify-center px-1.5'>{activeFilterCount}</Badge>}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align='end' className='w-[min(25rem,calc(100vw-2rem))] p-0'>
+                  <div className='border-b px-4 py-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                      <div>
+                        <div className='text-sm font-semibold'>账号筛选</div>
+                        <div className='mt-0.5 text-xs text-muted-foreground'>组合条件，快速缩小探针范围</div>
+                      </div>
+                      {activeFilterCount > 0 && <Button variant='ghost' size='sm' className='h-8' onClick={() => updateAccountsView({ status: 'all', upstreamStatus: 'all', recoveryGuarded: 'all', ssoRisk: 'all', egressNodeId: 'all', page: 1 })}>清除全部</Button>}
+                    </div>
+                  </div>
+                  <div className='space-y-4 p-4'>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>账号状态</div>
+                      <div className='grid gap-2 sm:grid-cols-2'>
+                        <Select value={status} onValueChange={(value) => updateAccountsView({ status: value, page: 1 })}>
+                          <SelectTrigger><Filter className='size-4 text-muted-foreground' /><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value='all'>全部判定</SelectItem><SelectItem value='healthy'>正常</SelectItem><SelectItem value='watch'>观察</SelectItem><SelectItem value='suspect'>疑似降智</SelectItem><SelectItem value='high_risk'>高风险</SelectItem><SelectItem value='quarantined'>已停用</SelectItem></SelectContent>
+                        </Select>
+                        <Select value={upstreamStatus} onValueChange={(value) => updateAccountsView({ upstreamStatus: value as UpstreamStatusFilter, page: 1 })}>
+                          <SelectTrigger><Activity className='size-4 text-muted-foreground' /><SelectValue /></SelectTrigger>
+                          <SelectContent>{ACCOUNT_UPSTREAM_STATUS_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>检测与出口</div>
+                      <div className='grid gap-2 sm:grid-cols-2'>
+                        <Select value={recoveryGuarded} onValueChange={(value) => updateAccountsView({ recoveryGuarded: value as RecoveryGuardFilter, page: 1 })}>
+                          <SelectTrigger><ShieldCheck className='size-4 text-muted-foreground' /><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value='all'>全部恢复状态</SelectItem><SelectItem value='true'>恢复保护</SelectItem><SelectItem value='false'>未标记恢复保护</SelectItem></SelectContent>
+                        </Select>
+                        <Select value={egressNodeId} onValueChange={(value) => updateAccountsView({ egressNodeId: value, page: 1 })}>
+                          <SelectTrigger><Network className='size-4 text-muted-foreground' /><SelectValue /></SelectTrigger>
+                          <SelectContent><SelectItem value='all'>全部出口绑定</SelectItem><SelectItem value='unbound'>未绑定出口</SelectItem>{(egress.data?.items ?? []).map((node) => <SelectItem key={node.id} value={String(node.id)}>{node.name || `节点 #${node.id}`}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>SSO 风控</div>
+                      <Select value={ssoRisk} onValueChange={(value) => updateAccountsView({ ssoRisk: value as SsoRiskFilter, page: 1 })}>
+                        <SelectTrigger><ShieldAlert className='size-4 text-muted-foreground' /><SelectValue /></SelectTrigger>
+                        <SelectContent>{Object.entries(ssoRiskLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
-            <Select
-              value={status}
-              onValueChange={(value) => {
-                beginTableInteraction()
-                updateAccountsView({ status: value, page: 1 })
-              }}
-            >
-              <SelectTrigger className='w-full md:w-44'>
-                <Filter className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>全部判定</SelectItem>
-                <SelectItem value='healthy'>正常</SelectItem>
-                <SelectItem value='watch'>观察</SelectItem>
-                <SelectItem value='suspect'>疑似降智</SelectItem>
-                <SelectItem value='high_risk'>高风险</SelectItem>
-                <SelectItem value='quarantined'>已停用</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={upstreamStatus}
-              onValueChange={(value) => {
-                beginTableInteraction()
-                updateAccountsView({
-                  upstreamStatus: value as UpstreamStatusFilter,
-                  page: 1,
-                })
-              }}
-            >
-              <SelectTrigger className='w-full md:w-44'>
-                <Activity className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ACCOUNT_UPSTREAM_STATUS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={recoveryGuarded}
-              onValueChange={(value) => {
-                beginTableInteraction()
-                updateAccountsView({
-                  recoveryGuarded: value as RecoveryGuardFilter,
-                  page: 1,
-                })
-              }}
-            >
-              <SelectTrigger className='w-full md:w-44'>
-                <ShieldCheck className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>全部恢复状态</SelectItem>
-                <SelectItem value='true'>恢复保护</SelectItem>
-                <SelectItem value='false'>未标记</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={ssoRisk}
-              onValueChange={(value) => {
-                beginTableInteraction()
-                updateAccountsView({
-                  ssoRisk: value as SsoRiskFilter,
-                  page: 1,
-                })
-              }}
-            >
-              <SelectTrigger className='w-full md:w-52'>
-                <ShieldAlert className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(ssoRiskLabels).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {(activeFilterCount > 0 || search.trim()) && (
+              <div className='flex flex-wrap items-center gap-1.5 border-t pt-3'>
+                <span className='mr-1 text-xs text-muted-foreground'>当前条件</span>
+                {search.trim() && <FilterChip label={`搜索：${search.trim()}`} onClear={() => updateAccountsView({ search: '', page: 1 })} />}
+                {status !== 'all' && <FilterChip label={`判定：${accountMonitorStatusLabels[status]}`} onClear={() => updateAccountsView({ status: 'all', page: 1 })} />}
+                {upstreamStatus !== 'all' && <FilterChip label={`上游：${upstreamStatusLabel}`} onClear={() => updateAccountsView({ upstreamStatus: 'all', page: 1 })} />}
+                {recoveryGuarded !== 'all' && <FilterChip label={`恢复：${recoveryGuarded === 'true' ? '保护' : '未标记'}`} onClear={() => updateAccountsView({ recoveryGuarded: 'all', page: 1 })} />}
+                {ssoRisk !== 'all' && <FilterChip label={`SSO：${ssoRiskLabels[ssoRisk]}`} onClear={() => updateAccountsView({ ssoRisk: 'all', page: 1 })} />}
+                {egressNodeId !== 'all' && <FilterChip label={`出口：${egressFilterLabel}`} onClear={() => updateAccountsView({ egressNodeId: 'all', page: 1 })} />}
+              </div>
+            )}
           </div>
           {accountsView.active && (
             <PersistedViewNotice
