@@ -103,6 +103,7 @@ import {
   getEgressNodeName,
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
+import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
 type AccountBatchAction = 'enable' | 'disable'
@@ -116,22 +117,6 @@ type SsoRiskFilter =
   | 'flagged'
   | 'failed'
   | 'change_egress'
-
-function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
-  return (
-    <Badge variant='secondary' className='gap-1 pr-1 font-normal'>
-      <span className='max-w-56 truncate'>{label}</span>
-      <button
-        type='button'
-        className='rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground'
-        aria-label={`移除${label}`}
-        onClick={onClear}
-      >
-        <CircleX className='size-3' />
-      </button>
-    </Badge>
-  )
-}
 
 const ACCOUNTS_VIEW_STORAGE_KEY = 'grokiq.monitor.accounts-view.v1'
 const defaultAccountsView = {

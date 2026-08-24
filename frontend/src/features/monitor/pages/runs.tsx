@@ -22,6 +22,7 @@ import {
   CircleCheck,
   CircleX,
   Eye,
+  Filter,
   Gauge,
   History,
   ListChecks,
@@ -32,6 +33,7 @@ import {
   RotateCcw,
   Search,
   ServerCog,
+  SlidersHorizontal,
   Square,
   Trash2,
   TriangleAlert,
@@ -79,6 +81,11 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -123,6 +130,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { EgressNodeReference } from '@/features/monitor/components/egress-node-reference'
+import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
 const terminal = new Set([
@@ -641,6 +649,19 @@ export function RunsPage() {
   const todayRange = localDayRange(new Date())
   const todayActive =
     createdFrom === todayRange.from && createdTo === todayRange.to
+  const timeFilterActive = Boolean(createdFrom || createdTo)
+  const activeFilterCount = [status !== 'all', timeFilterActive].filter(
+    Boolean
+  ).length
+  const timeFilterLabel = todayActive
+    ? '今天'
+    : createdFrom || createdTo
+      ? `${createdFrom ? formatDateTimeInput(createdFrom) : '不限'} 至 ${createdTo ? formatDateTimeInput(createdTo) : '不限'}`
+      : ''
+  const applyTimeRange = (from: string, to: string) => {
+    beginTableInteraction()
+    updateRunsView({ createdFrom: from, createdTo: to, page: 1 })
+  }
   const runsViewSummary = [
     search.trim() ? `搜索“${search.trim()}”` : '',
     status !== 'all'
@@ -836,94 +857,206 @@ export function RunsPage() {
       />
       <Card>
         <CardContent className='p-4'>
-          <div
-            className='mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'
-            aria-busy={showTableLoading}
-          >
-            <div className='relative w-full sm:max-w-md'>
-              <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
-              <Input
-                value={search}
-                onChange={(event) => {
-                  updateRunsView({ search: event.target.value, page: 1 })
-                }}
-                placeholder='搜索账号名称、邮箱或账号 ID'
-                className='pr-9 pl-9'
-              />
-              {showTableLoading && (
-                <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
-              )}
-            </div>
-            <div className='flex flex-wrap items-center justify-end gap-2'>
-              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
-                <span>开始</span>
+          <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
+            <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+              <div className='relative min-w-0 flex-1'>
+                <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
                 <Input
-                  type='datetime-local'
-                  value={createdFrom}
-                  max={createdTo || undefined}
+                  value={search}
                   onChange={(event) => {
-                    beginTableInteraction()
-                    updateRunsView({ createdFrom: event.target.value, page: 1 })
+                    updateRunsView({ search: event.target.value, page: 1 })
                   }}
-                  className='h-9 w-auto min-w-44 text-xs'
-                  aria-label='任务创建开始时间'
+                  placeholder='搜索账号名称、邮箱或账号 ID'
+                  className='h-10 pr-9 pl-9'
                 />
-              </label>
-              <label className='flex items-center gap-2 text-xs text-muted-foreground'>
-                <span>结束</span>
-                <Input
-                  type='datetime-local'
-                  value={createdTo}
-                  min={createdFrom || undefined}
-                  onChange={(event) => {
-                    beginTableInteraction()
-                    updateRunsView({ createdTo: event.target.value, page: 1 })
-                  }}
-                  className='h-9 w-auto min-w-44 text-xs'
-                  aria-label='任务创建结束时间'
-                />
-              </label>
-              <Select
-                value={status}
-                onValueChange={(value) => {
-                  beginTableInteraction()
-                  updateRunsView({ status: value, page: 1 })
-                }}
-              >
-                <SelectTrigger className='w-48'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='all'>全部状态</SelectItem>
-                  <SelectItem value='queued'>任务排队中</SelectItem>
-                  <SelectItem value='running'>任务执行中</SelectItem>
-                  <SelectItem value='cancel_requested'>任务取消中</SelectItem>
-                  <SelectItem value='completed'>任务已完成</SelectItem>
-                  <SelectItem value='completed_with_errors'>
-                    任务部分异常
-                  </SelectItem>
-                  <SelectItem value='failed'>任务失败</SelectItem>
-                  <SelectItem value='cancelled'>任务已取消</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                type='button'
-                size='sm'
-                variant={todayActive ? 'secondary' : 'outline'}
-                className='h-9'
-                onClick={() => {
-                  beginTableInteraction()
-                  updateRunsView({
-                    createdFrom: todayRange.from,
-                    createdTo: todayRange.to,
-                    page: 1,
-                  })
-                }}
-              >
-                <CalendarDays />
-                今天
-              </Button>
+                {showTableLoading && (
+                  <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
+                )}
+              </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant='outline'
+                    className='h-10 shrink-0 gap-2 px-3'
+                  >
+                    <SlidersHorizontal className='size-4' />
+                    筛选条件
+                    {activeFilterCount > 0 && (
+                      <Badge
+                        variant='secondary'
+                        className='min-w-5 justify-center px-1.5'
+                      >
+                        {activeFilterCount}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align='end'
+                  className='w-[min(25rem,calc(100vw-2rem))] p-0'
+                >
+                  <div className='border-b px-4 py-3'>
+                    <div className='flex items-center justify-between gap-3'>
+                      <div>
+                        <div className='text-sm font-semibold'>任务筛选</div>
+                        <div className='mt-0.5 text-xs text-muted-foreground'>
+                          按状态和创建时间缩小任务范围
+                        </div>
+                      </div>
+                      {activeFilterCount > 0 && (
+                        <Button
+                          variant='ghost'
+                          size='sm'
+                          className='h-8'
+                          onClick={() => {
+                            beginTableInteraction()
+                            updateRunsView({
+                              status: 'all',
+                              createdFrom: '',
+                              createdTo: '',
+                              page: 1,
+                            })
+                          }}
+                        >
+                          清除全部
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className='space-y-4 p-4'>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                        任务状态
+                      </div>
+                      <Select
+                        value={status}
+                        onValueChange={(value) => {
+                          beginTableInteraction()
+                          updateRunsView({ status: value, page: 1 })
+                        }}
+                      >
+                        <SelectTrigger>
+                          <Filter className='size-4 text-muted-foreground' />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value='all'>全部状态</SelectItem>
+                          {Object.entries(runStatusMeta).map(
+                            ([value, meta]) => (
+                              <SelectItem key={value} value={value}>
+                                {meta.label}
+                              </SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                        创建时间
+                      </div>
+                      <div className='flex flex-wrap gap-2'>
+                        <Button
+                          type='button'
+                          size='sm'
+                          variant={todayActive ? 'secondary' : 'outline'}
+                          className='h-8'
+                          onClick={() =>
+                            applyTimeRange(todayRange.from, todayRange.to)
+                          }
+                        >
+                          <CalendarDays />
+                          今天
+                        </Button>
+                        {[1, 3, 6].map((hours) => (
+                          <Button
+                            key={hours}
+                            type='button'
+                            size='sm'
+                            variant='outline'
+                            className='h-8'
+                            onClick={() => {
+                              const range = recentHoursRange(hours)
+                              applyTimeRange(range.from, range.to)
+                            }}
+                          >
+                            最近 {hours} 小时
+                          </Button>
+                        ))}
+                      </div>
+                      <div className='grid gap-2 sm:grid-cols-2'>
+                        <label className='grid gap-1.5'>
+                          <span className='text-xs text-muted-foreground'>
+                            开始
+                          </span>
+                          <Input
+                            type='datetime-local'
+                            value={createdFrom}
+                            max={createdTo || undefined}
+                            onChange={(event) => {
+                              beginTableInteraction()
+                              updateRunsView({
+                                createdFrom: event.target.value,
+                                page: 1,
+                              })
+                            }}
+                            className='h-9 text-xs'
+                            aria-label='任务创建开始时间'
+                          />
+                        </label>
+                        <label className='grid gap-1.5'>
+                          <span className='text-xs text-muted-foreground'>
+                            结束
+                          </span>
+                          <Input
+                            type='datetime-local'
+                            value={createdTo}
+                            min={createdFrom || undefined}
+                            onChange={(event) => {
+                              beginTableInteraction()
+                              updateRunsView({
+                                createdTo: event.target.value,
+                                page: 1,
+                              })
+                            }}
+                            className='h-9 text-xs'
+                            aria-label='任务创建结束时间'
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
+            {(activeFilterCount > 0 || search.trim()) && (
+              <div className='flex flex-wrap items-center gap-1.5 border-t pt-3'>
+                <span className='mr-1 text-xs text-muted-foreground'>
+                  当前条件
+                </span>
+                {search.trim() && (
+                  <FilterChip
+                    label={`搜索：${search.trim()}`}
+                    onClear={() => updateRunsView({ search: '', page: 1 })}
+                  />
+                )}
+                {status !== 'all' && (
+                  <FilterChip
+                    label={`状态：${runStatusMeta[status]?.label ?? status}`}
+                    onClear={() => {
+                      beginTableInteraction()
+                      updateRunsView({ status: 'all', page: 1 })
+                    }}
+                  />
+                )}
+                {timeFilterActive && (
+                  <FilterChip
+                    label={`时间：${timeFilterLabel}`}
+                    onClear={() => applyTimeRange('', '')}
+                  />
+                )}
+              </div>
+            )}
           </div>
           {runsView.active && (
             <PersistedViewNotice
@@ -2128,6 +2261,17 @@ function localDayRange(date: Date) {
   const day = String(date.getDate()).padStart(2, '0')
   const prefix = `${year}-${month}-${day}`
   return { from: `${prefix}T00:00`, to: `${prefix}T23:59` }
+}
+
+function toDateTimeLocal(value: Date) {
+  const offset = value.getTimezoneOffset() * 60_000
+  return new Date(value.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function recentHoursRange(hours: number) {
+  const end = new Date()
+  const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
+  return { from: toDateTimeLocal(start), to: toDateTimeLocal(end) }
 }
 
 function formatDateTimeInput(value: string) {
