@@ -328,7 +328,11 @@ class ChatProbeRunner:
             ),
         )
         tps = number("outputTokensPerSecond", result.tps)
-        if "outputTokensPerSecond" not in audit and output_tokens > 0 and generation_ms > 0:
+        if (
+            "outputTokensPerSecond" not in audit
+            and output_tokens > 0
+            and generation_ms > 0
+        ):
             tps = output_tokens * 1000.0 / generation_ms
         status_code = integer("statusCode", result.status_code)
         visible_tokens = max(output_tokens - reasoning_tokens, 0)

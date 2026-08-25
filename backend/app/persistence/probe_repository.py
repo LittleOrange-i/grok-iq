@@ -19,8 +19,8 @@ from .models import (
     ProbeProfile,
     ProbeRun,
     ProbeSample,
-    ScheduleExecution,
     RequestAuditRecord,
+    ScheduleExecution,
     model_dict,
 )
 from .probe_catalog_seeder import (
