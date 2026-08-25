@@ -213,6 +213,7 @@ class AccountRepository:
                         reasoning_tokens_reported=bool(
                             sample.reasoning_tokens_reported
                         ),
+                        measured_tps=sample.tps,
                     ),
                     thresholds,
                 )

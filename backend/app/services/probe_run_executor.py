@@ -391,6 +391,7 @@ class ProbeRunExecutor:
                     else "quality_test"
                 ),
                 reasoning_tokens_reported=result.reasoning_tokens_reported,
+                measured_tps=result.tps,
             ),
             manager.thresholds,
         )

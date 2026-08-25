@@ -402,6 +402,9 @@ class SampleMetrics:
     operation: str = "chat"
     reasoning_tokens_reported: bool = False
     media_input_images: int = 0
+    # When available, use grok2api's server-side TPS instead of reconstructing
+    # it from locally observed stream timing.
+    measured_tps: float | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -827,9 +830,13 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
     else:
         generation_ms = sample.duration_ms - sample.first_token_ms
         tps = (
-            sample.output_tokens * 1000.0 / generation_ms
-            if sample.output_tokens > 0 and generation_ms > 0
-            else 0.0
+            float(sample.measured_tps)
+            if sample.measured_tps is not None
+            else (
+                sample.output_tokens * 1000.0 / generation_ms
+                if sample.output_tokens > 0 and generation_ms > 0
+                else 0.0
+            )
         )
         first_token_share = (
             sample.first_token_ms / sample.duration_ms

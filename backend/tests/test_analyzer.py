@@ -115,6 +115,25 @@ def test_low_tps_buffering_does_not_trigger_buffered_hard():
     assert result.name == "normal"
 
 
+def test_authoritative_upstream_tps_is_used_for_probe_classification():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=1932,
+            reasoning_tokens=1885,
+            first_token_ms=35_061,
+            duration_ms=35_857,
+            egress_key="node:38",
+            measured_tps=53.88069275176395,
+        ),
+        Thresholds(),
+    )
+
+    assert result.tps == 53.88069275176395
+    assert result.name == "normal"
+    assert result.hard is False
+
+
 def test_classifies_delayed_burst_as_buffered_hard():
     result = classify_sample(
         SampleMetrics(
