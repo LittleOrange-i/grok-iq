@@ -329,6 +329,18 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.4.2 (2026-08-25)
+
+### Feat
+
+- add average account distribution across selected upstream egress nodes
+
+### Fix
+
+- keep reasoning model policy inputs focused while editing
+- classify probe samples with authoritative upstream TPS
+- recalculate persisted probe classifications during startup
+
 ## v0.4.1
 
 ### Fix
