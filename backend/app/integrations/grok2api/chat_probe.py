@@ -276,6 +276,11 @@ class ChatProbeRunner:
             )
             error.probe_result = result
             raise error
+        # grok2api is authoritative for server-side token timing.  The local
+        # stream clock can observe a buffered reasoning block much later than
+        # the upstream first-token marker, which otherwise produces an
+        # artificially tiny generation window and an inflated TPS value.
+        result = self._apply_audit_metrics(result, audit)
         verified_account_id = int(audit.get("accountId") or 0) or None
         verified_egress_node_id = int(audit.get("egressNodeId") or 0) or None
         result = replace(
@@ -295,3 +300,49 @@ class ChatProbeRunner:
             error.probe_result = result
             raise error
         return result
+
+    @staticmethod
+    def _apply_audit_metrics(result: Any, audit: dict[str, Any]) -> Any:
+        def integer(key: str, fallback: int) -> int:
+            try:
+                return int(audit.get(key)) if audit.get(key) is not None else fallback
+            except (TypeError, ValueError, OverflowError):
+                return fallback
+
+        def number(key: str, fallback: float) -> float:
+            try:
+                value = float(audit.get(key)) if audit.get(key) is not None else fallback
+            except (TypeError, ValueError, OverflowError):
+                return fallback
+            return value if value == value and abs(value) != float("inf") else fallback
+
+        output_tokens = integer("outputTokens", result.output_tokens)
+        reasoning_tokens = integer("reasoningTokens", result.reasoning_tokens)
+        first_token_ms = max(0, integer("firstTokenMs", result.first_token_ms))
+        duration_ms = max(0, integer("durationMs", result.duration_ms))
+        generation_ms = max(
+            0,
+            integer(
+                "generationMs",
+                max(0, duration_ms - first_token_ms),
+            ),
+        )
+        tps = number("outputTokensPerSecond", result.tps)
+        if "outputTokensPerSecond" not in audit and output_tokens > 0 and generation_ms > 0:
+            tps = output_tokens * 1000.0 / generation_ms
+        status_code = integer("statusCode", result.status_code)
+        visible_tokens = max(output_tokens - reasoning_tokens, 0)
+        return replace(
+            result,
+            status_code=status_code,
+            output_tokens=output_tokens,
+            reasoning_tokens=reasoning_tokens,
+            visible_tokens=visible_tokens,
+            first_token_ms=first_token_ms,
+            duration_ms=duration_ms,
+            generation_ms=generation_ms,
+            first_token_share=(
+                first_token_ms / duration_ms if duration_ms > 0 else 0.0
+            ),
+            tps=tps,
+        )

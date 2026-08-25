@@ -20,6 +20,7 @@ from .models import (
     ProbeRun,
     ProbeSample,
     ScheduleExecution,
+    RequestAuditRecord,
     model_dict,
 )
 from .probe_catalog_seeder import (
@@ -135,6 +136,61 @@ class ProbeRepository:
             degradation_classifications=DEGRADATION_CLASSIFICATIONS,
             profile_dict=_profile_dict,
         )
+
+    def reconcile_sample_metrics_from_request_audits(self) -> int:
+        """Copy authoritative server timing into samples created by chat probes.
+
+        The local stream clock can observe visible content after a buffered
+        reasoning block.  Request audits contain grok2api's canonical timing
+        and TPS, so matching samples must use those values before risk scores
+        are recalculated.
+        """
+
+        updated = 0
+        with self.database.transaction() as session:
+            rows = session.execute(
+                select(ProbeSample, RequestAuditRecord)
+                .join(
+                    RequestAuditRecord,
+                    ProbeSample.request_id == RequestAuditRecord.request_id,
+                )
+                .where(ProbeSample.request_id != "")
+            ).all()
+            for sample, audit in rows:
+                tps = _finite_float(audit.tps)
+                if tps is None:
+                    continue
+                changed = any(
+                    (
+                        sample.output_tokens != audit.output_tokens,
+                        sample.reasoning_tokens != audit.reasoning_tokens,
+                        sample.first_token_ms != (audit.first_token_ms or 0),
+                        sample.duration_ms != audit.duration_ms,
+                        sample.generation_ms
+                        != max(0, audit.duration_ms - (audit.first_token_ms or 0)),
+                        abs(float(sample.tps or 0) - tps) > 1e-9,
+                    )
+                )
+                if not changed:
+                    continue
+                sample.output_tokens = audit.output_tokens
+                sample.reasoning_tokens = audit.reasoning_tokens
+                sample.visible_tokens = max(
+                    0, audit.output_tokens - audit.reasoning_tokens
+                )
+                sample.first_token_ms = audit.first_token_ms or 0
+                sample.duration_ms = audit.duration_ms
+                sample.generation_ms = max(
+                    0, audit.duration_ms - (audit.first_token_ms or 0)
+                )
+                sample.first_token_share = (
+                    sample.first_token_ms / sample.duration_ms
+                    if sample.duration_ms > 0
+                    else 0.0
+                )
+                sample.tps = tps
+                updated += 1
+        return updated
 
     def seed_defaults(self) -> None:
         with self.database.transaction() as session:

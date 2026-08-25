@@ -153,6 +153,12 @@ async def lifespan(_: FastAPI):
     chat_service.bootstrap()
     grok_client.reset_credentials()
     await probe_manager.reconfigure()
+    reconciled_samples = probe_repository.reconcile_sample_metrics_from_request_audits()
+    if reconciled_samples:
+        account_repository.recalculate_all(
+            probe_manager.thresholds,
+            settings.analysis_window_hours,
+        )
     account_repository.migrate_fixed_egress_risk_formula(
         probe_manager.thresholds,
         settings.analysis_window_hours,
