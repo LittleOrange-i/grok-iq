@@ -153,9 +153,7 @@ async def lifespan(_: FastAPI):
     chat_service.bootstrap()
     grok_client.reset_credentials()
     await probe_manager.reconfigure()
-    reconciled_samples = (
-        probe_repository.reconcile_sample_metrics_from_request_audits()
-    )
+    probe_repository.reconcile_sample_metrics_from_request_audits()
     # Recompute classifications even when audit metrics were already copied.
     # Older samples can retain a classification produced from the local stream
     # clock, while their persisted TPS now reflects grok2api's authoritative
