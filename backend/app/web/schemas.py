@@ -118,6 +118,13 @@ class EgressNodeBatchDeleteInput(BaseModel):
     node_ids: list[int] = Field(min_length=1, max_length=5000)
 
 
+class EgressNodeAccountBindingInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    node_ids: list[int] = Field(min_length=2, max_length=5000)
+    accounts_per_node: int = Field(ge=1, le=100_000, alias="accountsPerNode")
+
+
 class EgressNodeCreateInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     proxy_url: str = Field(min_length=1, max_length=8000)

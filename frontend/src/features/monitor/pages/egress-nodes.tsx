@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type EgressNode } from '@/lib/api'
@@ -86,6 +87,8 @@ export function EgressNodesPage() {
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingNode, setEditingNode] = useState<EgressNode | null>(null)
   const [nodeForm, setNodeForm] = useState(emptyNodeForm)
+  const [distributionOpen, setDistributionOpen] = useState(false)
+  const [accountsPerNode, setAccountsPerNode] = useState<number | null>(null)
 
   const query = useQuery({
     queryKey: ['egress-nodes', page, pageSize, deferredSearch, enabled, probe],
@@ -105,6 +108,20 @@ export function EgressNodesPage() {
   const selectedNodes = nodes.filter((node) => selectedSet.has(Number(node.id)))
   const allChecked =
     nodes.length > 0 && nodes.every((node) => selectedSet.has(Number(node.id)))
+  const accountTotalQuery = useQuery({
+    queryKey: ['accounts', 'egress-distribution-total'],
+    queryFn: () => api.accounts({ page: 1, pageSize: 1 }),
+    enabled: distributionOpen,
+  })
+  const totalAccounts = accountTotalQuery.data?.total ?? 0
+  const recommendedAccountsPerNode = selectedNodes.length
+    ? Math.ceil(totalAccounts / selectedNodes.length)
+    : 0
+  const effectiveAccountsPerNode =
+    accountsPerNode ?? recommendedAccountsPerNode
+  const unavailableSelectedNodes = selectedNodes.filter(
+    (node) => !node.enabled || !node.proxyConfigured
+  )
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -217,11 +234,43 @@ export function EgressNodesPage() {
     },
   })
 
+  const distributionMutation = useMutation({
+    mutationFn: () =>
+      api.distributeAccountsToEgress(
+        selectedNodes.map((node) => Number(node.id)),
+        effectiveAccountsPerNode
+      ),
+    onSuccess: (result) => {
+      setDistributionOpen(false)
+      setAccountsPerNode(null)
+      setSelected([])
+      const skipped = result.skippedAccountIds?.length ?? 0
+      const failed = result.failedAccountIds?.length ?? 0
+      if (skipped || failed) {
+        toast.warning(
+          `已绑定 ${result.updated}/${result.requested} 个账号；${skipped} 个探针锁定账号跳过，${failed} 个账号失败`
+        )
+      } else {
+        toast.success(
+          `已将 ${result.updated} 个账号平均绑定到 ${result.nodeIds.length} 个出口`
+        )
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['egress-nodes'] })
+      void queryClient.invalidateQueries({ queryKey: ['egress'] })
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
+    },
+  })
+
   const actionPending =
     createMutation.isPending ||
     editMutation.isPending ||
     updateMutation.isPending ||
-    deleteMutation.isPending
+    deleteMutation.isPending ||
+    distributionMutation.isPending
   const assignedAccounts = action?.nodes.reduce(
     (total, node) => total + (node.assignedAccountCount ?? 0),
     0
@@ -263,6 +312,16 @@ export function EgressNodesPage() {
         disabled={actionPending}
         onClear={() => setSelected([])}
       >
+        <ToolbarAction
+          label={`平均绑定全部账号到 ${selected.length} 个已选出口`}
+          disabled={actionPending || selected.length < 2}
+          onClick={() => {
+            setAccountsPerNode(null)
+            setDistributionOpen(true)
+          }}
+        >
+          <Users />
+        </ToolbarAction>
         <ToolbarAction
           label={`启用 ${selected.length} 个已选节点`}
           disabled={actionPending}
@@ -701,6 +760,132 @@ export function EgressNodesPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={distributionOpen}
+        onOpenChange={(open) => {
+          if (distributionMutation.isPending) return
+          setDistributionOpen(open)
+          if (!open) setAccountsPerNode(null)
+        }}
+      >
+        <DialogContent className='sm:max-w-xl'>
+          <DialogHeader>
+            <DialogTitle>平均绑定全部账号</DialogTitle>
+            <DialogDescription>
+              将全部 Grok Build 账号重新平均分配到已选出口。运行中或排队探针锁定的账号会保留原绑定。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className='space-y-4'>
+            <div className='grid grid-cols-3 gap-3'>
+              <DistributionMetric
+                label='全部账号'
+                value={accountTotalQuery.isFetching ? '读取中' : totalAccounts}
+              />
+              <DistributionMetric label='已选出口' value={selectedNodes.length} />
+              <DistributionMetric
+                label='推荐值'
+                value={
+                  accountTotalQuery.isFetching
+                    ? '计算中'
+                    : `${recommendedAccountsPerNode}/出口`
+                }
+                emphasized
+              />
+            </div>
+
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between gap-3'>
+                <Label htmlFor='egress-accounts-per-node'>单出口账号上限</Label>
+                <span className='text-xs text-muted-foreground'>
+                  推荐 {recommendedAccountsPerNode || '—'}
+                </span>
+              </div>
+              <Input
+                id='egress-accounts-per-node'
+                type='number'
+                min={Math.max(1, recommendedAccountsPerNode)}
+                max={100000}
+                value={effectiveAccountsPerNode || ''}
+                onChange={(event) =>
+                  setAccountsPerNode(
+                    Math.max(0, Number(event.target.value) || 0)
+                  )
+                }
+                disabled={accountTotalQuery.isFetching}
+              />
+              <p className='text-xs text-muted-foreground'>
+                为确保覆盖全部账号，不能低于推荐值；实际分配会尽量保持每个出口数量相同。
+              </p>
+            </div>
+
+            <div className='max-h-48 space-y-2 overflow-y-auto rounded-lg border p-2'>
+              {selectedNodes.map((node) => (
+                <div
+                  key={node.id}
+                  className='flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm'
+                >
+                  <span className='min-w-0 truncate font-medium'>{node.name}</span>
+                  <span className='shrink-0 text-xs text-muted-foreground'>
+                    当前 {node.assignedAccountCount ?? 0} 个
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {accountTotalQuery.isError && (
+              <p className='text-sm text-destructive'>
+                账号总数读取失败：{getErrorMessage(accountTotalQuery.error)}
+              </p>
+            )}
+            {unavailableSelectedNodes.length > 0 && (
+              <p className='text-sm text-destructive'>
+                {unavailableSelectedNodes.map((node) => node.name).join('、')}
+                未启用或未配置代理，请调整节点后再绑定。
+              </p>
+            )}
+            {!accountTotalQuery.isFetching &&
+              totalAccounts > 0 &&
+              effectiveAccountsPerNode < recommendedAccountsPerNode && (
+                <p className='text-sm text-destructive'>
+                  当前上限不足，至少需要设置为 {recommendedAccountsPerNode}。
+                </p>
+              )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={distributionMutation.isPending}
+              onClick={() => setDistributionOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type='button'
+              disabled={
+                distributionMutation.isPending ||
+                accountTotalQuery.isFetching ||
+                accountTotalQuery.isError ||
+                totalAccounts <= 0 ||
+                selectedNodes.length < 2 ||
+                unavailableSelectedNodes.length > 0 ||
+                effectiveAccountsPerNode < recommendedAccountsPerNode
+              }
+              onClick={() => distributionMutation.mutate()}
+            >
+              {distributionMutation.isPending ? (
+                <Loader2 className='animate-spin' />
+              ) : (
+                <Users />
+              )}
+              {distributionMutation.isPending ? '正在绑定…' : '确认平均绑定'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ConfirmDialog
         open={action != null}
         onOpenChange={(open) => {
@@ -759,6 +944,28 @@ export function EgressNodesPage() {
         }}
       />
     </Page>
+  )
+}
+
+function DistributionMetric({
+  label,
+  value,
+  emphasized = false,
+}: {
+  label: string
+  value: string | number
+  emphasized?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border bg-muted/20 p-3',
+        emphasized && 'border-primary/30 bg-primary/5'
+      )}
+    >
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div className='mt-1 font-semibold tabular-nums'>{value}</div>
+    </div>
   )
 }
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from app.integrations.grok2api.client import Grok2APIClient
 from app.services.egress_service import EgressService
 from app.web.schemas import (
+    EgressNodeAccountBindingInput,
     EgressNodeBatchDeleteInput,
     EgressNodeBatchUpdateInput,
     EgressNodeCreateInput,
@@ -76,6 +77,15 @@ def build_egress_router(
         payload: EgressNodeBatchDeleteInput,
     ) -> dict[str, Any]:
         return await service.delete(node_ids=payload.node_ids)
+
+    @router.post("/egress-nodes/bind-accounts")
+    async def bind_egress_accounts(
+        payload: EgressNodeAccountBindingInput,
+    ) -> dict[str, Any]:
+        return await service.bind_all_accounts(
+            node_ids=payload.node_ids,
+            accounts_per_node=payload.accounts_per_node,
+        )
 
     @router.post("/egress-nodes/{node_id}/test")
     async def test_egress_node(node_id: int) -> dict[str, Any]:

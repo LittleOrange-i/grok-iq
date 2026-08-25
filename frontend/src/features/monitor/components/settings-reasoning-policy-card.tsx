@@ -149,7 +149,10 @@ export function SettingsReasoningPolicyCard({
                 const fallback =
                   policy.model.trim() === '*' && policy.operation === '*'
                 return (
-                  <tr key={`${index}-${policy.model}`} className='border-b last:border-b-0'>
+                  <tr
+                    key={index}
+                    className='border-b last:border-b-0'
+                  >
                     <td className='px-3 py-2.5'>
                       <Input
                         value={policy.model}

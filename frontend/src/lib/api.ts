@@ -434,6 +434,22 @@ export type EgressNodeProbeResult = {
   probeProvider?: string
 }
 
+export type EgressAccountDistributionResult = {
+  requested: number
+  updated: number
+  accountsPerNode: number
+  recommendedAccountsPerNode?: number
+  nodeIds: number[]
+  assignments: {
+    nodeId: number
+    requested: number
+    updated: number
+  }[]
+  skippedAccountIds: number[]
+  failedAccountIds: number[]
+  failures: { id: number; error: string }[]
+}
+
 export type RequestAuditRiskLevel = 'normal' | 'watch' | 'high'
 export type RequestAuditWindowPreset =
   'today' | '1h' | '3h' | '6h' | '24h' | '7d' | '30d' | 'custom'
@@ -2275,6 +2291,20 @@ export const api = {
     request<EgressNodeProbeResult>(`/egress-nodes/${nodeId}/test`, {
       method: 'POST',
     }),
+  distributeAccountsToEgress: (
+    nodeIds: number[],
+    accountsPerNode: number
+  ) =>
+    request<EgressAccountDistributionResult>(
+      '/egress-nodes/bind-accounts',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          node_ids: nodeIds,
+          accountsPerNode,
+        }),
+      }
+    ),
   profiles: () => request<ProbeProfile[]>('/probe-profiles'),
   createProfile: (body: Record<string, unknown>) =>
     request<{ id: string }>('/probe-profiles', {
