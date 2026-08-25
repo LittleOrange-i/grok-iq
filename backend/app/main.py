@@ -156,11 +156,14 @@ async def lifespan(_: FastAPI):
     reconciled_samples = (
         probe_repository.reconcile_sample_metrics_from_request_audits()
     )
-    if reconciled_samples:
-        account_repository.recalculate_all(
-            probe_manager.thresholds,
-            settings.analysis_window_hours,
-        )
+    # Recompute classifications even when audit metrics were already copied.
+    # Older samples can retain a classification produced from the local stream
+    # clock, while their persisted TPS now reflects grok2api's authoritative
+    # server timing.
+    account_repository.recalculate_all(
+        probe_manager.thresholds,
+        settings.analysis_window_hours,
+    )
     account_repository.migrate_fixed_egress_risk_formula(
         probe_manager.thresholds,
         settings.analysis_window_hours,
