@@ -333,6 +333,8 @@ class RequestAuditRecord(Base):
     model_upstream_model: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     account_id: Mapped[int | None] = mapped_column(Integer)
     account_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    client_key_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    client_key_name: Mapped[str] = mapped_column(String(160), default="", nullable=False)
     egress_node_id: Mapped[int | None] = mapped_column(Integer)
     egress_node_name: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     # Compatibility-only. grok2api audits do not retain a per-request dynamic

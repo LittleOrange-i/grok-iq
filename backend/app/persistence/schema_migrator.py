@@ -196,6 +196,16 @@ COMPATIBILITY_COLUMNS = {
             "ALTER TABLE request_audit_records ADD COLUMN reasoning_tokens_reported "
             "BOOLEAN NOT NULL DEFAULT 0",
         ),
+        (
+            "client_key_id",
+            "ALTER TABLE request_audit_records ADD COLUMN client_key_id "
+            "VARCHAR(64) NOT NULL DEFAULT ''",
+        ),
+        (
+            "client_key_name",
+            "ALTER TABLE request_audit_records ADD COLUMN client_key_name "
+            "VARCHAR(160) NOT NULL DEFAULT ''",
+        ),
     ],
     "request_audit_account_verifications": [
         (

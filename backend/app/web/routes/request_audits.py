@@ -23,6 +23,7 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
             default="",
             pattern="^(|risky|normal|watch|high)$",
         ),
+        client_key: str = Query(default="", alias="clientKey"),
         egress_node_id: int | None = Query(
             default=None,
             ge=1,
@@ -42,6 +43,7 @@ def build_request_audits_router(service: RequestAuditService) -> APIRouter:
             page_size=page_size,
             account=account,
             risk=risk,
+            client_key=client_key,
             egress_node_id=egress_node_id,
             window_preset=window_preset,
             start_at=start_at,

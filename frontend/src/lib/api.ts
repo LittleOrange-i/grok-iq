@@ -455,6 +455,8 @@ export type RequestAuditRecord = {
   modelUpstreamModel: string
   accountId: number | null
   accountName: string
+  clientKeyId: string
+  clientKeyName: string
   upstreamAccountFound: boolean
   upstreamEnabled: boolean | null
   upstreamAuthStatus: string
@@ -763,6 +765,11 @@ export type RequestAuditScanResult = {
   }
 }
 
+export type RequestAuditClientKeyOption = {
+  id: string
+  name: string
+}
+
 export type RequestAuditPage = {
   day: string
   provider: string
@@ -772,6 +779,7 @@ export type RequestAuditPage = {
   total: number
   page: number
   pageSize: number
+  clientKeys: RequestAuditClientKeyOption[]
   thresholds: RequestAuditThresholds
 }
 

@@ -76,6 +76,8 @@ class RequestAuditRepository:
             "model_upstream_model",
             "account_id",
             "account_name",
+            "client_key_id",
+            "client_key_name",
             "egress_node_id",
             "egress_node_name",
             "egress_ip",
@@ -132,6 +134,35 @@ class RequestAuditRepository:
                         RequestAuditRecord.media_input_images != count,
                     )
                     .values(media_input_images=count)
+                )
+                updated += int(result.rowcount or 0)
+        return updated
+
+    def refresh_client_keys(self, items: Iterable[dict[str, Any]]) -> int:
+        values: dict[str, tuple[str, str]] = {}
+        for item in items:
+            upstream_id = str(item.get("id") or item.get("requestId") or "").strip()
+            key_id = str(item.get("clientKeyId") or "").strip()
+            if key_id == "0":
+                key_id = ""
+            key_name = str(item.get("clientKeyName") or "").strip()[:160]
+            if upstream_id and (key_id or key_name):
+                values[upstream_id] = (key_id[:64], key_name)
+        if not values:
+            return 0
+        updated = 0
+        with self.database.transaction() as session:
+            for upstream_id, (key_id, key_name) in values.items():
+                result = session.execute(
+                    update(RequestAuditRecord)
+                    .where(
+                        RequestAuditRecord.upstream_id == upstream_id,
+                        or_(
+                            RequestAuditRecord.client_key_id != key_id,
+                            RequestAuditRecord.client_key_name != key_name,
+                        ),
+                    )
+                    .values(client_key_id=key_id, client_key_name=key_name)
                 )
                 updated += int(result.rowcount or 0)
         return updated

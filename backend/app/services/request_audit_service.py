@@ -44,6 +44,8 @@ REQUEST_AUDIT_ACTIVITY_MINUTES = 5
 REQUEST_AUDIT_ACCOUNT_CACHE_SECONDS = 120
 REQUEST_AUDIT_MEDIA_BACKFILL_KEY = "request_audit_media_input_projection_v1"
 REQUEST_AUDIT_MEDIA_BACKFILL_MAX_PAGES = 10
+REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY = "request_audit_client_key_projection_v1"
+REQUEST_AUDIT_CLIENT_KEY_BACKFILL_MAX_PAGES = 10
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,17 @@ def _int_or_zero(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def _client_key_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text == "0":
+        return ""
+    return text[:64]
+
+
+def _client_key_name(value: Any) -> str:
+    return str(value or "").strip()[:160]
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -341,6 +354,76 @@ class RequestAuditService:
             }
         return {"complete": False, "pages": pages, "updated": updated, "error": ""}
 
+    async def _backfill_client_key_projection(self) -> dict[str, Any]:
+        raw_state = self.repository.metadata_value(REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY)
+        if raw_state == "completed":
+            return {"complete": True, "pages": 0, "updated": 0, "error": ""}
+        try:
+            state = json.loads(raw_state) if raw_state else {}
+        except (TypeError, ValueError):
+            state = {}
+        cursor = str(state.get("cursor") or "") if isinstance(state, dict) else ""
+        pages = 0
+        updated = 0
+        try:
+            while pages < REQUEST_AUDIT_CLIENT_KEY_BACKFILL_MAX_PAGES:
+                payload = await self.client.list_request_audits(
+                    cursor=cursor,
+                    page_size=REQUEST_AUDIT_PAGE_SIZE,
+                    period="90d",
+                )
+                items = payload.get("items", [])
+                if not isinstance(items, list) or not items:
+                    self.repository.set_metadata_value(
+                        REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY, "completed"
+                    )
+                    return {
+                        "complete": True,
+                        "pages": pages,
+                        "updated": updated,
+                        "error": "",
+                    }
+                pages += 1
+                updated += self.repository.refresh_client_keys(
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("provider") or "") == "grok_build"
+                )
+                next_cursor = str(payload.get("nextCursor") or "")
+                has_more = bool(payload.get("hasMore")) and bool(next_cursor)
+                if not has_more:
+                    self.repository.set_metadata_value(
+                        REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY, "completed"
+                    )
+                    return {
+                        "complete": True,
+                        "pages": pages,
+                        "updated": updated,
+                        "error": "",
+                    }
+                if next_cursor == cursor:
+                    raise RuntimeError("客户端 Key 回填游标未推进")
+                cursor = next_cursor
+                self.repository.set_metadata_value(
+                    REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY,
+                    json.dumps({"cursor": cursor}),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if getattr(exc, "error_code", "") == "invalidCursor":
+                self.repository.set_metadata_value(
+                    REQUEST_AUDIT_CLIENT_KEY_BACKFILL_KEY, ""
+                )
+            return {
+                "complete": False,
+                "pages": pages,
+                "updated": updated,
+                "error": str(exc),
+            }
+        return {"complete": False, "pages": pages, "updated": updated, "error": ""}
+
     def resolve_window(
         self,
         *,
@@ -550,6 +633,7 @@ class RequestAuditService:
         egress_updated = 0
         try:
             media_backfill = await self._backfill_media_input_projection()
+            client_key_backfill = await self._backfill_client_key_projection()
             try:
                 egress_map = await self._egress_map()
             except Exception as exc:  # node labels are supplemental
@@ -599,6 +683,12 @@ class RequestAuditService:
                     if isinstance(item, dict)
                 ]
                 existing_ids = self.repository.existing_ids(ids)
+                self.repository.refresh_client_keys(
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("provider") or "") == "grok_build"
+                )
                 page_has_overlap = False
                 page_records: list[dict[str, Any]] = []
                 for item in items:
@@ -748,6 +838,7 @@ class RequestAuditService:
                 "egressUpdated": egress_updated,
                 "egressWarning": egress_error,
                 "mediaInputBackfill": media_backfill,
+                "clientKeyBackfill": client_key_backfill,
                 "preDisableChecks": pre_disable_checks,
                 "state": self._state_payload(saved_state, window=window),
                 "activity": activity,
@@ -1677,6 +1768,8 @@ class RequestAuditService:
             "modelUpstreamModel",
             "accountId",
             "accountName",
+            "clientKeyId",
+            "clientKeyName",
             "egressNodeId",
             "egressNodeName",
             "egressMode",
@@ -1705,6 +1798,8 @@ class RequestAuditService:
             "model_upstream_model": str(item.get("modelUpstreamModel") or ""),
             "account_id": _positive_int(item.get("accountId")),
             "account_name": str(item.get("accountName") or ""),
+            "client_key_id": _client_key_id(item.get("clientKeyId")),
+            "client_key_name": _client_key_name(item.get("clientKeyName")),
             "egress_node_id": egress_node_id,
             "egress_node_name": str(
                 item.get("egressNodeName") or egress.get("name") or ""
@@ -1816,6 +1911,7 @@ class RequestAuditService:
         page_size: int,
         account: str = "",
         risk: str = "",
+        client_key: str = "",
         egress_node_id: int | None = None,
         window_preset: str = "today",
         start_at: Any = None,
@@ -1846,7 +1942,17 @@ class RequestAuditService:
                 for item in all_items
                 if account_needle in str(item.get("account_name") or "").casefold()
                 or account_needle in str(item.get("request_id") or "").casefold()
+                or account_needle in str(item.get("client_key_name") or "").casefold()
+                or account_needle in str(item.get("client_key_id") or "").casefold()
                 or (account_id_filter > 0 and item.get("account_id") == account_id_filter)
+            ]
+        client_keys = self._client_key_options(window_items)
+        client_key_needle = client_key.strip()
+        if client_key_needle:
+            all_items = [
+                item
+                for item in all_items
+                if self._client_key_filter_matches(item, client_key_needle)
             ]
         if egress_node_id is not None:
             all_items = [
@@ -1912,8 +2018,44 @@ class RequestAuditService:
             "total": total,
             "page": page,
             "pageSize": page_size,
+            "clientKeys": client_keys,
             "thresholds": self.thresholds,
         }
+
+    @staticmethod
+    def _client_key_options(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+        options: dict[str, dict[str, str]] = {}
+        unlabeled = False
+        for item in records:
+            key_id = str(item.get("client_key_id") or "").strip()
+            key_name = str(item.get("client_key_name") or "").strip()
+            if not key_id and not key_name:
+                unlabeled = True
+                continue
+            identity = key_id or key_name
+            current = options.get(identity)
+            if current is None:
+                options[identity] = {"id": identity, "name": key_name}
+            elif key_name and not current["name"]:
+                current["name"] = key_name
+        values = sorted(
+            options.values(),
+            key=lambda item: (
+                str(item.get("name") or "").casefold(),
+                str(item.get("id") or ""),
+            ),
+        )
+        if unlabeled:
+            values.append({"id": "unlabeled", "name": "未记录 Key"})
+        return values
+
+    @staticmethod
+    def _client_key_filter_matches(item: dict[str, Any], needle: str) -> bool:
+        key_id = str(item.get("client_key_id") or "").strip()
+        key_name = str(item.get("client_key_name") or "").strip()
+        if needle == "unlabeled":
+            return not key_id and not key_name
+        return needle in {key_id, key_name}
 
     @staticmethod
     def _risk_filter_matches(
@@ -3024,6 +3166,8 @@ class RequestAuditService:
             "modelUpstreamModel": str(row.get("model_upstream_model") or ""),
             "accountId": int(row["account_id"]) if row.get("account_id") else None,
             "accountName": str(row.get("account_name") or ""),
+            "clientKeyId": str(row.get("client_key_id") or ""),
+            "clientKeyName": str(row.get("client_key_name") or ""),
             "upstreamAccountFound": bool(upstream_account),
             "upstreamEnabled": (
                 bool(upstream_account.get("enabled"))

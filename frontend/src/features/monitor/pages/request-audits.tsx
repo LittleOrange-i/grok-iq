@@ -31,8 +31,10 @@ import {
   Play,
   RefreshCw,
   ScanSearch,
+  Search,
   Settings2,
   ShieldAlert,
+  SlidersHorizontal,
   Timer,
   UsersRound,
   Zap,
@@ -90,6 +92,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -118,6 +125,7 @@ import { ServerPagination } from '@/components/server-pagination'
 import { AccountSampleExplorer } from '@/features/monitor/components/account-sample-explorer'
 import { AuthStatusIndicator } from '@/features/monitor/components/account-state-indicators'
 import { buildEgressNodeNameMap } from '@/features/monitor/components/egress-node-names'
+import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
 const riskVariant: Record<
@@ -201,6 +209,34 @@ const requestAuditWindowPresets = new Set<RequestAuditWindowPreset>(
 type WorkspaceRiskFilter = 'all' | 'risky' | RequestAuditRiskLevel
 type AuditRiskFilter = 'all' | 'risky' | RequestAuditRiskLevel
 type Perspective = 'accounts' | 'nodes'
+
+const auditRiskLabels: Record<AuditRiskFilter, string> = {
+  all: '所有记录',
+  risky: '所有异常',
+  high: '高风险',
+  watch: '观察',
+  normal: '正常',
+}
+
+const workspaceRiskLabels: Record<WorkspaceRiskFilter, string> = {
+  all: '全部含正常',
+  risky: '所有异常',
+  high: '高风险',
+  watch: '观察',
+  normal: '正常',
+}
+
+function clientKeyLabel(row: {
+  clientKeyName?: string
+  clientKeyId?: string
+}) {
+  const name = row.clientKeyName?.trim() || ''
+  const id = row.clientKeyId?.trim() || ''
+  if (name) return name
+  if (id) return `#${id}`
+  return '—'
+}
+
 type MainView = 'overview' | 'workspace' | 'ledger' | 'schedule'
 type AuditBulkActionSource = 'risk' | 'ledger'
 
@@ -899,6 +935,8 @@ export function RequestAuditsPage() {
   const [workspaceRisk, setWorkspaceRisk] =
     useState<WorkspaceRiskFilter>('risky')
   const [auditSearch, setAuditSearch] = useState('')
+  const [auditClientKey, setAuditClientKey] = useState('all')
+  const [auditClientKeyQuery, setAuditClientKeyQuery] = useState('')
   const [auditRisk, setAuditRisk] = useState<AuditRiskFilter>('all')
   const [auditNode, setAuditNode] = useState('all')
   const [selectedRiskAccountIds, setSelectedRiskAccountIds] = useState<
@@ -932,6 +970,7 @@ export function RequestAuditsPage() {
 
   const deferredWorkspaceSearch = useDeferredValue(workspaceSearch)
   const deferredAuditSearch = useDeferredValue(auditSearch)
+  const deferredAuditClientKey = useDeferredValue(auditClientKey)
   const windowParams = useMemo(
     () => ({
       window: selectedWindow.window,
@@ -1015,6 +1054,7 @@ export function RequestAuditsPage() {
       page,
       pageSize,
       deferredAuditSearch,
+      deferredAuditClientKey,
       effectiveAuditRisk,
       auditNode,
     ],
@@ -1024,6 +1064,8 @@ export function RequestAuditsPage() {
         page,
         pageSize,
         account: deferredAuditSearch.trim(),
+        clientKey:
+          deferredAuditClientKey === 'all' ? '' : deferredAuditClientKey.trim(),
         risk: effectiveAuditRisk === 'all' ? '' : effectiveAuditRisk,
         egressNodeId: auditNode === 'all' ? undefined : Number(auditNode),
       }),
@@ -1307,6 +1349,37 @@ export function RequestAuditsPage() {
   const someVisibleLedgerRowsSelected = selectableLedgerRecords.some((record) =>
     Boolean(selectedAuditRows[record.id])
   )
+  const workspaceFilterCount = [
+    config.riskEnabled && workspaceRisk !== 'risky',
+  ].filter(Boolean).length
+  const ledgerFilterCount = [
+    auditClientKey !== 'all',
+    auditNode !== 'all',
+    config.riskEnabled && auditRisk !== 'all',
+  ].filter(Boolean).length
+  const auditNodeLabel =
+    auditNode === 'all'
+      ? ''
+      : nodes.find((item) => String(item.egressNodeId) === auditNode)
+          ?.egressNodeName || `节点 #${auditNode}`
+  const clientKeyOptions = recordsQuery.data?.clientKeys ?? []
+  const selectedClientKey = clientKeyOptions.find(
+    (item) => item.id === auditClientKey
+  )
+  const auditClientKeyLabel =
+    auditClientKey === 'all'
+      ? ''
+      : selectedClientKey?.name ||
+        selectedClientKey?.id ||
+        (auditClientKey === 'unlabeled' ? '未记录 Key' : auditClientKey)
+  const visibleClientKeyOptions = clientKeyOptions.filter((item) => {
+    const needle = auditClientKeyQuery.trim().toLowerCase()
+    if (!needle) return true
+    return (
+      item.name.toLowerCase().includes(needle) ||
+      item.id.toLowerCase().includes(needle)
+    )
+  })
   const bulkSelectionPending =
     bulkSsoMutation.isPending || bulkIsolationMutation.isPending
 
@@ -1502,6 +1575,7 @@ export function RequestAuditsPage() {
 
   const viewAccountAudits = (account: RequestAuditAccountRisk) => {
     setAuditSearch(String(account.accountId ?? account.accountName))
+    setAuditClientKey('all')
     setAuditNode('all')
     setPage(1)
     setMainView('ledger')
@@ -2112,46 +2186,117 @@ export function RequestAuditsPage() {
                           </Badge>
                         </TabsTrigger>
                       </TabsList>
-                      <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row'>
-                        <Input
-                          className='h-9 min-w-0 flex-1 text-xs sm:max-w-72'
-                          placeholder='搜索账号、节点或最近探测 IP'
-                          aria-label='搜索风险账号或代理节点'
-                          value={workspaceSearch}
-                          onChange={(event) => {
-                            setWorkspaceSearch(event.target.value)
-                            setRiskPage(1)
-                          }}
-                        />
-                        <Select
-                          value={config.riskEnabled ? workspaceRisk : 'all'}
-                          disabled={!config.riskEnabled}
-                          onValueChange={(value) => {
-                            setWorkspaceRisk(value as WorkspaceRiskFilter)
-                            setRiskPage(1)
-                          }}
-                        >
-                          <SelectTrigger
-                            className='h-9 w-full text-xs sm:w-48'
-                            aria-label='筛选风险定位等级'
+                      <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
+                        <div className='relative min-w-0 flex-1'>
+                          <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+                          <Input
+                            className='h-10 pr-3 pl-9'
+                            placeholder='搜索账号、节点或最近探测 IP'
+                            aria-label='搜索风险账号或代理节点'
+                            value={workspaceSearch}
+                            onChange={(event) => {
+                              setWorkspaceSearch(event.target.value)
+                              setRiskPage(1)
+                            }}
+                          />
+                        </div>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant='outline'
+                              className='h-10 shrink-0 gap-2 px-3'
+                            >
+                              <SlidersHorizontal className='size-4' />
+                              筛选条件
+                              {workspaceFilterCount > 0 && (
+                                <Badge
+                                  variant='secondary'
+                                  className='min-w-5 justify-center px-1.5'
+                                >
+                                  {workspaceFilterCount}
+                                </Badge>
+                              )}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align='end'
+                            className='w-[min(25rem,calc(100vw-2rem))] p-0'
                           >
-                            <ListFilter className='size-3.5' />
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value='risky'>
-                              所有异常
-                              {perspective === 'accounts' ? '账号' : '节点'}
-                            </SelectItem>
-                            <SelectItem value='high'>仅高风险</SelectItem>
-                            <SelectItem value='watch'>仅观察</SelectItem>
-                            <SelectItem value='normal'>仅正常</SelectItem>
-                            <SelectItem value='all'>
-                              所有{perspective === 'accounts' ? '账号' : '节点'}
-                              （含正常）
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                            <div className='border-b px-4 py-3'>
+                              <div className='flex items-center justify-between gap-3'>
+                                <div>
+                                  <div className='text-sm font-semibold'>
+                                    风险筛选
+                                  </div>
+                                  <div className='mt-0.5 text-xs text-muted-foreground'>
+                                    按风险等级缩小定位范围
+                                  </div>
+                                </div>
+                                {workspaceFilterCount > 0 && (
+                                  <Button
+                                    variant='ghost'
+                                    size='sm'
+                                    className='h-8'
+                                    onClick={() => {
+                                      setWorkspaceRisk('risky')
+                                      setRiskPage(1)
+                                    }}
+                                  >
+                                    清除全部
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                            <div className='space-y-4 p-4'>
+                              <div className='space-y-2'>
+                                <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                                  风险等级
+                                </div>
+                                <Select
+                                  value={
+                                    config.riskEnabled ? workspaceRisk : 'all'
+                                  }
+                                  disabled={!config.riskEnabled}
+                                  onValueChange={(value) => {
+                                    setWorkspaceRisk(
+                                      value as WorkspaceRiskFilter
+                                    )
+                                    setRiskPage(1)
+                                  }}
+                                >
+                                  <SelectTrigger aria-label='筛选风险定位等级'>
+                                    <ShieldAlert className='size-4 text-muted-foreground' />
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value='risky'>
+                                      所有异常
+                                      {perspective === 'accounts'
+                                        ? '账号'
+                                        : '节点'}
+                                    </SelectItem>
+                                    <SelectItem value='high'>
+                                      仅高风险
+                                    </SelectItem>
+                                    <SelectItem value='watch'>
+                                      仅观察
+                                    </SelectItem>
+                                    <SelectItem value='normal'>
+                                      仅正常
+                                    </SelectItem>
+                                    <SelectItem value='all'>
+                                      所有
+                                      {perspective === 'accounts'
+                                        ? '账号'
+                                        : '节点'}
+                                      （含正常）
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       </div>
                     </div>
                     <div className='flex max-w-full flex-wrap items-center gap-2'>
@@ -2229,6 +2374,31 @@ export function RequestAuditsPage() {
                       </SelectionToolbar>
                     </div>
                   </div>
+                  {(workspaceFilterCount > 0 || workspaceSearch.trim()) && (
+                    <div className='flex flex-wrap items-center gap-1.5'>
+                      <span className='mr-1 text-xs text-muted-foreground'>
+                        当前条件
+                      </span>
+                      {workspaceSearch.trim() && (
+                        <FilterChip
+                          label={`搜索：${workspaceSearch.trim()}`}
+                          onClear={() => {
+                            setWorkspaceSearch('')
+                            setRiskPage(1)
+                          }}
+                        />
+                      )}
+                      {config.riskEnabled && workspaceRisk !== 'risky' && (
+                        <FilterChip
+                          label={`风险：${workspaceRiskLabels[workspaceRisk]}`}
+                          onClear={() => {
+                            setWorkspaceRisk('risky')
+                            setRiskPage(1)
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                   <div className='flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground'>
                     <Badge variant='outline'>
                       统一窗口：{selectedWindowLabel}
@@ -2410,71 +2580,215 @@ export function RequestAuditsPage() {
             <CardContent className='p-0'>
               <div className='space-y-3 border-b bg-muted/10 p-3'>
                 <div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
-                  <div className='grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_13rem_14rem]'>
-                    <Input
-                      className='h-9 min-w-0 text-xs'
-                      placeholder='搜索账号名、账号 ID 或请求 ID'
-                      aria-label='搜索请求审计流水'
-                      value={auditSearch}
-                      onChange={(event) => {
-                        setAuditSearch(event.target.value)
-                        setPage(1)
-                      }}
-                    />
-                    <Select
-                      value={auditNode}
-                      onValueChange={(value) => {
-                        setAuditNode(value)
-                        setPage(1)
-                      }}
-                    >
-                      <SelectTrigger
-                        className='h-9 w-full text-xs'
-                        aria-label='按代理节点筛选请求流水'
-                      >
-                        <Layers3 className='size-3.5' />
-                        <SelectValue placeholder='所有代理节点' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='all'>所有代理节点</SelectItem>
-                        {nodes
-                          .filter((item) => item.egressNodeId)
-                          .map((item) => (
-                            <SelectItem
-                              key={item.key}
-                              value={String(item.egressNodeId)}
+                  <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
+                    <div className='relative min-w-0 flex-1'>
+                      <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+                      <Input
+                        className='h-10 pr-3 pl-9'
+                        placeholder='搜索账号名、账号 ID、请求 ID 或 Key 名称'
+                        aria-label='搜索请求审计流水'
+                        value={auditSearch}
+                        onChange={(event) => {
+                          setAuditSearch(event.target.value)
+                          setPage(1)
+                        }}
+                      />
+                    </div>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant='outline'
+                          className='h-10 shrink-0 gap-2 px-3'
+                        >
+                          <SlidersHorizontal className='size-4' />
+                          筛选条件
+                          {ledgerFilterCount > 0 && (
+                            <Badge
+                              variant='secondary'
+                              className='min-w-5 justify-center px-1.5'
                             >
-                              {item.egressNodeName ||
-                                `节点 #${item.egressNodeId}`}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={effectiveAuditRisk}
-                      disabled={!config.riskEnabled}
-                      onValueChange={(value) => {
-                        setAuditRisk(value as AuditRiskFilter)
-                        setPage(1)
-                      }}
-                    >
-                      <SelectTrigger
-                        className='h-9 w-full text-xs'
-                        aria-label='按风险范围筛选请求流水'
+                              {ledgerFilterCount}
+                            </Badge>
+                          )}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align='end'
+                        className='w-[min(25rem,calc(100vw-2rem))] p-0'
                       >
-                        <ShieldAlert className='size-3.5' />
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value='all'>所有记录（含正常）</SelectItem>
-                        <SelectItem value='risky'>
-                          所有异常（观察 + 高风险）
-                        </SelectItem>
-                        <SelectItem value='high'>仅高风险记录</SelectItem>
-                        <SelectItem value='watch'>仅观察记录</SelectItem>
-                        <SelectItem value='normal'>仅正常记录</SelectItem>
-                      </SelectContent>
-                    </Select>
+                        <div className='border-b px-4 py-3'>
+                          <div className='flex items-center justify-between gap-3'>
+                            <div>
+                              <div className='text-sm font-semibold'>
+                                流水筛选
+                              </div>
+                              <div className='mt-0.5 text-xs text-muted-foreground'>
+                                按客户端 Key、代理节点和风险缩小范围
+                              </div>
+                            </div>
+                            {ledgerFilterCount > 0 && (
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='h-8'
+                                onClick={() => {
+                                  setAuditClientKey('all')
+                                  setAuditClientKeyQuery('')
+                                  setAuditNode('all')
+                                  setAuditRisk('all')
+                                  setPage(1)
+                                }}
+                              >
+                                清除全部
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <div className='space-y-4 p-4'>
+                          <div className='space-y-2'>
+                            <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                              客户端 Key
+                            </div>
+                            <div className='relative'>
+                              <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+                              <Input
+                                className='h-9 pl-9'
+                                placeholder='搜索 Key 名称或 ID'
+                                aria-label='搜索客户端 Key 列表'
+                                value={auditClientKeyQuery}
+                                onChange={(event) =>
+                                  setAuditClientKeyQuery(event.target.value)
+                                }
+                              />
+                            </div>
+                            <div
+                              className='max-h-56 overflow-y-auto rounded-md border bg-background py-0.5'
+                              role='listbox'
+                              aria-label='客户端 Key 列表'
+                            >
+                              <button
+                                type='button'
+                                role='option'
+                                aria-selected={auditClientKey === 'all'}
+                                className={cn(
+                                  'flex w-full items-center px-3 py-2 text-left text-sm',
+                                  auditClientKey === 'all'
+                                    ? 'bg-accent text-accent-foreground'
+                                    : 'hover:bg-accent/60'
+                                )}
+                                onClick={() => {
+                                  setAuditClientKey('all')
+                                  setPage(1)
+                                }}
+                              >
+                                所有客户端 Key
+                              </button>
+                              {visibleClientKeyOptions.map((item) => {
+                                const selected = auditClientKey === item.id
+                                const label = item.name || `#${item.id}`
+                                return (
+                                  <button
+                                    key={item.id}
+                                    type='button'
+                                    role='option'
+                                    aria-selected={selected}
+                                    className={cn(
+                                      'flex w-full flex-col items-start px-3 py-2 text-left',
+                                      selected
+                                        ? 'bg-accent text-accent-foreground'
+                                        : 'hover:bg-accent/60'
+                                    )}
+                                    onClick={() => {
+                                      setAuditClientKey(item.id)
+                                      setPage(1)
+                                    }}
+                                  >
+                                    <span className='text-sm'>{label}</span>
+                                    {item.name && item.id !== 'unlabeled' ? (
+                                      <span className='text-[11px] text-muted-foreground'>
+                                        #{item.id}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                )
+                              })}
+                              {!visibleClientKeyOptions.length && (
+                                <div className='px-3 py-2 text-xs text-muted-foreground'>
+                                  {clientKeyOptions.length
+                                    ? '没有匹配的 Key'
+                                    : '当前窗口暂无客户端 Key'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className='space-y-2'>
+                            <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                              节点与风险
+                            </div>
+                            <div className='grid gap-2 sm:grid-cols-2'>
+                              <Select
+                                value={auditNode}
+                                onValueChange={(value) => {
+                                  setAuditNode(value)
+                                  setPage(1)
+                                }}
+                              >
+                                <SelectTrigger aria-label='按代理节点筛选请求流水'>
+                                  <Layers3 className='size-4 text-muted-foreground' />
+                                  <SelectValue placeholder='所有代理节点' />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value='all'>
+                                    所有代理节点
+                                  </SelectItem>
+                                  {nodes
+                                    .filter((item) => item.egressNodeId)
+                                    .map((item) => (
+                                      <SelectItem
+                                        key={item.key}
+                                        value={String(item.egressNodeId)}
+                                      >
+                                        {item.egressNodeName ||
+                                          `节点 #${item.egressNodeId}`}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                              <Select
+                                value={effectiveAuditRisk}
+                                disabled={!config.riskEnabled}
+                                onValueChange={(value) => {
+                                  setAuditRisk(value as AuditRiskFilter)
+                                  setPage(1)
+                                }}
+                              >
+                                <SelectTrigger aria-label='按风险范围筛选请求流水'>
+                                  <ShieldAlert className='size-4 text-muted-foreground' />
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value='all'>
+                                    所有记录（含正常）
+                                  </SelectItem>
+                                  <SelectItem value='risky'>
+                                    所有异常（观察 + 高风险）
+                                  </SelectItem>
+                                  <SelectItem value='high'>
+                                    仅高风险记录
+                                  </SelectItem>
+                                  <SelectItem value='watch'>
+                                    仅观察记录
+                                  </SelectItem>
+                                  <SelectItem value='normal'>
+                                    仅正常记录
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                   <div className='flex max-w-full flex-wrap items-center gap-2'>
                     <ActionToolbar label='请求审计流水表格操作'>
@@ -2558,24 +2872,51 @@ export function RequestAuditsPage() {
                         <LockKeyhole />
                       </ToolbarAction>
                     </SelectionToolbar>
-                    {(auditSearch.trim() ||
-                      auditNode !== 'all' ||
-                      auditRisk !== 'all') && (
-                      <Button
-                        variant='ghost'
-                        size='sm'
-                        onClick={() => {
+                  </div>
+                </div>
+                {(ledgerFilterCount > 0 || auditSearch.trim()) && (
+                  <div className='flex flex-wrap items-center gap-1.5'>
+                    <span className='mr-1 text-xs text-muted-foreground'>
+                      当前条件
+                    </span>
+                    {auditSearch.trim() && (
+                      <FilterChip
+                        label={`搜索：${auditSearch.trim()}`}
+                        onClear={() => {
                           setAuditSearch('')
+                          setPage(1)
+                        }}
+                      />
+                    )}
+                    {auditClientKey !== 'all' && (
+                      <FilterChip
+                        label={`Key：${auditClientKeyLabel}`}
+                        onClear={() => {
+                          setAuditClientKey('all')
+                          setPage(1)
+                        }}
+                      />
+                    )}
+                    {auditNode !== 'all' && (
+                      <FilterChip
+                        label={`节点：${auditNodeLabel}`}
+                        onClear={() => {
                           setAuditNode('all')
+                          setPage(1)
+                        }}
+                      />
+                    )}
+                    {config.riskEnabled && auditRisk !== 'all' && (
+                      <FilterChip
+                        label={`风险：${auditRiskLabels[auditRisk]}`}
+                        onClear={() => {
                           setAuditRisk('all')
                           setPage(1)
                         }}
-                      >
-                        清除筛选
-                      </Button>
+                      />
                     )}
                   </div>
-                </div>
+                )}
                 <div className='flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground'>
                   <Badge variant='outline'>
                     本页 {ledgerRecords.length} 条
@@ -2601,7 +2942,7 @@ export function RequestAuditsPage() {
                 aria-busy={recordsQuery.isFetching}
               >
                 <Table
-                  className='min-w-[1240px] text-xs leading-4 [&_td]:py-1.5 [&_th]:h-9'
+                  className='min-w-[1380px] text-xs leading-4 [&_td]:py-1.5 [&_th]:h-9'
                   rememberRowKey='request-audit-ledger'
                 >
                   <TableHeader>
@@ -2622,6 +2963,7 @@ export function RequestAuditsPage() {
                       </TableHead>
                       <TableHead>时间 / 请求</TableHead>
                       <TableHead>账号</TableHead>
+                      <TableHead>客户端 Key</TableHead>
                       <TableHead>代理节点</TableHead>
                       <TableHead>模型</TableHead>
                       <TableHead>输出 Token</TableHead>
@@ -2646,7 +2988,7 @@ export function RequestAuditsPage() {
                     ))}
                     {!recordsQuery.data?.items.length && (
                       <TableRow>
-                        <TableCell colSpan={10}>
+                        <TableCell colSpan={11}>
                           <EmptyState
                             compact
                             title='当前条件暂无审计记录'
@@ -3099,6 +3441,16 @@ function AuditRecordDetailDialog({
               <AuditDetailField
                 label='账号'
                 value={`${record.accountName || `账号 ${record.accountId ?? '未知'}`} · ID ${record.accountId ?? '未知'}`}
+              />
+              <AuditDetailField
+                label='客户端 Key'
+                value={
+                  record.clientKeyName
+                    ? `${record.clientKeyName}${record.clientKeyId ? ` · ID ${record.clientKeyId}` : ''}`
+                    : record.clientKeyId
+                      ? `#${record.clientKeyId}`
+                      : '—'
+                }
               />
               <AuditDetailField
                 label='当前上游状态'
@@ -4187,6 +4539,23 @@ function AuditRow({
           <span>ID {row.accountId ?? '未知'}</span>
           <UpstreamAccountState account={row} compact />
         </div>
+      </TableCell>
+      <TableCell className='align-middle !whitespace-normal'>
+        <div
+          className='max-w-44 text-xs font-medium break-words'
+          title={
+            row.clientKeyId
+              ? `${clientKeyLabel(row)} · ID ${row.clientKeyId}`
+              : clientKeyLabel(row)
+          }
+        >
+          {clientKeyLabel(row)}
+        </div>
+        {row.clientKeyId ? (
+          <div className='text-[10px] text-muted-foreground'>
+            ID {row.clientKeyId}
+          </div>
+        ) : null}
       </TableCell>
       <TableCell className='align-middle !whitespace-normal'>
         <NodeText row={row} />
