@@ -1088,6 +1088,12 @@ class RequestAuditService:
                 result.add(account_id)
         return result
 
+    def _account_is_quarantined(self, account_id: int) -> bool:
+        if self.accounts is None or account_id <= 0:
+            return False
+        assessment = self.accounts.get_assessment(account_id) or {}
+        return str(assessment.get("monitor_status") or "") == "quarantined"
+
     async def _process_pre_disable_candidate(
         self,
         record: dict[str, Any],
@@ -1110,11 +1116,15 @@ class RequestAuditService:
         finished_actions = {
             "disabled",
             "already_disabled",
-            "already_quarantined",
             "deprioritized",
             "already_deprioritized",
         }
         if existing_action in finished_actions:
+            return verification
+        if (
+            existing_action == "auto_quarantine_disabled"
+            and not self.settings.request_audit_isolation_enabled
+        ):
             return verification
         if existing_status == "checking":
             updated_at = ensure_utc(verification.get("updated_at"))
@@ -1122,6 +1132,29 @@ class RequestAuditService:
                 minutes=5
             ):
                 return verification
+        if (
+            str(record.get("_action_mode") or "quarantine") != "tps_only"
+            and self._account_is_quarantined(account_id)
+        ):
+            if existing_action != "pending":
+                return verification
+            return self.repository.update_verification(
+                audit_id,
+                {
+                    "sso_verdict": "skipped",
+                    "bot_flag": {},
+                    "proxy_used": False,
+                    "valid_session": None,
+                    "email_match": None,
+                    "status_code": 0,
+                    "response_ms": 0,
+                    "check_error": "",
+                    "checked_at": utc_now(),
+                    "status": "sso_skipped",
+                    "action_status": "already_quarantined",
+                    "action_error": "",
+                },
+            ) or verification
         return await self._apply_sso_skipped_action(record, verification)
 
     async def _apply_sso_skipped_action(

@@ -4,18 +4,33 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.core.clock import utc_now
 
 from .database import Database
 from .models import (
+    AccountAssessment,
     MetadataRow,
     RequestAuditAccountVerification,
     RequestAuditRecord,
     RequestAuditScanState,
     model_dict,
+)
+
+RETRYABLE_VERIFICATION_STATUSES = frozenset(
+    {"pending", "flagged", "clean", "sso_skipped", "session_confirmed"}
+)
+RETRYABLE_VERIFICATION_ACTIONS = frozenset(
+    {
+        "pending",
+        "action_failed",
+        "task_protected",
+        "auto_quarantine_disabled",
+        "deprioritize_failed",
+        "already_quarantined",
+    }
 )
 
 
@@ -357,26 +372,33 @@ class RequestAuditRepository:
         return result
 
     def retryable_verification_account_ids(self) -> set[int]:
-        """Return accounts whose confirmed verdict still needs an action retry."""
+        """Return accounts whose confirmed verdict still needs an action retry.
+
+        Probe isolation can temporarily mark an account as already quarantined.
+        Those rows stay retryable after recovery so request-audit can still
+        apply a permanent disable. Accounts that are still quarantined are
+        excluded here to avoid repeating the same alert on every scan.
+        """
 
         with self.database.session() as session:
             rows = session.scalars(
                 select(RequestAuditAccountVerification.account_id)
+                .outerjoin(
+                    AccountAssessment,
+                    AccountAssessment.account_id
+                    == RequestAuditAccountVerification.account_id,
+                )
                 .where(
+                    RequestAuditAccountVerification.status.in_(
+                        RETRYABLE_VERIFICATION_STATUSES
+                    ),
+                    RequestAuditAccountVerification.action_status.in_(
+                        RETRYABLE_VERIFICATION_ACTIONS
+                    ),
                     or_(
-                        and_(
-                            RequestAuditAccountVerification.status == "flagged",
-                            RequestAuditAccountVerification.action_status.in_(
-                                {"pending", "action_failed", "task_protected"}
-                            ),
-                        ),
-                        and_(
-                            RequestAuditAccountVerification.status == "clean",
-                            RequestAuditAccountVerification.action_status.in_(
-                                {"deprioritize_failed", "task_protected"}
-                            ),
-                        ),
-                    )
+                        AccountAssessment.monitor_status.is_(None),
+                        AccountAssessment.monitor_status != "quarantined",
+                    ),
                 )
                 .distinct()
             ).all()
