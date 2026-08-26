@@ -233,6 +233,7 @@ class RuntimeSettingsService:
             "requestAuditTpsOnlyPriority": s.request_audit_tps_only_priority,
             "requestAuditTpsOnlyMinCount": s.request_audit_tps_only_min_count,
             "requestAuditIsolationEnabled": s.request_audit_isolation_enabled,
+            "requestAuditSsoRecheckEnabled": s.request_audit_sso_recheck_enabled,
             "requestAuditRetentionDays": s.request_audit_retention_days,
             "probeWorkerConcurrency": s.probe_worker_concurrency,
             "probeQueueLimit": s.probe_queue_limit,

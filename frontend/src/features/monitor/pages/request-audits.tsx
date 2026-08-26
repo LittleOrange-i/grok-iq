@@ -2,6 +2,7 @@ import {
   useDeferredValue,
   useMemo,
   useState,
+  type ReactNode,
 } from 'react'
 import {
   keepPreviousData,
@@ -36,6 +37,7 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   Timer,
+  Undo2,
   UsersRound,
   Zap,
   type LucideIcon,
@@ -119,6 +121,7 @@ import {
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { InfoTooltip } from '@/components/info-tooltip'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { ServerPagination } from '@/components/server-pagination'
@@ -183,8 +186,50 @@ const fallbackConfig: RequestAuditConfig = {
   tpsOnlyPriority: -1_000_000,
   tpsOnlyMinCount: 2,
   isolationEnabled: true,
+  ssoRecheckEnabled: true,
   retentionDays: 90,
 }
+
+const requestAuditPageHelp = (
+  <div className='space-y-2'>
+    <p>
+      本地增量投影 grok_build 请求；动态出口按稳定代理节点归因，最近探测 IP
+      仅辅助调整代理池。
+    </p>
+    <p>
+      页面上的「高风险」只表示命中已启用规则，不等于已经停用。隔离就是停用
+      grok2api 账号；请求审计自动停用是永久的，需要人工恢复。
+    </p>
+    <p>
+      思考输出为 0 等停用规则达到次数后才会自动停用；TPS-only
+      只降低优先级并建议换出口。默认会先做停用前 SSO
+      复检，缺少 SSO、未配代理或复检失败时不会停用。
+    </p>
+    <p>
+      可在风险设置关闭「停用前 SSO 复检」，下次扫描会重试卡住的记录并按规则处置。探针「自动停用高风险账号」是另一条链路，不会处理请求审计高风险。
+    </p>
+  </div>
+)
+
+const requestAuditAutoDisableHelp = (
+  <div className='space-y-2'>
+    <p>
+      高风险账号进入自动停用前，要同时满足：规则动作为停用、达到次数，且「请求审计账号处置」已开启。
+    </p>
+    <p>
+      默认还会先用保存的 SSO 走配置代理复检。缺少 SSO
+      或复检失败时会停在待处置，不会自动停用；关闭「停用前 SSO
+      复检」后按规则直接停用或降优先级。
+    </p>
+    <p>TPS-only 只降优先级。这里的隔离按钮和自动隔离都是停用账号。</p>
+  </div>
+)
+
+const requestAuditRiskEvidenceHelp =
+  '风险徽章表示当前窗口命中了哪类规则。停用前 SSO 复检徽章说明是否已自动停用、降优先级，或卡在缺少 SSO / 复检失败。高风险本身不会停用账号。'
+
+const requestAuditRecordRiskHelp =
+  '单条请求的风险等级。连续命中停用规则才会进入自动停用；TPS-only 只降低优先级。停用前 SSO 复检开启时，缺少 SSO 的账号不会被自动停用。'
 
 const windowOptions: Array<{
   value: RequestAuditWindowPreset
@@ -377,6 +422,7 @@ function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
   if (check.status === 'email_mismatch') return '邮箱不匹配'
   if (check.status === 'isolation_disabled') return '隔离开关关闭'
   if (check.status === 'check_failed') return '复检失败'
+  if (check.status === 'sso_skipped') return '已跳过 SSO 复检'
   return '等待复检'
 }
 
@@ -410,7 +456,7 @@ function PreDisableCheckBadge({
       title={
         check
           ? `${label}${check.proxyUsed ? ' · 已通过 SSO 代理' : ''}${check.checkError ? ` · ${check.checkError}` : ''}`
-          : '高风险请求会先使用保存的 SSO 通过配置代理复检，再决定是否停用。'
+          : '高风险请求达到处置阈值后会自动停用。开启停用前 SSO 复检时，会先用保存的 SSO 通过配置代理确认。'
       }
     >
       {label}
@@ -553,12 +599,14 @@ function MetricCard({
   label,
   value,
   detail,
+  hint,
   tone = 'default',
 }: {
   icon: LucideIcon
   label: string
   value: string
   detail: string
+  hint?: ReactNode
   tone?: 'default' | 'info' | 'warning' | 'danger'
 }) {
   return (
@@ -584,8 +632,16 @@ function MetricCard({
           <Icon className='size-4' />
         </div>
         <div className='min-w-0'>
-          <div className='text-xs font-medium text-muted-foreground'>
+          <div className='flex items-center gap-1 text-xs font-medium text-muted-foreground'>
             {label}
+            {hint ? (
+              <InfoTooltip
+                label={label}
+                content={hint}
+                className='size-4'
+                contentClassName='max-w-80'
+              />
+            ) : null}
           </div>
           <div className='mt-1 text-xl font-semibold tabular-nums'>{value}</div>
           <div className='mt-1 truncate text-xs text-muted-foreground'>
@@ -1128,6 +1184,22 @@ export function RequestAuditsPage() {
     onError: (error) => toast.error(getErrorMessage(error)),
   })
 
+  const restoreMutation = useMutation({
+    mutationFn: (account: RequestAuditAccountRisk) =>
+      api.accountAction(account.accountId!, {
+        action: 'restore',
+        note: '请求审计工作台手动恢复隔离账号',
+        propagate: true,
+      }),
+    onSuccess: () => {
+      toast.success('账号已恢复启用')
+      void queryClient.invalidateQueries({ queryKey: ['request-audits'] })
+      void queryClient.invalidateQueries({ queryKey: ['accounts'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
   const bulkSsoMutation = useMutation({
     mutationFn: ({
       accountIds,
@@ -1424,11 +1496,14 @@ export function RequestAuditsPage() {
     (recordsQuery.isFetching && recordsQuery.data) ||
     (schedulerQuery.isFetching && schedulerQuery.data)
   )
+  const accountActionPending =
+    isolateMutation.isPending || restoreMutation.isPending
+
   const isolate = (account: RequestAuditAccountRisk) => {
     if (
       !config.isolationEnabled ||
       !account.accountId ||
-      isolateMutation.isPending
+      accountActionPending
     )
       return
     if (
@@ -1438,6 +1513,17 @@ export function RequestAuditsPage() {
     )
       return
     isolateMutation.mutate(account)
+  }
+
+  const restore = (account: RequestAuditAccountRisk) => {
+    if (!account.accountId || accountActionPending) return
+    if (
+      !globalThis.window.confirm(
+        `确认恢复账号 ${account.accountName || account.accountId}？\n将重新启用 grok2api 账号（若隔离前原本是启用状态），并清除本地隔离状态。`
+      )
+    )
+      return
+    restoreMutation.mutate(account)
   }
 
   const setRiskAccountSelected = (accountId: number, checked: boolean) => {
@@ -1658,8 +1744,9 @@ export function RequestAuditsPage() {
     <Page>
       <PageHeader
         title='请求审计风险'
-        description='本地增量投影 grok_build 请求；动态出口按稳定代理节点归因，最近探测 IP 仅辅助调整代理池。'
+        description={requestAuditPageHelp}
         descriptionAsHint
+        hintContentClassName='max-w-96'
         actions={
           <>
             <Button variant='outline' onClick={refreshLocal}>
@@ -1936,6 +2023,7 @@ export function RequestAuditsPage() {
               label='高风险账号'
               value={formatNumber(summary?.highRiskAccounts ?? 0, 0)}
               detail={`${nodes.filter((item) => item.riskLevel !== 'normal').length} 个异常代理节点`}
+              hint={requestAuditAutoDisableHelp}
               tone={(summary?.highRiskAccounts ?? 0) > 0 ? 'danger' : 'default'}
             />
           </div>
@@ -2149,7 +2237,14 @@ export function RequestAuditsPage() {
         <TabsContent value='workspace' className='mt-0'>
           <Card>
             <CardHeader className='border-b'>
-              <CardTitle>风险定位工作台</CardTitle>
+              <CardTitle className='flex items-center gap-1.5'>
+                风险定位工作台
+                <InfoTooltip
+                  label='风险定位工作台'
+                  content={requestAuditAutoDisableHelp}
+                  contentClassName='max-w-80'
+                />
+              </CardTitle>
               <CardDescription>
                 账号、代理节点、请求流水和本地探针证据使用同一时间窗口联动定位。
                 <span className='mt-1 block text-[11px] leading-5'>
@@ -2470,7 +2565,16 @@ export function RequestAuditsPage() {
                             </span>
                           </TableHead>
                           <TableHead>峰值 TPS</TableHead>
-                          <TableHead>风险证据</TableHead>
+                          <TableHead>
+                            <span className='inline-flex items-center gap-1'>
+                              风险证据
+                              <InfoTooltip
+                                label='风险证据'
+                                content={requestAuditRiskEvidenceHelp}
+                                contentClassName='max-w-80'
+                              />
+                            </span>
+                          </TableHead>
                           <TableHead>最近请求</TableHead>
                           <TableHead className='text-right'>操作</TableHead>
                         </TableRow>
@@ -2483,6 +2587,7 @@ export function RequestAuditsPage() {
                             thresholds={thresholds}
                             isolationEnabled={config.isolationEnabled}
                             onIsolate={isolate}
+                            onRestore={restore}
                             onViewAudits={viewAccountAudits}
                             onViewSamples={openAccountSamples}
                             selected={
@@ -2503,6 +2608,11 @@ export function RequestAuditsPage() {
                             isolating={
                               isolateMutation.isPending &&
                               isolateMutation.variables?.accountId ===
+                                account.accountId
+                            }
+                            restoring={
+                              restoreMutation.isPending &&
+                              restoreMutation.variables?.accountId ===
                                 account.accountId
                             }
                           />
@@ -2550,10 +2660,13 @@ export function RequestAuditsPage() {
                     isolationEnabled={config.isolationEnabled}
                     isolatingAccountId={isolateMutation.variables?.accountId}
                     isolationPending={isolateMutation.isPending}
+                    restoringAccountId={restoreMutation.variables?.accountId}
+                    restorePending={restoreMutation.isPending}
                     selectedAccountIds={selectedRiskAccountIds}
                     onSelectedChange={setRiskAccountSelected}
                     onSelect={(node) => setSelectedNodeKey(node.key)}
                     onIsolate={isolate}
+                    onRestore={restore}
                     onViewSamples={openAccountSamples}
                     onFilterAudits={(node) => {
                       if (!node.egressNodeId) return
@@ -2969,7 +3082,16 @@ export function RequestAuditsPage() {
                       <TableHead>输出 Token</TableHead>
                       <TableHead>速度</TableHead>
                       <TableHead>状态</TableHead>
-                      <TableHead>风险</TableHead>
+                      <TableHead>
+                        <span className='inline-flex items-center gap-1'>
+                          风险
+                          <InfoTooltip
+                            label='请求风险'
+                            content={requestAuditRecordRiskHelp}
+                            contentClassName='max-w-80'
+                          />
+                        </span>
+                      </TableHead>
                       <TableHead className='text-right'>详情</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -3512,7 +3634,14 @@ function AuditRecordDetailDialog({
 
             <div className='rounded-lg border border-primary/25 bg-primary/5 p-3'>
               <div className='flex flex-wrap items-center gap-2'>
-                <div className='text-sm font-medium'>停用前代理 SSO 复检</div>
+                <div className='flex items-center gap-1.5 text-sm font-medium'>
+                  停用前 SSO 复检
+                  <InfoTooltip
+                    label='停用前 SSO 复检'
+                    content={requestAuditAutoDisableHelp}
+                    contentClassName='max-w-80'
+                  />
+                </div>
                 <PreDisableCheckBadge check={record.preDisableCheck} compact />
               </div>
               {record.preDisableCheck ? (
@@ -3564,8 +3693,8 @@ function AuditRecordDetailDialog({
                 </div>
               ) : (
                 <p className='mt-2 text-xs leading-5 text-muted-foreground'>
-                  该请求尚未产生复检记录；只有高风险请求才会进入保存的 SSO +
-                  代理复检流程。
+                  该请求尚未产生处置记录；只有达到规则阈值的高风险请求才会进入停用流程。开启停用前
+                  SSO 复检时，会先用保存的 SSO 通过配置代理确认。
                 </p>
               )}
               {record.preDisableCheck?.botFlag.details && (
@@ -3850,10 +3979,13 @@ function NodePerspective({
   isolationEnabled,
   isolatingAccountId,
   isolationPending,
+  restoringAccountId,
+  restorePending,
   selectedAccountIds,
   onSelectedChange,
   onSelect,
   onIsolate,
+  onRestore,
   onViewSamples,
   onFilterAudits,
 }: {
@@ -3863,10 +3995,13 @@ function NodePerspective({
   isolationEnabled: boolean
   isolatingAccountId?: number | null
   isolationPending: boolean
+  restoringAccountId?: number | null
+  restorePending: boolean
   selectedAccountIds: number[]
   onSelectedChange: (accountId: number, checked: boolean) => void
   onSelect: (node: RequestAuditNodeRisk) => void
   onIsolate: (account: RequestAuditAccountRisk) => void
+  onRestore: (account: RequestAuditAccountRisk) => void
   onViewSamples: (account: RequestAuditAccountRisk) => void
   onFilterAudits: (node: RequestAuditNodeRisk) => void
 }) {
@@ -4185,19 +4320,27 @@ function NodePerspective({
                       {account.quarantined ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className='inline-flex'>
-                              <Button
-                                size='icon'
-                                variant='ghost'
-                                className='size-7 text-muted-foreground'
-                                disabled
-                                aria-label='账号已隔离'
-                              >
-                                <LockKeyhole />
-                              </Button>
-                            </span>
+                            <Button
+                              size='icon'
+                              variant='ghost'
+                              className='size-7 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200'
+                              disabled={
+                                !account.accountId ||
+                                (restorePending &&
+                                  restoringAccountId === account.accountId)
+                              }
+                              aria-label='恢复已隔离账号'
+                              onClick={() => onRestore(account)}
+                            >
+                              {restorePending &&
+                              restoringAccountId === account.accountId ? (
+                                <RefreshCw className='animate-spin' />
+                              ) : (
+                                <Undo2 />
+                              )}
+                            </Button>
                           </TooltipTrigger>
-                          <TooltipContent>账号已隔离</TooltipContent>
+                          <TooltipContent>点击恢复（启用）已隔离账号</TooltipContent>
                         </Tooltip>
                       ) : isolationEnabled && account.accountId ? (
                         <Tooltip>
@@ -4210,7 +4353,7 @@ function NodePerspective({
                                 isolationPending &&
                                 isolatingAccountId === account.accountId
                               }
-                              aria-label='隔离风险账号'
+                              aria-label='隔离（停用）风险账号'
                               onClick={() => onIsolate(account)}
                             >
                               {isolationPending &&
@@ -4221,7 +4364,7 @@ function NodePerspective({
                               )}
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>隔离风险账号</TooltipContent>
+                          <TooltipContent>隔离（停用）风险账号</TooltipContent>
                         </Tooltip>
                       ) : (
                         <Tooltip>
@@ -4266,21 +4409,25 @@ function AccountRiskRow({
   thresholds,
   isolationEnabled,
   onIsolate,
+  onRestore,
   onViewAudits,
   onViewSamples,
   selected,
   onSelectedChange,
   isolating,
+  restoring,
 }: {
   account: RequestAuditAccountRisk
   thresholds: RequestAuditThresholds
   isolationEnabled: boolean
   onIsolate: (account: RequestAuditAccountRisk) => void
+  onRestore: (account: RequestAuditAccountRisk) => void
   onViewAudits: (account: RequestAuditAccountRisk) => void
   onViewSamples: (account: RequestAuditAccountRisk) => void
   selected: boolean
   onSelectedChange: (checked: boolean) => void
   isolating: boolean
+  restoring: boolean
 }) {
   return (
     <TableRow
@@ -4448,16 +4595,30 @@ function AccountRiskRow({
             <TooltipContent>查看该账号请求与探针证据</TooltipContent>
           </Tooltip>
           {account.quarantined ? (
-            <Badge
-              variant='secondary'
-              title={
-                account.quarantineUntil
-                  ? `隔离至 ${formatDate(account.quarantineUntil)}`
-                  : '账号已隔离'
-              }
-            >
-              已隔离
-            </Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size='sm'
+                  variant='secondary'
+                  className='h-7 gap-1 px-2 text-[11px]'
+                  disabled={!account.accountId || restoring}
+                  aria-label='恢复已隔离账号'
+                  onClick={() => onRestore(account)}
+                >
+                  {restoring ? (
+                    <RefreshCw className='size-3.5 animate-spin' />
+                  ) : (
+                    <Undo2 className='size-3.5' />
+                  )}
+                  已隔离
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {account.quarantineUntil
+                  ? `隔离至 ${formatDate(account.quarantineUntil)}，点击恢复（启用）账号`
+                  : '点击恢复（启用）已隔离账号'}
+              </TooltipContent>
+            </Tooltip>
           ) : isolationEnabled &&
             account.accountId &&
             account.riskLevel !== 'normal' ? (
@@ -4468,7 +4629,7 @@ function AccountRiskRow({
                   variant='ghost'
                   className='size-7 text-destructive hover:bg-destructive/10 hover:text-destructive'
                   disabled={isolating}
-                  aria-label='隔离风险账号'
+                  aria-label='隔离（停用）风险账号'
                   onClick={() => onIsolate(account)}
                 >
                   {isolating ? (
@@ -4478,7 +4639,7 @@ function AccountRiskRow({
                   )}
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>隔离风险账号</TooltipContent>
+              <TooltipContent>隔离（停用）风险账号</TooltipContent>
             </Tooltip>
           ) : null}
         </div>

@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     )
     request_audit_tps_only_min_count: int = Field(default=2, ge=2, le=100)
     request_audit_isolation_enabled: bool = True
+    # Request-audit auto-disable normally rechecks saved SSO through the
+    # configured proxy. Operators can skip that gate when SSO is missing
+    # or the checker is unreliable.
+    request_audit_sso_recheck_enabled: bool = True
     request_audit_retention_days: int = Field(default=90, ge=1, le=90)
 
     # Persistent probe queue. A short Cron interval therefore cannot create
@@ -217,6 +221,7 @@ class Settings(BaseSettings):
         "request_audit_tps_only_priority",
         "request_audit_tps_only_min_count",
         "request_audit_isolation_enabled",
+        "request_audit_sso_recheck_enabled",
         "request_audit_retention_days",
         "probe_worker_concurrency",
         "probe_queue_limit",

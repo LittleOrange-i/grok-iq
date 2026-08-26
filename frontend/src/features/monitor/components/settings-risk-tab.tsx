@@ -458,13 +458,13 @@ export function SettingsRiskTab({
         description='配置高风险账号的自动停用方式。可以在指定时间后恢复，也可以保持停用直到人工恢复。'
         descriptionAsHint
       >
-        <div className='mb-4 grid overflow-hidden rounded-xl border sm:grid-cols-2'>
+        <div className='mb-4 grid overflow-hidden rounded-xl border sm:grid-cols-2 lg:grid-cols-3'>
           <div className='flex min-h-20 items-center justify-between gap-4 px-4 py-3'>
             <div className='flex items-center gap-1.5 text-sm font-medium'>
               请求审计账号处置
               <InfoTooltip
                 label='请求审计账号处置'
-                content='控制请求审计工作台和自动复检流程是否可以停用或调整账号；关闭后仍保存风险证据。'
+                content='控制请求审计工作台和自动复检流程是否可以停用或调整账号；关闭后仍保存风险证据。这里的隔离就是停用 grok2api 账号。'
               />
             </div>
             <Switch
@@ -475,6 +475,22 @@ export function SettingsRiskTab({
             />
           </div>
           <div className='flex min-h-20 items-center justify-between gap-4 border-t px-4 py-3 sm:border-t-0 sm:border-l'>
+            <div className='flex items-center gap-1.5 text-sm font-medium'>
+              停用前 SSO 复检
+              <InfoTooltip
+                label='停用前 SSO 复检'
+                content='开启时，请求审计达到处置阈值后会先用保存的 SSO 走配置代理复检，确认 bot 标记才停用。关闭后跳过 SSO，按规则直接停用或降低优先级；缺少 SSO、未配代理或复检失败的记录会在下次扫描时重试。'
+              />
+            </div>
+            <Switch
+              checked={form.requestAuditSsoRecheckEnabled}
+              disabled={!form.requestAuditIsolationEnabled}
+              onCheckedChange={(value) =>
+                set('requestAuditSsoRecheckEnabled', value)
+              }
+            />
+          </div>
+          <div className='flex min-h-20 items-center justify-between gap-4 border-t px-4 py-3 lg:border-t-0 lg:border-l'>
             <div className='text-sm font-medium'>TPS-only 自动降优先级</div>
             <Switch
               checked={form.requestAuditTpsOnlyDeprioritizeEnabled}
@@ -487,7 +503,7 @@ export function SettingsRiskTab({
         <div className='mb-4 max-w-xs'>
           <NumberField
             label='TPS-only 累计异常次数'
-            hint='达到该次数且代理 SSO 正常后，降低账号优先级并提示更换出口'
+            hint='达到该次数后降低账号优先级并提示更换出口。开启停用前 SSO 复检时，需复检正常才会降级。'
             value={form.requestAuditTpsOnlyMinCount}
             min={2}
             max={100}

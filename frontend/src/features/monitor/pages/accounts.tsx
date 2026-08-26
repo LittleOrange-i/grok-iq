@@ -1553,7 +1553,9 @@ function AccountSsoRiskBadge({ account }: { account: UpstreamAccount }) {
             ? { label: 'SSO 复检失败', variant: 'warning' as const }
             : status === 'missing'
               ? { label: '缺少 SSO', variant: 'outline' as const }
-              : { label: 'SSO 未复检', variant: 'outline' as const }
+              : status === 'skipped'
+                ? { label: '已跳过 SSO 复检', variant: 'outline' as const }
+                : { label: 'SSO 未复检', variant: 'outline' as const }
   return (
     <Badge
       variant={meta.variant}

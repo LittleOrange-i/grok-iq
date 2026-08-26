@@ -437,6 +437,9 @@ class RuntimeSettingsInput(BaseModel):
     request_audit_isolation_enabled: bool | None = Field(
         default=None, alias="requestAuditIsolationEnabled"
     )
+    request_audit_sso_recheck_enabled: bool | None = Field(
+        default=None, alias="requestAuditSsoRecheckEnabled"
+    )
     request_audit_retention_days: int | None = Field(
         default=None,
         alias="requestAuditRetentionDays",

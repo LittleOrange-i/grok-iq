@@ -48,6 +48,7 @@ export type SettingsForm = {
   requestAuditRetentionDays: number
   requestAuditRiskEnabled: boolean
   requestAuditIsolationEnabled: boolean
+  requestAuditSsoRecheckEnabled: boolean
   reasoningZeroRiskEnabled: boolean
   reasoningModelPolicies: EditableRuntimeSettings['reasoningModelPolicies']
   mediaInputObserveEnabled: boolean
@@ -214,6 +215,8 @@ export function toSettingsForm(
     requestAuditRiskEnabled: settings.requestAuditRiskEnabled ?? true,
     requestAuditIsolationEnabled:
       settings.requestAuditIsolationEnabled ?? true,
+    requestAuditSsoRecheckEnabled:
+      settings.requestAuditSsoRecheckEnabled ?? true,
     reasoningZeroRiskEnabled: settings.reasoningZeroRiskEnabled ?? true,
     reasoningModelPolicies: (settings.reasoningModelPolicies ?? []).map(
       (policy) => ({
@@ -309,6 +312,7 @@ export function buildSettingsPayload(
     requestAuditRetentionDays: form.requestAuditRetentionDays,
     requestAuditRiskEnabled: form.requestAuditRiskEnabled,
     requestAuditIsolationEnabled: form.requestAuditIsolationEnabled,
+    requestAuditSsoRecheckEnabled: form.requestAuditSsoRecheckEnabled,
     reasoningZeroRiskEnabled: form.reasoningZeroRiskEnabled,
     reasoningModelPolicies: form.reasoningModelPolicies,
     mediaInputObserveEnabled: form.mediaInputObserveEnabled,

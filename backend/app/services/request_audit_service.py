@@ -980,6 +980,8 @@ class RequestAuditService:
                 classified = evaluation.classification
                 if classified.name != "high" or not classified.rule_id:
                     continue
+                if classified.rule_id == "media_input_observe":
+                    continue
                 rule = get_risk_rule(classified.rule_id)
                 if rule is None or not rule.audit_action_mode:
                     continue
@@ -1108,6 +1110,24 @@ class RequestAuditService:
             }
         )
         existing_status = str(verification.get("status") or "")
+        existing_action = str(verification.get("action_status") or "")
+        completed_actions = {
+            "disabled",
+            "already_disabled",
+            "already_quarantined",
+            "deprioritized",
+            "already_deprioritized",
+            "auto_quarantine_disabled",
+            "deprioritize_disabled",
+        }
+        inconclusive_sso_statuses = {
+            "missing_sso",
+            "proxy_required",
+            "check_failed",
+            "invalid_session",
+            "email_mismatch",
+            "sso_skipped",
+        }
         if existing_status == "checking":
             updated_at = ensure_utc(verification.get("updated_at"))
             if updated_at is not None and updated_at > utc_now() - timedelta(
@@ -1117,7 +1137,7 @@ class RequestAuditService:
         elif existing_status != "pending":
             if (
                 existing_status == "flagged"
-                and str(verification.get("action_status") or "")
+                and existing_action
                 in {"pending", "action_failed", "task_protected"}
             ):
                 common = {
@@ -1139,7 +1159,7 @@ class RequestAuditService:
             if (
                 existing_status == "clean"
                 and action_mode == "tps_only"
-                and str(verification.get("action_status") or "")
+                and existing_action
                 in {
                     "deprioritize_disabled",
                     "deprioritize_failed",
@@ -1163,7 +1183,16 @@ class RequestAuditService:
                         "checked_at": verification.get("checked_at"),
                     },
                 )
+            if (
+                not self.settings.request_audit_sso_recheck_enabled
+                and existing_status in inconclusive_sso_statuses
+                and existing_action not in completed_actions
+            ):
+                return await self._apply_sso_skipped_action(record, verification)
             return verification
+
+        if not self.settings.request_audit_sso_recheck_enabled:
+            return await self._apply_sso_skipped_action(record, verification)
 
         if self.sso_reports is None or self.account_service is None:
             return self.repository.update_verification(
@@ -1283,17 +1312,49 @@ class RequestAuditService:
             common=common,
         )
 
+    async def _apply_sso_skipped_action(
+        self,
+        record: dict[str, Any],
+        verification: dict[str, Any],
+    ) -> dict[str, Any]:
+        common = {
+            "sso_verdict": "skipped",
+            "bot_flag": {},
+            "proxy_used": False,
+            "valid_session": None,
+            "email_match": None,
+            "status_code": 0,
+            "response_ms": 0,
+            "check_error": "",
+            "checked_at": utc_now(),
+        }
+        if str(record.get("_action_mode") or "quarantine") == "tps_only":
+            return await self._apply_clean_tps_action(
+                record,
+                verification,
+                common=common,
+                status="sso_skipped",
+            )
+        return await self._apply_flagged_quarantine(
+            record,
+            verification,
+            common=common,
+            status="sso_skipped",
+        )
+
     async def _apply_clean_tps_action(
         self,
         record: dict[str, Any],
         verification: dict[str, Any],
         *,
         common: dict[str, Any],
+        status: str = "clean",
     ) -> dict[str, Any]:
         account_id = int(record.get("account_id") or 0)
         audit_id = str(record.get("upstream_id") or "")
         created_at = ensure_utc(record.get("created_at")) or utc_now()
         verdict = str(common.get("sso_verdict") or "clean")
+        skipped = status == "sso_skipped" or verdict == "skipped"
         proxy_used = bool(common.get("proxy_used"))
         if not record.get("_tps_anomaly_count"):
             window_start, window_end = self._current_audit_window()
@@ -1340,7 +1401,7 @@ class RequestAuditService:
             }
         recommendation = self._egress_recommendation(
             record,
-            status="clean",
+            status=status,
             action_status="pending",
             checked_at=ensure_utc(common.get("checked_at")),
             tps_anomaly_count=int(record.get("_tps_anomaly_count") or 0),
@@ -1351,7 +1412,11 @@ class RequestAuditService:
             action = await self.account_service.apply_tps_only_deprioritization(
                 account_id,
                 source="request_audit",
-                note="TPS 多次异常但代理 SSO 复检正常，建议更换出口节点",
+                note=(
+                    "TPS 多次异常，已跳过 SSO 复检后降低优先级，建议更换出口节点"
+                    if skipped
+                    else "TPS 多次异常但代理 SSO 复检正常，建议更换出口节点"
+                ),
                 detail={
                     "auditId": audit_id,
                     "riskRuleId": str(record.get("_risk_rule_id") or "fast_risk"),
@@ -1384,7 +1449,7 @@ class RequestAuditService:
                 audit_id,
                 {
                     **common,
-                    "status": "clean",
+                    "status": status,
                     "action_status": "deprioritize_failed",
                     "action_error": str(exc)[:1000],
                     "egress_recommendation": recommendation,
@@ -1395,7 +1460,7 @@ class RequestAuditService:
             audit_id,
             {
                 **common,
-                "status": "clean",
+                "status": status,
                 "action_status": action_status,
                 "action_error": str(action.get("actionError") or "")[:1000],
                 "egress_recommendation": {
@@ -1419,11 +1484,16 @@ class RequestAuditService:
         verification: dict[str, Any],
         *,
         common: dict[str, Any],
+        status: str = "flagged",
     ) -> dict[str, Any]:
         account_id = int(record.get("account_id") or 0)
         audit_id = str(record.get("upstream_id") or "")
         created_at = ensure_utc(record.get("created_at")) or utc_now()
-        verdict = str(common.get("sso_verdict") or "flagged")
+        verdict = str(
+            common.get("sso_verdict")
+            or ("skipped" if status == "sso_skipped" else "flagged")
+        )
+        skipped = status == "sso_skipped" or verdict == "skipped"
         bot_flag = (
             common.get("bot_flag")
             if isinstance(common.get("bot_flag"), dict)
@@ -1443,7 +1513,7 @@ class RequestAuditService:
                 audit_id,
                 {
                     **common,
-                    "status": "flagged",
+                    "status": status,
                     "action_status": "auto_quarantine_disabled",
                     "action_error": "",
                 },
@@ -1453,7 +1523,7 @@ class RequestAuditService:
                 audit_id,
                 {
                     **common,
-                    "status": "flagged",
+                    "status": status,
                     "action_status": "action_failed",
                     "action_error": "自动停用服务尚未接入",
                 },
@@ -1462,7 +1532,11 @@ class RequestAuditService:
             action = await self.account_service.apply_auto_quarantine(
                 account_id,
                 source="request_audit",
-                note="请求审计高风险经代理 SSO 复检确认 bot 标记后自动隔离",
+                note=(
+                    "请求审计高风险已达处置阈值，已跳过 SSO 复检后自动停用"
+                    if skipped
+                    else "请求审计高风险经代理 SSO 复检确认 bot 标记后自动隔离"
+                ),
                 risk_score=max(float(self.settings.risk_high_floor), 85.0),
                 force=True,
                 permanent=True,
@@ -1491,7 +1565,7 @@ class RequestAuditService:
                 audit_id,
                 {
                     **common,
-                    "status": "flagged",
+                    "status": status,
                     "action_status": "action_failed",
                     "action_error": str(exc)[:1000],
                 },
@@ -1500,14 +1574,14 @@ class RequestAuditService:
         action_status = str(action.get("actionStatus") or "action_failed")
         self.repository.set_action_for_account_statuses(
             account_id,
-            statuses={"flagged"},
+            statuses={"flagged", "sso_skipped"},
             action_status=action_status,
         )
         return self.repository.update_verification(
             audit_id,
             {
                 **common,
-                "status": "flagged",
+                "status": status,
                 "action_status": action_status,
                 "action_error": "",
             },
@@ -1523,15 +1597,20 @@ class RequestAuditService:
         tps_anomaly_count: int,
     ) -> dict[str, Any] | None:
         min_count = int(record.get("_tps_min_count") or 2)
-        if status != "clean" or tps_anomaly_count < min_count:
+        if status not in {"clean", "sso_skipped"} or tps_anomaly_count < min_count:
             return None
+        skipped = status == "sso_skipped"
         return {
             "type": "change_egress",
             "label": "建议更换出口节点",
-            "reason": "TPS 多次异常，但代理 SSO 复检正常",
+            "reason": (
+                "TPS 多次异常，已跳过 SSO 复检"
+                if skipped
+                else "TPS 多次异常，但代理 SSO 复检正常"
+            ),
             "highRiskCount": int(tps_anomaly_count),
             "maxTps": round(float(record.get("_tps_max") or record.get("tps") or 0), 2),
-            "ssoVerdict": "clean",
+            "ssoVerdict": "skipped" if skipped else "clean",
             "checkedAt": _iso(checked_at),
             "priorityAction": action_status,
             "egressNodeIds": sorted(
@@ -1855,6 +1934,7 @@ class RequestAuditService:
             "tpsOnlyPriority": self.settings.request_audit_tps_only_priority,
             "tpsOnlyMinCount": self.settings.request_audit_tps_only_min_count,
             "isolationEnabled": self.settings.request_audit_isolation_enabled,
+            "ssoRecheckEnabled": self.settings.request_audit_sso_recheck_enabled,
             "retentionDays": self.settings.request_audit_retention_days,
         }
 
@@ -2792,7 +2872,8 @@ class RequestAuditService:
             reasoning_detected = bool(
                 applicable and _int_or_zero(row.get("reasoning_tokens")) <= 0
             )
-            if policy.mode != "required" or not applicable:
+            media_observe = classification.rule_id == "media_input_observe"
+            if policy.mode != "required" or not applicable or media_observe:
                 streaks[group_key] = 0
             elif _int_or_zero(row.get("reasoning_tokens")) > 0:
                 streaks[group_key] = 0
@@ -2837,7 +2918,11 @@ class RequestAuditService:
                     )
 
                 streak = evaluation.reasoning_streak
-                if policy.mode == "required" and streak >= policy.min_count:
+                if (
+                    policy.mode == "required"
+                    and streak >= policy.min_count
+                    and not media_observe
+                ):
                     promoted_reason = (
                         "同账号、上游模型和请求类型的思考输出连续为 0 "
                         f"{streak} 次，达到 {policy.min_count} 次阈值"

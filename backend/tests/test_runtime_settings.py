@@ -192,6 +192,18 @@ def test_register_stabilization_setting_is_persisted_and_exposed(tmp_path: Path)
     assert reloaded_settings.register_probe_stabilization_seconds == 8
 
 
+def test_request_audit_sso_recheck_defaults_on_and_can_be_disabled(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+
+    assert settings.request_audit_sso_recheck_enabled is True
+    assert service.public_view()["requestAuditSsoRecheckEnabled"] is True
+
+    changed = service.update({"request_audit_sso_recheck_enabled": False})
+    assert changed == ["request_audit_sso_recheck_enabled"]
+    assert settings.request_audit_sso_recheck_enabled is False
+    assert service.public_view()["requestAuditSsoRecheckEnabled"] is False
+
+
 def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
 

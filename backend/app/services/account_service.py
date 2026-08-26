@@ -1031,6 +1031,8 @@ class AccountService:
         if not verification:
             return "unverified" if sso_available else "missing"
         status = str(verification.get("status") or "").strip()
+        if status == "sso_skipped":
+            return "skipped"
         if status == "missing_sso" or not sso_available:
             return "missing"
         if status in {

@@ -74,3 +74,42 @@ def test_repeated_reasoning_zero_keeps_strong_tps_as_primary_rule():
     assert latest.classification.rule_id == "fast_risk"
     assert "reasoning_zero" in latest.classification.rule_ids
     assert latest.reasoning_streak == 2
+
+
+def test_media_input_observe_does_not_auto_disable_for_reasoning_zero():
+    service = RequestAuditService(
+        settings=Settings(_env_file=None),
+        client=MagicMock(),
+        repository=MagicMock(),
+    )
+    now = utc_now()
+    records = [
+        {
+            "upstream_id": str(index),
+            "account_id": 5433,
+            "status_code": 200,
+            "output_tokens": 155,
+            "reasoning_tokens": 0,
+            "reasoning_tokens_reported": True,
+            "first_token_ms": 100,
+            "duration_ms": 1100,
+            "tps": 1700 + index,
+            "model_upstream_model": "Build/grok-4.6",
+            "model_public_id": "grok-4.6",
+            "operation": "responses",
+            "media_input_images": 3,
+            "created_at": now + timedelta(seconds=index),
+        }
+        for index in (1, 2, 3, 4)
+    ]
+
+    evaluations = service._audit_risk_evaluations(records)
+    latest = evaluations["4"]
+    candidates = service._pre_disable_candidates(records, evaluations=evaluations)
+
+    assert latest.classification.rule_id == "media_input_observe"
+    assert latest.classification.name == "watch"
+    assert latest.classification.hard is False
+    assert "reasoning_zero" in latest.classification.rule_ids
+    assert latest.reasoning_streak == 0
+    assert candidates == []

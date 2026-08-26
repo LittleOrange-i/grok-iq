@@ -545,6 +545,7 @@ export type RequestAuditPreDisableCheck = {
     | 'email_mismatch'
     | 'check_failed'
     | 'isolation_disabled'
+    | 'sso_skipped'
     | string
   ssoVerdict: string
   proxyUsed: boolean
@@ -723,6 +724,7 @@ export type RequestAuditConfig = {
   tpsOnlyPriority: number
   tpsOnlyMinCount: number
   isolationEnabled: boolean
+  ssoRecheckEnabled: boolean
   retentionDays: number
 }
 
@@ -1179,6 +1181,7 @@ export type RuntimeSettings = {
   requestAuditTpsOnlyPriority: number
   requestAuditTpsOnlyMinCount: number
   requestAuditIsolationEnabled: boolean
+  requestAuditSsoRecheckEnabled: boolean
   requestAuditRetentionDays: number
   probeWorkerConcurrency: number
   probeQueueLimit: number
@@ -1278,6 +1281,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'requestAuditTpsOnlyPriority'
     | 'requestAuditTpsOnlyMinCount'
     | 'requestAuditIsolationEnabled'
+    | 'requestAuditSsoRecheckEnabled'
     | 'requestAuditRetentionDays'
     | 'probeWorkerConcurrency'
     | 'probeQueueLimit'
@@ -1373,6 +1377,7 @@ type RuntimeSettingsWire = Omit<
   | 'requestAuditTpsOnlyPriority'
   | 'requestAuditTpsOnlyMinCount'
   | 'requestAuditIsolationEnabled'
+  | 'requestAuditSsoRecheckEnabled'
   | 'requestAuditRetentionDays'
 > & {
   degradationTps?: number
@@ -1426,6 +1431,7 @@ type RuntimeSettingsWire = Omit<
   requestAuditTpsOnlyPriority?: number
   requestAuditTpsOnlyMinCount?: number
   requestAuditIsolationEnabled?: boolean
+  requestAuditSsoRecheckEnabled?: boolean
   requestAuditRetentionDays?: number
 }
 
@@ -1536,6 +1542,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     requestAuditTpsOnlyPriority: value.requestAuditTpsOnlyPriority ?? -1000000,
     requestAuditTpsOnlyMinCount: value.requestAuditTpsOnlyMinCount ?? 2,
     requestAuditIsolationEnabled: value.requestAuditIsolationEnabled ?? true,
+    requestAuditSsoRecheckEnabled: value.requestAuditSsoRecheckEnabled ?? true,
     requestAuditRetentionDays: value.requestAuditRetentionDays ?? 90,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',

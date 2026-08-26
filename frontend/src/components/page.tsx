@@ -50,11 +50,13 @@ export function PageHeader({
   description,
   actions,
   descriptionAsHint = false,
+  hintContentClassName,
 }: {
   title: string
-  description: string
+  description: ReactNode
   actions?: ReactNode
   descriptionAsHint?: boolean
+  hintContentClassName?: string
 }) {
   return (
     <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
@@ -62,7 +64,11 @@ export function PageHeader({
         <div className='flex items-center gap-1.5'>
           <h1 className='text-2xl font-semibold tracking-tight'>{title}</h1>
           {descriptionAsHint && (
-            <InfoTooltip label={title} content={description} />
+            <InfoTooltip
+              label={title}
+              content={description}
+              contentClassName={hintContentClassName}
+            />
           )}
         </div>
         {!descriptionAsHint && (
