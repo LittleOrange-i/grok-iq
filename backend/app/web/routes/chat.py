@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
+from app.integrations.grok2api.http_session import abort_curl_stream
 from app.services.chat_service import ChatService
 from app.web.schemas import ChatProviderCreateInput, ChatProviderUpdateInput
 
@@ -87,6 +88,7 @@ def build_chat_router(service: ChatService) -> APIRouter:
                 if buffer:
                     yield bytes(buffer)
             finally:
+                await abort_curl_stream(stream.response)
                 await stream.session.close()
 
         return StreamingResponse(

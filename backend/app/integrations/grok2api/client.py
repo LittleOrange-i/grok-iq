@@ -10,11 +10,11 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-from curl_cffi.const import CurlHttpVersion, CurlOpt
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from app.core.config import Settings
 from app.integrations.grok2api.chat_probe import ChatProbeRunner
+from app.integrations.grok2api.http_session import open_curl_session
 
 
 class IntegrationError(RuntimeError):
@@ -223,15 +223,9 @@ class Grok2APIClient:
         )
 
     def _session(self) -> CurlAsyncSession:
-        return CurlAsyncSession(
+        return open_curl_session(
             impersonate=self.settings.grok2api_http_impersonate,
-            # Impersonate overwrites ACCEPT_ENCODING after the request kwarg is
-            # applied. Force identity so gzip cannot buffer the SSE body.
-            curl_options={
-                CurlOpt.ACCEPT_ENCODING: b"identity",
-                CurlOpt.BUFFERSIZE: 1024,
-                CurlOpt.HTTP_VERSION: CurlHttpVersion.V1_1,
-            },
+            base_url=self.settings.normalized_gateway_base_url,
         )
 
     def reset_credentials(self) -> None:

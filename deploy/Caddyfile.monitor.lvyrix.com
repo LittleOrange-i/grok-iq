@@ -1,11 +1,14 @@
 # GrokIQ frontend and API.
-# Caddy only reaches the loopback-bound frontend. Its nginx forwards /api to
-# the backend over the private Compose network, so the backend needs no host port.
+# The production frontend runs on nginx at 8091; API requests bypass nginx and
+# connect directly to the backend at 8090.
+# SSE/chat streams must not pass through encode; gzip waits for EOF.
 monitor.lvyrix.com {
-	@not_chat_stream not path /api/responses /api/chat/completions
-	encode @not_chat_stream zstd gzip
-	@chat_stream path /api/responses /api/chat/completions
-	header @chat_stream Cache-Control "no-cache, no-transform"
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8090 {
+			flush_interval -1
+		}
+	}
 
 	@immutable_assets path /assets/*
 	header @immutable_assets Cache-Control "public, max-age=31536000, immutable"
@@ -14,6 +17,7 @@ monitor.lvyrix.com {
 	header @html_shell Cache-Control "no-cache"
 
 	handle {
+		encode zstd gzip
 		reverse_proxy 127.0.0.1:8091
 	}
 }

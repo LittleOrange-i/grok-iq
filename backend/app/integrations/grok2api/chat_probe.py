@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+from app.integrations.grok2api.http_session import abort_curl_stream
+
 
 @dataclass(slots=True)
 class ChatProbeStreamState:
@@ -102,6 +104,10 @@ class ChatProbeRunner:
         }
         body.pop("messages", None)
         body.pop("stream_options", None)
+        if "store" not in extra_body:
+            body["store"] = False
+        if "reasoning" not in extra_body:
+            body["reasoning"] = {"summary": "auto"}
         if system_prompt.strip():
             body["instructions"] = system_prompt.strip()
         if max_output_tokens > 0:
@@ -135,7 +141,6 @@ class ChatProbeRunner:
             "Accept": "text/event-stream",
             "Accept-Encoding": "identity",
             "X-Request-ID": request_id,
-            "X-Thread-ID": request_id,
         }
         try:
             async with self.session_factory() as client:
@@ -157,10 +162,14 @@ class ChatProbeRunner:
                         retry_after=response.headers.get("Retry-After"),
                         request_id=request_id,
                     )
-                async for chunk in response.aiter_content():
-                    self._consume_chunk(chunk, state, request_id)
-                    if state.terminal:
-                        break
+                try:
+                    async for chunk in response.aiter_content():
+                        self._consume_chunk(chunk, state, request_id)
+                        if state.terminal:
+                            break
+                        await asyncio.sleep(0)
+                finally:
+                    await abort_curl_stream(response)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

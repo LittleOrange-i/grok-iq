@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-from curl_cffi.const import CurlHttpVersion, CurlOpt
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from app.core.config import Settings
 from app.integrations.grok2api.client import IntegrationError
+from app.integrations.grok2api.http_session import open_curl_session
 from app.persistence.chat_provider_repository import ChatProviderRepository
 
 
@@ -131,13 +131,9 @@ class ChatService:
         candidates = self._completion_urls(provider["base_url"])
         last_error: ChatUpstreamError | None = None
         for upstream_url in candidates:
-            session = CurlAsyncSession(
+            session = open_curl_session(
                 impersonate=self.settings.grok2api_http_impersonate,
-                curl_options={
-                    CurlOpt.ACCEPT_ENCODING: b"identity",
-                    CurlOpt.BUFFERSIZE: 1024,
-                    CurlOpt.HTTP_VERSION: CurlHttpVersion.V1_1,
-                },
+                base_url=upstream_url,
             )
             upstream_body = self._prepare_completion_body(body, upstream_url)
             try:
@@ -318,6 +314,10 @@ class ChatService:
             payload.pop("max_tokens", None)
             payload.pop("max_completion_tokens", None)
         payload["stream"] = True
+        if "store" not in payload:
+            payload["store"] = False
+        if "reasoning" not in payload:
+            payload["reasoning"] = {"summary": "auto"}
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     @staticmethod
