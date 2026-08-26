@@ -221,7 +221,7 @@ const requestAuditAutoDisableHelp = (
 )
 
 const requestAuditRiskEvidenceHelp =
-  '风险徽章表示当前窗口命中了哪类规则。处置徽章说明是否已自动停用或降优先级。高风险本身不会停用账号。'
+  '表格里只看当前判定和处置结果。思考 0、Media Input 用短标签表示命中规则；完整原因、次数和处置详情点「证据」查看。高风险本身不会停用账号。'
 
 const requestAuditRecordRiskHelp =
   '单条请求的风险等级。连续命中停用规则才会进入自动停用；TPS-only 只降低优先级。'
@@ -587,6 +587,154 @@ function Tps({ value }: { value: number | null | undefined }) {
     <span className='font-mono tabular-nums'>
       {value == null ? '—' : `${formatNumber(value)} Token/s`}
     </span>
+  )
+}
+
+
+function accountHasRiskEvidence(account: RequestAuditAccountRisk) {
+  return (
+    account.riskLevel !== 'normal' ||
+    account.riskReasons.length > 0 ||
+    account.reasoningZeroCount > 0 ||
+    account.mediaInputCount > 0 ||
+    account.preDisableCheck != null ||
+    account.egressRecommendation?.type === 'change_egress'
+  )
+}
+
+function AccountRiskEvidenceCell({
+  account,
+  thresholds,
+}: {
+  account: RequestAuditAccountRisk
+  thresholds: RequestAuditThresholds
+}) {
+  const action = account.preDisableCheck?.actionStatus || ''
+  const disabled =
+    account.quarantined ||
+    action === 'disabled' ||
+    action === 'already_disabled'
+  const deprioritized =
+    action === 'deprioritized' ||
+    action === 'already_deprioritized' ||
+    account.egressRecommendation?.type === 'change_egress'
+  const reasoningTriggered =
+    account.reasoningZeroStreak >= account.reasoningZeroMinCount &&
+    account.reasoningZeroMinCount > 0
+
+  return (
+    <div className='min-w-44 space-y-1.5'>
+      <div className='flex flex-wrap items-center gap-1.5'>
+        <RiskBadge value={account.riskLevel} thresholds={thresholds} />
+        {disabled ? (
+          account.preDisableCheck ? (
+            <PreDisableCheckBadge check={account.preDisableCheck} compact />
+          ) : (
+            <Badge variant='destructive' className='h-5 px-1.5 text-[10px]'>
+              已隔离
+            </Badge>
+          )
+        ) : deprioritized ? (
+          <Badge
+            variant='warning'
+            className='h-5 gap-1 px-1.5 text-[10px]'
+            title={account.egressRecommendation?.reason}
+          >
+            <Network className='size-3' />
+            换出口
+          </Badge>
+        ) : null}
+        {accountHasRiskEvidence(account) ? (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                className='h-5 px-1.5 text-[10px] text-muted-foreground'
+              >
+                证据
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align='start' className='w-80 space-y-3 p-3'>
+              <div>
+                <div className='text-xs font-medium'>风险证据</div>
+                <div className='mt-1 text-[11px] text-muted-foreground'>
+                  {account.riskLevel === 'normal'
+                    ? '当前窗口未超过处置阈值'
+                    : `观察 ${account.watchCount} 次 · 高风险 ${account.highRiskCount} 次`}
+                </div>
+              </div>
+              {account.riskReasons.length > 0 ? (
+                <ul className='space-y-1 text-[11px] leading-5 text-muted-foreground'>
+                  {account.riskReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className='text-[11px] text-muted-foreground'>暂无规则说明</p>
+              )}
+              {(account.reasoningZeroCount > 0 ||
+                account.mediaInputCount > 0) && (
+                <div className='flex flex-wrap gap-1'>
+                  {account.reasoningZeroCount > 0 && (
+                    <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
+                      {reasoningTriggered
+                        ? `思考 0 连续 ${account.reasoningZeroStreak}/${account.reasoningZeroMinCount}`
+                        : `思考 0 观察 ×${account.reasoningZeroCount}`}
+                    </Badge>
+                  )}
+                  {account.mediaInputCount > 0 && (
+                    <Badge variant='info' className='h-5 px-1.5 text-[10px]'>
+                      Media Input {account.mediaInputImages} 张 /{' '}
+                      {account.mediaInputCount} 次
+                    </Badge>
+                  )}
+                </div>
+              )}
+              {account.preDisableCheck ? (
+                <div className='space-y-1 text-[11px]'>
+                  <div className='flex items-center gap-1.5'>
+                    <span className='text-muted-foreground'>处置</span>
+                    <PreDisableCheckBadge
+                      check={account.preDisableCheck}
+                      compact
+                    />
+                  </div>
+                  {account.preDisableCheck.appliedPriority != null && (
+                    <div className='font-mono text-muted-foreground'>
+                      优先级 {account.preDisableCheck.previousPriority ?? '未知'}{' '}
+                      → {account.preDisableCheck.appliedPriority}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+              {account.egressRecommendation?.type === 'change_egress' && (
+                <p className='text-[11px] leading-5 text-amber-700 dark:text-amber-300'>
+                  {account.egressRecommendation.reason}
+                </p>
+              )}
+            </PopoverContent>
+          </Popover>
+        ) : null}
+      </div>
+      {(account.reasoningZeroCount > 0 || account.mediaInputCount > 0) && (
+        <div className='flex flex-wrap gap-1'>
+          {account.reasoningZeroCount > 0 && (
+            <Badge variant='outline' className='h-5 px-1.5 text-[10px]'>
+              {reasoningTriggered
+                ? `思考 0 ${account.reasoningZeroStreak}/${account.reasoningZeroMinCount}`
+                : `思考 0 ×${account.reasoningZeroCount}`}
+            </Badge>
+          )}
+          {account.mediaInputCount > 0 && (
+            <Badge variant='outline' className='h-5 px-1.5 text-[10px]'>
+              Media ×{account.mediaInputImages || account.mediaInputCount}
+            </Badge>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2517,7 +2665,7 @@ export function RequestAuditsPage() {
                 <TabsContent value='accounts' className='mt-0'>
                   <div className='overflow-x-auto'>
                     <Table
-                      className='min-w-[1420px] text-xs leading-4 [&_td]:py-1.5 [&_th]:h-9'
+                      className='min-w-[1180px] text-xs leading-4 [&_td]:py-1.5 [&_th]:h-9'
                       rememberRowKey='request-audit-accounts'
                     >
                       <TableHeader>
@@ -2554,18 +2702,17 @@ export function RequestAuditsPage() {
                           <TableHead>
                             <span
                               className='inline-flex items-center gap-1'
-                              title='P95（95% 分位）：窗口内 95% 请求的 TPS 不高于该值，剩余 5% 请求更快。'
+                              title='峰值用于判断风险；P95 表示窗口内 95% 请求的 TPS 不高于该值。'
                             >
-                              平均 / P95
+                              TPS
                               <Info className='size-3.5 text-muted-foreground' />
                             </span>
                           </TableHead>
-                          <TableHead>峰值 TPS</TableHead>
                           <TableHead>
                             <span className='inline-flex items-center gap-1'>
-                              风险证据
+                              风险
                               <InfoTooltip
-                                label='风险证据'
+                                label='风险'
                                 content={requestAuditRiskEvidenceHelp}
                                 contentClassName='max-w-80'
                               />
@@ -4476,77 +4623,22 @@ function AccountRiskRow({
         </button>
       </TableCell>
       <TableCell className='align-middle'>
+        <div className='font-medium'>
+          <Tps value={account.maxTps} />
+        </div>
         <div
-          className='text-[11px]'
+          className='text-[10px] text-muted-foreground'
           title='P95（95% 分位）：窗口内 95% 请求的 TPS 不高于该值，剩余 5% 请求更快。'
         >
-          <Tps value={account.averageTps} />
+          均 <Tps value={account.averageTps} /> · P95{' '}
+          <Tps value={account.p95Tps} />
         </div>
-        <div className='text-[10px] text-muted-foreground'>
-          P95 <Tps value={account.p95Tps} />
-        </div>
-      </TableCell>
-      <TableCell className='align-middle'>
-        <Tps value={account.maxTps} />
       </TableCell>
       <TableCell className='align-middle !whitespace-normal'>
-        <div className='flex max-w-64 flex-wrap items-center gap-1.5'>
-          <RiskBadge value={account.riskLevel} thresholds={thresholds} />
-          {account.reasoningZeroCount > 0 && (
-            <Badge variant='warning' className='h-5 px-1.5 text-[10px]'>
-              {account.reasoningZeroStreak >= account.reasoningZeroMinCount &&
-              account.reasoningZeroMinCount > 0
-                ? `思考 0 连续 ${account.reasoningZeroStreak}/${account.reasoningZeroMinCount}`
-                : `思考 0 观察 ×${account.reasoningZeroCount}`}
-            </Badge>
-          )}
-          {account.mediaInputCount > 0 && (
-            <Badge
-              variant='info'
-              className='h-5 gap-1 px-1.5 text-[10px]'
-              title={`Media Input ${account.mediaInputImages} 张`}
-            >
-              <ImageIcon className='size-3' />
-              Media Input ×{account.mediaInputImages}
-            </Badge>
-          )}
-          <PreDisableCheckBadge check={account.preDisableCheck} compact />
-          {account.egressRecommendation?.type === 'change_egress' && (
-            <Badge
-              variant='warning'
-              className='h-5 gap-1 px-1.5 text-[10px]'
-              title={account.egressRecommendation.reason}
-            >
-              <Network className='size-3' />
-              建议换出口
-            </Badge>
-          )}
-          <span className='text-[10px] break-words text-muted-foreground'>
-            {account.riskReasons[0] || '未超过阈值'}
-          </span>
-        </div>
-        {account.riskLevel !== 'normal' && (
-          <div className='text-[10px] break-words text-muted-foreground'>
-            观察 {account.watchCount} 次 · 高风险 {account.highRiskCount} 次
-          </div>
-        )}
-        {account.preDisableCheck?.status === 'flagged' &&
-          account.preDisableCheck.botFlag?.flagged && (
-            <div className='text-[10px] break-words text-destructive'>
-              bot source {account.preDisableCheck.botFlag.source ?? '未知'}
-              {account.preDisableCheck.botFlag.risk != null
-                ? ` · risk ${account.preDisableCheck.botFlag.risk}`
-                : ''}
-            </div>
-          )}
-        {account.egressRecommendation?.type === 'change_egress' && (
-          <div className='text-[10px] break-words text-amber-700 dark:text-amber-300'>
-            {account.egressRecommendation.reason}
-            {account.preDisableCheck?.appliedPriority != null
-              ? ` · 优先级 ${account.preDisableCheck.appliedPriority}`
-              : ''}
-          </div>
-        )}
+        <AccountRiskEvidenceCell
+          account={account}
+          thresholds={thresholds}
+        />
       </TableCell>
       <TableCell className='align-middle text-[11px] text-muted-foreground'>
         {formatDate(account.lastSeenAt)}
