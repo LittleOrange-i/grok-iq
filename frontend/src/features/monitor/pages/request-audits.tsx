@@ -186,7 +186,7 @@ const fallbackConfig: RequestAuditConfig = {
   tpsOnlyPriority: -1_000_000,
   tpsOnlyMinCount: 2,
   isolationEnabled: true,
-  ssoRecheckEnabled: true,
+  ssoRecheckEnabled: false,
   retentionDays: 90,
 }
 
@@ -202,11 +202,8 @@ const requestAuditPageHelp = (
     </p>
     <p>
       思考输出为 0 等停用规则达到次数后才会自动停用；TPS-only
-      只降低优先级并建议换出口。默认会先做停用前 SSO
-      复检，缺少 SSO、未配代理或复检失败时不会停用。
-    </p>
-    <p>
-      可在风险设置关闭「停用前 SSO 复检」，下次扫描会重试卡住的记录并按规则处置。探针「自动停用高风险账号」是另一条链路，不会处理请求审计高风险。
+      只降低优先级并建议换出口。请求审计按规则直接处置，不再做停用前
+      SSO 复检。探针「自动停用高风险账号」是另一条链路，不会处理请求审计高风险。
     </p>
   </div>
 )
@@ -217,19 +214,17 @@ const requestAuditAutoDisableHelp = (
       高风险账号进入自动停用前，要同时满足：规则动作为停用、达到次数，且「请求审计账号处置」已开启。
     </p>
     <p>
-      默认还会先用保存的 SSO 走配置代理复检。缺少 SSO
-      或复检失败时会停在待处置，不会自动停用；关闭「停用前 SSO
-      复检」后按规则直接停用或降优先级。
+      达到阈值后按规则直接停用或降低优先级，不再用 SSO
+      复检确认 bot 标记。TPS-only 只降优先级。这里的隔离按钮和自动隔离都是停用账号。
     </p>
-    <p>TPS-only 只降优先级。这里的隔离按钮和自动隔离都是停用账号。</p>
   </div>
 )
 
 const requestAuditRiskEvidenceHelp =
-  '风险徽章表示当前窗口命中了哪类规则。停用前 SSO 复检徽章说明是否已自动停用、降优先级，或卡在缺少 SSO / 复检失败。高风险本身不会停用账号。'
+  '风险徽章表示当前窗口命中了哪类规则。处置徽章说明是否已自动停用或降优先级。高风险本身不会停用账号。'
 
 const requestAuditRecordRiskHelp =
-  '单条请求的风险等级。连续命中停用规则才会进入自动停用；TPS-only 只降低优先级。停用前 SSO 复检开启时，缺少 SSO 的账号不会被自动停用。'
+  '单条请求的风险等级。连续命中停用规则才会进入自动停用；TPS-only 只降低优先级。'
 
 const windowOptions: Array<{
   value: RequestAuditWindowPreset
@@ -403,7 +398,7 @@ function UpstreamAccountState({
 }
 
 function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
-  if (!check) return '待代理复检'
+  if (!check) return '待处置'
   if (check.actionStatus === 'disabled') return '已自动停用'
   if (check.actionStatus === 'already_disabled') return '已记录停用'
   if (check.actionStatus === 'task_protected') return '任务保护'
@@ -413,8 +408,9 @@ function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
   if (check.actionStatus === 'deprioritize_disabled') return '优先级降级未开启'
   if (check.actionStatus === 'deprioritize_failed') return '降低优先级失败'
   if (check.actionStatus === 'action_failed') return '处置失败'
-  if (check.status === 'checking') return '代理复检中'
+  if (check.status === 'checking') return '处置中'
   if (check.status === 'flagged') return 'SSO 已标记'
+  if (check.status === 'session_confirmed') return 'SSO 会话有效'
   if (check.status === 'clean') return 'SSO 正常'
   if (check.status === 'missing_sso') return '缺少 SSO'
   if (check.status === 'proxy_required') return '未配置代理'
@@ -422,8 +418,8 @@ function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
   if (check.status === 'email_mismatch') return '邮箱不匹配'
   if (check.status === 'isolation_disabled') return '隔离开关关闭'
   if (check.status === 'check_failed') return '复检失败'
-  if (check.status === 'sso_skipped') return '已跳过 SSO 复检'
-  return '等待复检'
+  if (check.status === 'sso_skipped') return '已按规则处置'
+  return '等待处置'
 }
 
 function PreDisableCheckBadge({
@@ -440,7 +436,7 @@ function PreDisableCheckBadge({
       : check?.actionStatus === 'deprioritized' ||
           check?.actionStatus === 'already_deprioritized'
         ? 'warning'
-        : check?.status === 'clean'
+        : check?.status === 'clean' || check?.status === 'session_confirmed'
           ? check?.egressRecommendation?.type === 'change_egress'
             ? 'warning'
             : 'success'
@@ -456,7 +452,7 @@ function PreDisableCheckBadge({
       title={
         check
           ? `${label}${check.proxyUsed ? ' · 已通过 SSO 代理' : ''}${check.checkError ? ` · ${check.checkError}` : ''}`
-          : '高风险请求达到处置阈值后会自动停用。开启停用前 SSO 复检时，会先用保存的 SSO 通过配置代理确认。'
+          : '高风险请求达到处置阈值后会按规则自动停用或降低优先级。'
       }
     >
       {label}
@@ -3635,9 +3631,9 @@ function AuditRecordDetailDialog({
             <div className='rounded-lg border border-primary/25 bg-primary/5 p-3'>
               <div className='flex flex-wrap items-center gap-2'>
                 <div className='flex items-center gap-1.5 text-sm font-medium'>
-                  停用前 SSO 复检
+                  自动处置
                   <InfoTooltip
-                    label='停用前 SSO 复检'
+                    label='自动处置'
                     content={requestAuditAutoDisableHelp}
                     contentClassName='max-w-80'
                   />
@@ -3647,39 +3643,12 @@ function AuditRecordDetailDialog({
               {record.preDisableCheck ? (
                 <div className='mt-3 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4'>
                   <AuditDetailField
-                    label='代理执行'
-                    value={record.preDisableCheck.proxyUsed ? '是' : '否'}
-                  />
-                  <AuditDetailField
-                    label='SSO 判定'
-                    value={record.preDisableCheck.ssoVerdict || '—'}
-                  />
-                  <AuditDetailField
-                    label='bot source'
-                    value={String(record.preDisableCheck.botFlag.source ?? '—')}
-                    mono
-                  />
-                  <AuditDetailField
-                    label='bot risk'
-                    value={String(record.preDisableCheck.botFlag.risk ?? '—')}
-                    mono
-                  />
-                  <AuditDetailField
-                    label='policy / event'
-                    value={`${record.preDisableCheck.botFlag.policy || '—'} / ${record.preDisableCheck.botFlag.event || '—'}`}
-                  />
-                  <AuditDetailField
-                    label='HTTP / 耗时'
-                    value={`${record.preDisableCheck.statusCode || '—'} / ${record.preDisableCheck.responseMs || 0} ms`}
-                    mono
-                  />
-                  <AuditDetailField
-                    label='检测时间'
-                    value={formatDate(record.preDisableCheck.checkedAt)}
-                  />
-                  <AuditDetailField
                     label='最终动作'
                     value={record.preDisableCheck.actionStatus || '—'}
+                  />
+                  <AuditDetailField
+                    label='处置时间'
+                    value={formatDate(record.preDisableCheck.checkedAt)}
                   />
                   <AuditDetailField
                     label='优先级调整'
@@ -3690,11 +3659,30 @@ function AuditRecordDetailDialog({
                     }
                     mono
                   />
+                  {record.preDisableCheck.ssoVerdict &&
+                  record.preDisableCheck.ssoVerdict !== 'skipped' ? (
+                    <>
+                      <AuditDetailField
+                        label='历史 SSO 判定'
+                        value={record.preDisableCheck.ssoVerdict}
+                      />
+                      <AuditDetailField
+                        label='bot source'
+                        value={
+                          record.preDisableCheck.botFlag.found
+                            ? String(
+                                record.preDisableCheck.botFlag.source ?? '—'
+                              )
+                            : '未下发'
+                        }
+                        mono
+                      />
+                    </>
+                  ) : null}
                 </div>
               ) : (
                 <p className='mt-2 text-xs leading-5 text-muted-foreground'>
-                  该请求尚未产生处置记录；只有达到规则阈值的高风险请求才会进入停用流程。开启停用前
-                  SSO 复检时，会先用保存的 SSO 通过配置代理确认。
+                  该请求尚未产生处置记录；只有达到规则阈值的高风险请求才会进入停用或降优先级流程。
                 </p>
               )}
               {record.preDisableCheck?.botFlag.details && (

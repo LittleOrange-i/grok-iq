@@ -10,41 +10,110 @@ from app.core.config import Settings
 from app.services.register_integration import RegisterIntegrationService
 
 
+class FakeGrokClient:
+    def __init__(self) -> None:
+        self.priorities: dict[int, int] = {}
+
+    async def set_account_priority(self, account_id: int, priority: int) -> dict[str, Any]:
+        self.priorities[int(account_id)] = int(priority)
+        return {"id": int(account_id), "priority": int(priority)}
+
+
 class RegisterRepository:
     def __init__(self) -> None:
         self.completed: tuple[str, int, list[str]] | None = None
         self.retried: tuple[str, str, float] | None = None
         self.failed: tuple[str, str] | None = None
         self.bound: tuple[str, int] | None = None
+        self.events: dict[str, dict[str, Any]] = {}
 
     def bind_account(self, event_id: str, account_id: int) -> None:
         self.bound = (event_id, account_id)
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["resolved_account_id"] = account_id
+        event.setdefault("status", "processing")
 
     def complete(self, event_id: str, account_id: int, run_ids: list[str]) -> None:
         self.completed = (event_id, account_id, run_ids)
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["status"] = "completed"
+        event["resolved_account_id"] = account_id
+        event["run_ids"] = list(run_ids)
 
     def retry(self, event_id: str, error: str, delay_seconds: float) -> None:
         self.retried = (event_id, error, delay_seconds)
 
     def fail(self, event_id: str, error: str) -> None:
         self.failed = (event_id, error)
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["status"] = "failed"
+        event["last_error"] = error
+
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        event = self.events.get(event_id)
+        return dict(event) if event is not None else None
+
+    def list_unresolved_priority_holds(self) -> list[dict[str, Any]]:
+        return [
+            dict(event)
+            for event in self.events.values()
+            if event.get("priority_hold_status") in {"held", "restore_failed"}
+        ]
+
+    def mark_priority_hold(
+        self,
+        event_id: str,
+        *,
+        original_priority: int,
+        held_priority: int,
+    ) -> dict[str, Any]:
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        if event.get("priority_hold_status") in {"restored", "kept"}:
+            return dict(event)
+        if event.get("original_priority") is None:
+            event["original_priority"] = original_priority
+        event["held_priority"] = held_priority
+        event["priority_hold_status"] = "held"
+        event["priority_hold_error"] = ""
+        if self.bound is not None:
+            event["resolved_account_id"] = self.bound[1]
+        return dict(event)
+
+    def mark_priority_restored(self, event_id: str) -> None:
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["priority_hold_status"] = "restored"
+        event["priority_hold_error"] = ""
+
+    def mark_priority_restore_failed(self, event_id: str, error: str) -> None:
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["priority_hold_status"] = "restore_failed"
+        event["priority_hold_error"] = error
+
+    def mark_priority_kept(self, event_id: str, error: str = "") -> None:
+        event = self.events.setdefault(event_id, {"event_id": event_id})
+        event["priority_hold_status"] = "kept"
+        event["priority_hold_error"] = error
 
 
 class RegisterAccountService:
     def __init__(self) -> None:
         self.auto_bound = False
+        self.client = FakeGrokClient()
+        self.account_priority = 8
 
     async def find_registered_account(
         self,
         account_id: int | None,
         email: str,
     ) -> dict[str, Any]:
+        resolved_id = int(account_id or 17)
         return {
-            "id": str(account_id or 17),
+            "id": str(resolved_id),
             "email": email,
             "enabled": True,
             "authStatus": "active",
             "egressNodeId": None,
+            "priority": self.client.priorities.get(resolved_id, self.account_priority),
         }
 
     async def ensure_account_egress(self, account: dict[str, Any]) -> dict[str, Any]:
@@ -56,10 +125,23 @@ class RegisterAccountService:
         }
 
 
+class FakeProbeRepository:
+    def __init__(self) -> None:
+        self.runs: list[dict[str, Any]] = []
+
+    def list_runs_for_source_event(self, source_event_id: str) -> list[dict[str, Any]]:
+        return [
+            dict(run)
+            for run in self.runs
+            if str(run.get("source_event_id") or "") == source_event_id
+        ]
+
+
 class RegisterProbeManager:
     def __init__(self) -> None:
         self.account: dict[str, Any] | None = None
         self.values: dict[str, Any] | None = None
+        self.repository = FakeProbeRepository()
 
     async def enqueue_register_event(self, **values: Any) -> dict[str, Any]:
         self.values = values
@@ -267,3 +349,236 @@ async def test_webhook_defers_probe_until_existing_account_cooldown_ends():
     assert "冷却" in repository.retried[1]
     assert 39 <= repository.retried[2] <= 40
     assert probes.values is None
+
+
+def _service(
+    *,
+    settings: Settings | None = None,
+    repository: RegisterRepository | None = None,
+    account_service: RegisterAccountService | None = None,
+    probes: RegisterProbeManager | None = None,
+) -> tuple[RegisterIntegrationService, RegisterRepository, RegisterAccountService, RegisterProbeManager]:
+    repository = repository or RegisterRepository()
+    account_service = account_service or RegisterAccountService()
+    probes = probes or RegisterProbeManager()
+    service = RegisterIntegrationService(
+        settings=settings or Settings(initial_probe_on_register=True),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=UnusedAccountRepository(),  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+    return service, repository, account_service, probes
+
+
+@pytest.mark.asyncio
+async def test_webhook_holds_priority_before_stabilization_wait():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=15,
+            register_priority_hold_enabled=True,
+            register_priority_hold=-1000,
+        )
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-hold-wait",
+            "attempts": 1,
+            "created_at": utc_now(),
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+
+    assert repository.retried is not None
+    assert probes.values is None
+    assert account_service.client.priorities[17] == -1000
+    held = repository.get_event("event-hold-wait")
+    assert held is not None
+    assert held["priority_hold_status"] == "held"
+    assert held["original_priority"] == 8
+    assert held["held_priority"] == -1000
+
+
+@pytest.mark.asyncio
+async def test_webhook_skips_priority_hold_when_disabled():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+            register_priority_hold_enabled=False,
+        )
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-no-hold",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+
+    assert repository.completed == ("event-no-hold", 17, ["run-1"])
+    assert account_service.client.priorities == {}
+    assert repository.get_event("event-no-hold") is None or repository.get_event(
+        "event-no-hold"
+    ).get("priority_hold_status") not in {"held", "restore_failed"}
+
+
+@pytest.mark.asyncio
+async def test_priority_hold_restores_after_register_probes_pass():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+            register_priority_hold=-500,
+        )
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-restore",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+    assert account_service.client.priorities[17] == -500
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-restore",
+            "status": "completed",
+            "summary": {"anomaly_count": 0},
+        }
+    ]
+
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-restore", "id": "run-1"}
+    )
+
+    assert account_service.client.priorities[17] == 8
+    restored = repository.get_event("event-restore")
+    assert restored is not None
+    assert restored["priority_hold_status"] == "restored"
+
+
+@pytest.mark.asyncio
+async def test_priority_hold_keeps_low_priority_when_probe_fails():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+            register_priority_hold=-500,
+        )
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-keep",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-keep",
+            "status": "failed",
+            "summary": {"anomaly_count": 1},
+        }
+    ]
+
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-keep", "id": "run-1"}
+    )
+
+    assert account_service.client.priorities[17] == -500
+    kept = repository.get_event("event-keep")
+    assert kept is not None
+    assert kept["priority_hold_status"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_priority_hold_scan_retries_failed_restore():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+            register_priority_hold=-500,
+        )
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-scan",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-scan",
+            "status": "completed",
+            "summary": {"anomaly_count": 0},
+        }
+    ]
+
+    original_set_priority = account_service.client.set_account_priority
+    restore_attempts = {"failed": False}
+
+    async def fail_once(account_id: int, priority: int) -> dict[str, Any]:
+        if not restore_attempts["failed"]:
+            restore_attempts["failed"] = True
+            raise RuntimeError("grok2api unavailable")
+        return await original_set_priority(account_id, priority)
+
+    account_service.client.set_account_priority = fail_once  # type: ignore[method-assign]
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-scan", "id": "run-1"}
+    )
+    failed = repository.get_event("event-scan")
+    assert failed is not None
+    assert failed["priority_hold_status"] == "restore_failed"
+    assert account_service.client.priorities[17] == -500
+
+    await service.scan_priority_holds()
+    restored = repository.get_event("event-scan")
+    assert restored is not None
+    assert restored["priority_hold_status"] == "restored"
+    assert account_service.client.priorities[17] == 8
+
+
+@pytest.mark.asyncio
+async def test_priority_hold_does_not_overwrite_original_on_retry():
+    service, repository, account_service, _probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=15,
+            register_priority_hold=-1000,
+        )
+    )
+    payload = {
+        "event_id": "event-retry-hold",
+        "attempts": 1,
+        "created_at": utc_now(),
+        "grok2api_account_id": 17,
+        "email": "new@example.test",
+        "bot_risk": False,
+    }
+    await service._process_claimed(payload)
+    assert account_service.client.priorities[17] == -1000
+    await service._process_claimed({**payload, "attempts": 2})
+    held = repository.get_event("event-retry-hold")
+    assert held is not None
+    assert held["original_priority"] == 8
+    assert held["priority_hold_status"] == "held"
+    assert account_service.client.priorities[17] == -1000

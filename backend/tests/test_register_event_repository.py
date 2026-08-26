@@ -116,3 +116,53 @@ def test_latest_sso_uses_receipt_time_and_unresolved_upstream_account_id(
     }
     assert repository.account_ids_with_sso([17, 29]) == {17}
     database.dispose()
+
+
+
+def test_register_event_priority_hold_roundtrip(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    repository = RegisterEventRepository(database)
+    repository.receive(
+        {
+            "event_id": "registration:hold:grok2api-imported",
+            "email": "hold@example.test",
+            "grok2api_account_id": 17,
+        }
+    )
+
+    held = repository.mark_priority_hold(
+        "registration:hold:grok2api-imported",
+        original_priority=8,
+        held_priority=-1000,
+    )
+    assert held is not None
+    assert held["priority_hold_status"] == "held"
+    assert held["original_priority"] == 8
+    retried = repository.mark_priority_hold(
+        "registration:hold:grok2api-imported",
+        original_priority=-1000,
+        held_priority=-1000,
+    )
+    assert retried is not None
+    assert retried["original_priority"] == 8
+    assert [item["event_id"] for item in repository.list_unresolved_priority_holds()] == [
+        "registration:hold:grok2api-imported"
+    ]
+
+    repository.mark_priority_restore_failed(
+        "registration:hold:grok2api-imported",
+        "grok2api unavailable",
+    )
+    failed = repository.get_event("registration:hold:grok2api-imported")
+    assert failed is not None
+    assert failed["priority_hold_status"] == "restore_failed"
+    assert failed["priority_hold_error"] == "grok2api unavailable"
+
+    repository.mark_priority_restored("registration:hold:grok2api-imported")
+    restored = repository.get_event("registration:hold:grok2api-imported")
+    assert restored is not None
+    assert restored["priority_hold_status"] == "restored"
+    assert restored["priority_hold_error"] == ""
+    assert repository.list_unresolved_priority_holds() == []
+    database.dispose()

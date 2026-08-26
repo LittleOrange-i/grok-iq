@@ -526,3 +526,15 @@ class ProbeRunExecutor:
                         run["id"],
                         account_id,
                     )
+        if str(run.get("trigger") or "") == "register":
+            restore = getattr(manager, "maybe_restore_register_priority_hold", None)
+            if restore is not None:
+                try:
+                    await restore(run)
+                except Exception:
+                    logger.exception(
+                        "register priority hold restore failed worker=%s run=%s account=%s",
+                        runtime.worker_id,
+                        run_id,
+                        account_id,
+                    )

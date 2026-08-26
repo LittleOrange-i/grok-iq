@@ -5,7 +5,6 @@ import {
   Layers3,
   MessageSquareText,
   Power,
-  RefreshCw,
   ServerCog,
   ShieldCheck,
   Webhook,
@@ -22,7 +21,6 @@ import { copyText } from '@/lib/clipboard'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
   TooltipContent,
@@ -34,9 +32,11 @@ import {
   Field,
   FixedProbeSetting,
   IntegrationFlow,
-  IntegrationPanel,
   NumberField,
   SecretField,
+  SettingList,
+  SettingListItem,
+  SettingsCard,
   WebhookContractDialog,
 } from './settings-components'
 import {
@@ -66,48 +66,43 @@ export function SettingsIntegrationTab({
   set: SettingsSetter
   toggleSecretClear: (name: SecretSettingName) => void
 }) {
+  const automaticProbe = form.initialProbeOnRegister
+  const priorityHold = automaticProbe && form.registerPriorityHoldEnabled
+  const statusLabel = !registerTokenReady
+    ? '等待配置令牌'
+    : automaticProbe
+      ? '自动探针已开启'
+      : '仅接收事件'
+  const statusVariant = !registerTokenReady
+    ? 'warning'
+    : automaticProbe
+      ? 'success'
+      : 'secondary'
+
   return (
     <div className='space-y-4'>
-      <section className='overflow-hidden rounded-xl border bg-card shadow-sm'>
-        <div className='grid gap-5 border-b bg-muted/15 p-5 md:p-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-center'>
-          <div className='flex min-w-0 items-start gap-4'>
-            <div className='flex size-11 shrink-0 items-center justify-center rounded-xl border bg-background text-primary shadow-xs'>
-              <Webhook className='size-5' />
-            </div>
-            <div className='min-w-0'>
-              <div className='flex flex-wrap items-center gap-2'>
-                <h2 className='text-base font-semibold'>
-                  grok-register 自动联动
-                </h2>
-                <Badge
-                  variant={
-                    !registerTokenReady
-                      ? 'warning'
-                      : form.initialProbeOnRegister
-                        ? 'success'
-                        : 'secondary'
-                  }
-                >
-                  <Power />
-                  {!registerTokenReady
-                    ? '等待配置令牌'
-                    : form.initialProbeOnRegister
-                      ? '自动探针已开启'
-                      : '仅接收事件'}
-                </Badge>
-              </div>
-              <p className='mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground'>
-                注册完成后自动投递账号导入事件，由监控端完成持久接收、账号匹配与首次探针调度。
-              </p>
-            </div>
+      <SettingsCard
+        icon={Webhook}
+        title='grok-register 自动联动'
+        description='注册完成后自动投递账号导入事件，由监控端完成持久接收、账号匹配与首次探针调度。'
+      >
+        <div className='space-y-4'>
+          <div className='flex flex-wrap items-center gap-2'>
+            <Badge variant={statusVariant}>
+              <Power />
+              {statusLabel}
+            </Badge>
+            {priorityHold ? (
+              <Badge variant='info'>导入后先降权</Badge>
+            ) : null}
           </div>
 
-          <div className='grid gap-2'>
+          <div className='grid gap-2 md:grid-cols-2'>
             <a
               href={GROK_REGISTER_REPOSITORY_URL}
               target='_blank'
               rel='noopener noreferrer'
-              className='group flex min-w-0 items-center gap-3 rounded-xl border bg-background p-3.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+              className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
               aria-label='在 GitHub 新标签页打开 grok-register 项目'
             >
               <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background'>
@@ -121,72 +116,79 @@ export function SettingsIntegrationTab({
               </div>
               <ExternalLink className='size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground' />
             </a>
-
             <WebhookContractDialog />
           </div>
+
+          <IntegrationFlow
+            tokenConfigured={registerTokenReady}
+            automaticProbe={automaticProbe}
+            priorityHold={form.registerPriorityHoldEnabled}
+          />
         </div>
+      </SettingsCard>
 
-        <IntegrationFlow
-          tokenConfigured={registerTokenReady}
-          automaticProbe={form.initialProbeOnRegister}
-        />
-
-        <div className='space-y-4 p-4 md:p-5'>
-          <IntegrationPanel
-            icon={KeyRound}
-            title='接入配置'
-            description='令牌与 Webhook 地址用于建立两个项目之间的安全连接。'
+      <SettingsCard
+        icon={KeyRound}
+        title='接入配置'
+        description='令牌与 Webhook 地址用于建立两个项目之间的安全连接。'
+      >
+        <div className='grid gap-4 lg:grid-cols-2'>
+          <SecretField
+            name='grokRegisterWebhookToken'
+            value={form.grokRegisterWebhookToken}
+            settings={settings}
+            clearing={clearSecrets.includes('grokRegisterWebhookToken')}
+            onChange={(value) => set('grokRegisterWebhookToken', value)}
+            onToggleClear={() => toggleSecretClear('grokRegisterWebhookToken')}
+          />
+          <Field
+            label='Webhook 接收地址'
+            hint='复制完整地址到注册机；请求头：x-grokiq-token'
           >
-            <div className='grid gap-4 lg:grid-cols-2'>
-              <SecretField
-                name='grokRegisterWebhookToken'
-                value={form.grokRegisterWebhookToken}
-                settings={settings}
-                clearing={clearSecrets.includes('grokRegisterWebhookToken')}
-                onChange={(value) => set('grokRegisterWebhookToken', value)}
-                onToggleClear={() =>
-                  toggleSecretClear('grokRegisterWebhookToken')
-                }
-              />
-              <Field
-                label='Webhook 接收地址'
-                hint='复制完整地址到注册机；请求头：x-grokiq-token'
+            <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
+              <code
+                className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
+                title={webhookUrl}
               >
-                <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
-                  <code
-                    className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
-                    title={webhookUrl}
+                {webhookUrl}
+              </code>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type='button'
+                    size='icon'
+                    variant='ghost'
+                    className='size-8 shrink-0 rounded-sm'
+                    onClick={() =>
+                      void copyText(webhookUrl)
+                        .then(() => toast.success('已复制完整 Webhook 地址'))
+                        .catch((error) => toast.error(getErrorMessage(error)))
+                    }
+                    aria-label='复制完整 Webhook 地址'
                   >
-                    {webhookUrl}
-                  </code>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type='button'
-                        size='icon'
-                        variant='ghost'
-                        className='size-8 shrink-0 rounded-sm'
-                        onClick={() =>
-                          void copyText(webhookUrl)
-                            .then(() =>
-                              toast.success('已复制完整 Webhook 地址')
-                            )
-                            .catch((error) =>
-                              toast.error(getErrorMessage(error))
-                            )
-                        }
-                        aria-label='复制完整 Webhook 地址'
-                      >
-                        <Copy />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>复制完整地址</TooltipContent>
-                  </Tooltip>
-                </div>
-              </Field>
+                    <Copy />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>复制完整地址</TooltipContent>
+              </Tooltip>
             </div>
+          </Field>
+        </div>
+      </SettingsCard>
 
-            <div className='mt-4 max-w-xs'>
+      <SettingsCard
+        icon={Workflow}
+        title='导入后处理'
+        description='匹配到 grok2api 账号后，按顺序执行降权、稳定等待、首次探针和通过后恢复。'
+      >
+        <SettingList>
+          <SettingListItem
+            label='注册后创建探针'
+            description='匹配账号后按稳定窗口等待，再补齐出口并加入持久队列。关闭后只接收导入事件。'
+            checked={form.initialProbeOnRegister}
+            onCheckedChange={(value) => set('initialProbeOnRegister', value)}
+          >
+            <div className='max-w-xs'>
               <NumberField
                 label='新账号稳定等待'
                 hint='Webhook 接收后延迟创建首次探针，用于等待模型权限传播；设为 0 可关闭。账号实际冷却时间仍会优先。'
@@ -195,183 +197,103 @@ export function SettingsIntegrationTab({
                 max={300}
                 step={1}
                 suffix='秒'
+                disabled={!automaticProbe}
                 onChange={(value) =>
                   set('registerProbeStabilizationSeconds', value)
                 }
               />
             </div>
-
-            <div
-              className={cn(
-                'mt-4 flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between',
-                form.initialProbeOnRegister
-                  ? 'border-primary/25 bg-primary/[0.035]'
-                  : 'bg-muted/20'
-              )}
-            >
-              <div className='flex min-w-0 items-start gap-3'>
-                <div
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                    form.initialProbeOnRegister
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  <Workflow className='size-4' />
-                </div>
-                <div className='min-w-0'>
-                  <div className='text-sm font-medium'>注册后创建探针</div>
-                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                    匹配账号后按上方稳定窗口等待，再补齐稳定出口并加入持久队列。
-                  </p>
-                  <div className='mt-2 flex items-center gap-2 text-xs text-muted-foreground'>
-                    <span
-                      className={cn(
-                        'size-1.5 rounded-full',
-                        form.initialProbeOnRegister
-                          ? 'bg-emerald-500'
-                          : 'bg-muted-foreground/50'
-                      )}
-                    />
-                    {form.initialProbeOnRegister
-                      ? '自动处理新导入账号'
-                      : '仅持久接收导入事件'}
-                  </div>
-                </div>
-              </div>
-              <Switch
-                checked={form.initialProbeOnRegister}
-                onCheckedChange={(value) =>
-                  set('initialProbeOnRegister', value)
-                }
-                aria-label='注册后创建探针'
-              />
-            </div>
-
-            <div
-              className={cn(
-                'mt-4 flex flex-col gap-4 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between',
-                form.initialProbeOnRegister &&
-                  form.registerProbeSwitchOnDegradation
-                  ? 'border-primary/25 bg-primary/[0.035]'
-                  : 'bg-muted/20'
-              )}
-            >
-              <div className='flex min-w-0 items-start gap-3'>
-                <div
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                    form.initialProbeOnRegister &&
-                      form.registerProbeSwitchOnDegradation
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  <RefreshCw className='size-4' />
-                </div>
-                <div className='min-w-0'>
-                  <div className='text-sm font-medium'>降智后换出口再测</div>
-                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                    注册探针出现降智信号后，自动改绑到另一个健康出口并再创建一个任务；已用过的出口不会重复选择。
-                    有可用替代出口时，自动隔离会延后到续测链结束。
-                  </p>
-                  <div className='mt-2 flex items-center gap-2 text-xs text-muted-foreground'>
-                    <span
-                      className={cn(
-                        'size-1.5 rounded-full',
-                        form.initialProbeOnRegister &&
-                          form.registerProbeSwitchOnDegradation
-                          ? 'bg-emerald-500'
-                          : 'bg-muted-foreground/50'
-                      )}
-                    />
-                    {!form.initialProbeOnRegister
-                      ? '需先开启注册后探针'
-                      : form.registerProbeSwitchOnDegradation
-                        ? '降智后自动换出口续测'
-                        : '仅执行首次注册探针'}
-                  </div>
-                </div>
-              </div>
-              <Switch
-                checked={form.registerProbeSwitchOnDegradation}
-                disabled={!form.initialProbeOnRegister}
-                onCheckedChange={(value) =>
-                  set('registerProbeSwitchOnDegradation', value)
-                }
-                aria-label='降智后换出口再测'
-              />
-            </div>
-          </IntegrationPanel>
-
-          <IntegrationPanel
-            icon={Layers3}
-            title='首次探针策略'
-            description='选择新账号导入后使用的探针方案，其他执行参数保持固定。'
+          </SettingListItem>
+          <SettingListItem
+            label='注册后降低 grok2api 优先级'
+            description='匹配到新账号后立即降低上游路由优先级，避免未验证账号进入生产流量。全部注册探针通过后恢复原值；恢复失败由联动后台定时重试，探针未通过则保持低优先级。'
+            checked={form.registerPriorityHoldEnabled}
+            disabled={!automaticProbe}
+            onCheckedChange={(value) =>
+              set('registerPriorityHoldEnabled', value)
+            }
           >
-            <Field label='探针方案' hint='可多选；每个方案分别生成一个持久任务'>
-              <ProfileMultiSelect
-                profiles={profiles}
-                value={form.registerProbeProfileIds}
-                onChange={(value) => set('registerProbeProfileIds', value)}
-                enabledOnly
-                disabled={profilesLoading}
-                invalid={
-                  form.initialProbeOnRegister &&
-                  !form.registerProbeProfileIds.length
-                }
-              />
-            </Field>
+            {priorityHold ? (
+              <div className='max-w-xs'>
+                <NumberField
+                  label='注册账号临时优先级'
+                  hint='需低于普通账号，默认 -1000000。探针通过后恢复为导入时记录的原值。'
+                  value={form.registerPriorityHold}
+                  min={-2000000000}
+                  max={0}
+                  step={1}
+                  onChange={(value) => set('registerPriorityHold', value)}
+                />
+              </div>
+            ) : null}
+          </SettingListItem>
+          <SettingListItem
+            label='降智后换出口再测'
+            description='注册探针出现降智信号后，自动改绑到另一个健康出口并再创建一个任务；已用过的出口不会重复选择。有可用替代出口时，自动隔离会延后到续测链结束。'
+            checked={form.registerProbeSwitchOnDegradation}
+            disabled={!automaticProbe}
+            onCheckedChange={(value) =>
+              set('registerProbeSwitchOnDegradation', value)
+            }
+          />
+        </SettingList>
+      </SettingsCard>
 
-            <div className='mt-4 grid divide-y overflow-hidden rounded-lg border sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
-              <FixedProbeSetting
-                icon={MessageSquareText}
-                label='执行方式'
-                value='完整对话'
-              />
-              <FixedProbeSetting
-                icon={Layers3}
-                label='执行轮数'
-                value={`每个方案 ${form.registerProbeRounds} 轮`}
-              />
-              <FixedProbeSetting
-                icon={ShieldCheck}
-                label='出口策略'
-                value='账号当前绑定出口'
-              />
-            </div>
-            <div className='mt-4 max-w-xs'>
-              <NumberField
-                label='每个方案执行轮数'
-                hint='每个选中的探针方案都会按此次数执行；默认 3 轮，可设置 1–20 轮。'
-                value={form.registerProbeRounds}
-                min={1}
-                max={20}
-                step={1}
-                suffix='轮'
-                onChange={(value) => set('registerProbeRounds', value)}
-              />
-            </div>
-          </IntegrationPanel>
-        </div>
-      </section>
-
-      <section className='rounded-xl border bg-card p-4 shadow-sm md:p-5'>
-        <div className='mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-          <div className='flex items-center gap-3'>
-            <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground'>
-              <ServerCog className='size-4' />
-            </div>
-            <div>
-              <h2 className='text-sm font-semibold'>启动级参数</h2>
-              <p className='mt-1 text-xs text-muted-foreground'>
-                由容器或环境变量提供，只读展示当前进程实际值。
-              </p>
-            </div>
+      <SettingsCard
+        icon={Layers3}
+        title='首次探针策略'
+        description='选择新账号导入后使用的探针方案；执行方式和出口策略保持固定。'
+        className={cn(!automaticProbe && 'opacity-70')}
+      >
+        <div className='space-y-4'>
+          <Field label='探针方案' hint='可多选；每个方案分别生成一个持久任务'>
+            <ProfileMultiSelect
+              profiles={profiles}
+              value={form.registerProbeProfileIds}
+              onChange={(value) => set('registerProbeProfileIds', value)}
+              enabledOnly
+              disabled={profilesLoading || !automaticProbe}
+              invalid={automaticProbe && !form.registerProbeProfileIds.length}
+            />
+          </Field>
+          <div className='max-w-xs'>
+            <NumberField
+              label='每个方案执行轮数'
+              hint='每个选中的探针方案都会按此次数执行；默认 3 轮，可设置 1–20 轮。'
+              value={form.registerProbeRounds}
+              min={1}
+              max={20}
+              step={1}
+              suffix='轮'
+              disabled={!automaticProbe}
+              onChange={(value) => set('registerProbeRounds', value)}
+            />
           </div>
-          <Badge variant='warning'>修改后重启生效</Badge>
+          <div className='grid gap-3 sm:grid-cols-3'>
+            <FixedProbeSetting
+              icon={MessageSquareText}
+              label='执行方式'
+              value='完整对话'
+            />
+            <FixedProbeSetting
+              icon={Layers3}
+              label='执行轮数'
+              value={`每个方案 ${form.registerProbeRounds} 轮`}
+            />
+            <FixedProbeSetting
+              icon={ShieldCheck}
+              label='出口策略'
+              value='账号当前绑定出口'
+            />
+          </div>
         </div>
+      </SettingsCard>
+
+      <SettingsCard
+        icon={ServerCog}
+        title='启动级参数'
+        description='由容器或环境变量提供，只读展示当前进程实际值；修改后需要重启。'
+      >
         <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
           <BootstrapSetting label='监听地址' value={settings.bootstrap.host} />
           <BootstrapSetting
@@ -389,7 +311,7 @@ export function SettingsIntegrationTab({
             mono
           />
         </div>
-      </section>
+      </SettingsCard>
     </div>
   )
 }

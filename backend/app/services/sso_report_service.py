@@ -141,8 +141,6 @@ class SsoReportService:
         if self.register_events is None:
             raise RuntimeError("账号 SSO 存储尚未配置")
         # Bulk/manual reports may still run directly when no proxy is set.
-        # The stricter proxy requirement belongs to the automatic pre-disable
-        # path, which calls ``check_account_once(require_proxy=True)``.
         raw_proxy = self._effective_proxy("")
         try:
             normalized_proxy = normalize_proxy(raw_proxy)
@@ -201,12 +199,7 @@ class SsoReportService:
         *,
         require_proxy: bool = True,
     ) -> dict[str, Any]:
-        """Inspect one stored account SSO without persisting any credential.
-
-        Audit-driven account actions use this synchronous result instead of a
-        background report so the disable decision is made from the exact proxy
-        check that immediately preceded it.
-        """
+        """Inspect one stored account SSO without persisting any credential."""
 
         normalized_account_id = int(account_id)
         base: dict[str, Any] = {

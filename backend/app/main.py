@@ -125,7 +125,6 @@ request_audit_service = RequestAuditService(
     repository=request_audit_repository,
     accounts=account_repository,
     probes=probe_repository,
-    sso_reports=sso_report_service,
     account_service=account_service,
 )
 scheduler_service = SchedulerService(
@@ -143,6 +142,7 @@ register_integration_service = RegisterIntegrationService(
     probes=probe_manager,
     notifications=wechat_notification_service,
 )
+probe_manager.register_integration = register_integration_service
 update_check_service = UpdateCheckService()
 
 

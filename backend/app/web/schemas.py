@@ -331,6 +331,15 @@ class RuntimeSettingsInput(BaseModel):
     register_probe_switch_on_degradation: bool | None = Field(
         default=None, alias="registerProbeSwitchOnDegradation"
     )
+    register_priority_hold_enabled: bool | None = Field(
+        default=None, alias="registerPriorityHoldEnabled"
+    )
+    register_priority_hold: int | None = Field(
+        default=None,
+        alias="registerPriorityHold",
+        ge=-2_000_000_000,
+        le=0,
+    )
     wechat_notification_enabled: bool | None = Field(
         default=None, alias="wechatNotificationEnabled"
     )
@@ -436,9 +445,6 @@ class RuntimeSettingsInput(BaseModel):
     )
     request_audit_isolation_enabled: bool | None = Field(
         default=None, alias="requestAuditIsolationEnabled"
-    )
-    request_audit_sso_recheck_enabled: bool | None = Field(
-        default=None, alias="requestAuditSsoRecheckEnabled"
     )
     request_audit_retention_days: int | None = Field(
         default=None,

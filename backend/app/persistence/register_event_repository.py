@@ -11,6 +11,16 @@ from app.core.clock import utc_now
 from .database import Database
 from .models import RegisterWebhookEvent, model_dict
 
+PRIORITY_HOLD_NONE = "none"
+PRIORITY_HOLD_HELD = "held"
+PRIORITY_HOLD_RESTORED = "restored"
+PRIORITY_HOLD_RESTORE_FAILED = "restore_failed"
+PRIORITY_HOLD_KEPT = "kept"
+UNRESOLVED_PRIORITY_HOLD_STATUSES = (
+    PRIORITY_HOLD_HELD,
+    PRIORITY_HOLD_RESTORE_FAILED,
+)
+
 
 class RegisterEventConflictError(ValueError):
     pass
@@ -315,3 +325,79 @@ class RegisterEventRepository:
             event.run_ids = list(run_ids)
             event.updated_at = now
             event.completed_at = now
+
+    def get_event(self, event_id: str) -> dict[str, Any] | None:
+        with self.database.session() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            return model_dict(event) if event is not None else None
+
+    def list_unresolved_priority_holds(self) -> list[dict[str, Any]]:
+        with self.database.session() as session:
+            events = session.scalars(
+                select(RegisterWebhookEvent)
+                .where(
+                    RegisterWebhookEvent.priority_hold_status.in_(
+                        UNRESOLVED_PRIORITY_HOLD_STATUSES
+                    )
+                )
+                .order_by(RegisterWebhookEvent.priority_held_at.asc())
+            ).all()
+            return [model_dict(event) for event in events]
+
+    def mark_priority_hold(
+        self,
+        event_id: str,
+        *,
+        original_priority: int,
+        held_priority: int,
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            if event is None:
+                return None
+            if event.priority_hold_status in {
+                PRIORITY_HOLD_RESTORED,
+                PRIORITY_HOLD_KEPT,
+            }:
+                return model_dict(event)
+            if event.original_priority is None:
+                event.original_priority = int(original_priority)
+            event.held_priority = int(held_priority)
+            event.priority_hold_status = PRIORITY_HOLD_HELD
+            event.priority_hold_error = ""
+            if event.priority_held_at is None:
+                event.priority_held_at = now
+            event.updated_at = now
+            return model_dict(event)
+
+    def mark_priority_restored(self, event_id: str) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            if event is None:
+                return
+            event.priority_hold_status = PRIORITY_HOLD_RESTORED
+            event.priority_hold_error = ""
+            event.priority_restored_at = now
+            event.updated_at = now
+
+    def mark_priority_restore_failed(self, event_id: str, error: str) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            if event is None:
+                return
+            event.priority_hold_status = PRIORITY_HOLD_RESTORE_FAILED
+            event.priority_hold_error = str(error)[:4000]
+            event.updated_at = now
+
+    def mark_priority_kept(self, event_id: str, error: str = "") -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            event = session.get(RegisterWebhookEvent, event_id)
+            if event is None:
+                return
+            event.priority_hold_status = PRIORITY_HOLD_KEPT
+            event.priority_hold_error = str(error)[:4000]
+            event.updated_at = now

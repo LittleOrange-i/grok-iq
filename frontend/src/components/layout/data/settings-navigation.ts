@@ -71,7 +71,7 @@ export const settingsSections = [
     value: 'integrations',
     href: '/settings/integrations',
     title: '联动与启动项',
-    description: '注册 Webhook、导入后探针和外部服务联动。',
+    description: '注册 Webhook、导入后降权、首次探针和启动参数。',
     icon: Workflow,
   },
   {

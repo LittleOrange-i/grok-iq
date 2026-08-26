@@ -1032,7 +1032,7 @@ class AccountService:
             return "unverified" if sso_available else "missing"
         status = str(verification.get("status") or "").strip()
         if status == "sso_skipped":
-            return "skipped"
+            return "unverified" if sso_available else "missing"
         if status == "missing_sso" or not sso_available:
             return "missing"
         if status in {
@@ -1051,7 +1051,7 @@ class AccountService:
             else False
         ):
             return "flagged"
-        if status == "clean":
+        if status in {"clean", "session_confirmed"}:
             return "clean"
         if status in {"pending", "checking"}:
             return "pending"

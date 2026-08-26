@@ -4,7 +4,6 @@ import type {
   ReasoningModelPolicy,
   ReasoningPolicyMode,
 } from '@/lib/api'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -14,9 +13,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
-import { InfoTooltip } from '@/components/info-tooltip'
-import { SettingsCard } from './settings-components'
+import {
+  SettingList,
+  SettingListItem,
+  SettingsCard,
+} from './settings-components'
 import {
   setRiskRuleEnabled,
   type SettingsForm,
@@ -82,18 +83,17 @@ export function SettingsReasoningPolicyCard({
       descriptionAsHint
     >
       <div className='space-y-4'>
-        <div className='grid overflow-hidden rounded-xl border md:grid-cols-3'>
-          <PolicySwitch
-            title='请求审计风险识别'
+        <SettingList>
+          <SettingListItem
+            label='请求审计风险识别'
             description='请求审计的风险总开关；关闭后仍保留采集和历史明细。'
             checked={form.requestAuditRiskEnabled}
             onCheckedChange={(value) => set('requestAuditRiskEnabled', value)}
           />
-          <PolicySwitch
-            title='思考输出为 0'
+          <SettingListItem
+            label='思考输出为 0'
             description='全局启用本策略表；关闭后探针与请求审计都不使用 reasoningTokens 参与判定。'
             checked={form.reasoningZeroRiskEnabled}
-            divided
             onCheckedChange={(value) => {
               set('reasoningZeroRiskEnabled', value)
               set(
@@ -102,12 +102,11 @@ export function SettingsReasoningPolicyCard({
               )
             }}
           />
-          <PolicySwitch
-            title='Media Input 观察规则'
+          <SettingListItem
+            label='Media Input 观察规则'
             description='识别含图片等媒体输入的请求，并允许按策略降为观察。'
             checked={form.mediaInputObserveEnabled}
             disabled={!form.requestAuditRiskEnabled}
-            divided
             onCheckedChange={(value) => {
               set('mediaInputObserveEnabled', value)
               set(
@@ -116,20 +115,14 @@ export function SettingsReasoningPolicyCard({
               )
             }}
           />
-        </div>
+        </SettingList>
 
-        <div className='flex flex-col gap-3 rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs leading-5 text-muted-foreground md:flex-row md:items-center md:justify-between'>
-          <p>
-            能力匹配优先读取 <code>modelUpstreamModel</code>；动态的{' '}
-            <code>gam-probe-*</code> 不会被当作稳定能力模型。审计中的{' '}
-            <code>Build/grok-*</code> 与探针方案中的 <code>grok-*</code>{' '}
-            会归一到同一策略；未知组合由 <code>* / *</code> 兜底为观察。
-          </p>
-          <div className='flex shrink-0 flex-wrap gap-2'>
-            <Badge variant='secondary'>最低输出 32 Token</Badge>
-            <Badge variant='secondary'>默认连续 2 次</Badge>
-          </div>
-        </div>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          能力匹配优先读取 <code>modelUpstreamModel</code>；动态的{' '}
+          <code>gam-probe-*</code> 不会被当作稳定能力模型。审计中的{' '}
+          <code>Build/grok-*</code> 与探针方案中的 <code>grok-*</code>{' '}
+          会归一到同一策略；未知组合由 <code>* / *</code> 兜底为观察。
+        </p>
 
         <div className='overflow-x-auto rounded-xl border'>
           <table className='w-full min-w-[980px] text-sm'>
@@ -323,38 +316,5 @@ export function SettingsReasoningPolicyCard({
         </div>
       </div>
     </SettingsCard>
-  )
-}
-
-function PolicySwitch({
-  title,
-  description,
-  checked,
-  disabled = false,
-  divided = false,
-  onCheckedChange,
-}: {
-  title: string
-  description: string
-  checked: boolean
-  disabled?: boolean
-  divided?: boolean
-  onCheckedChange: (value: boolean) => void
-}) {
-  return (
-    <div
-      className={`flex min-h-20 items-center justify-between gap-4 px-4 py-3 ${divided ? 'border-t md:border-t-0 md:border-l' : ''}`}
-    >
-      <div className='flex min-w-0 items-center gap-1.5 text-sm font-medium'>
-        <span>{title}</span>
-        <InfoTooltip label={title} content={description} />
-      </div>
-      <Switch
-        checked={checked}
-        disabled={disabled}
-        aria-label={title}
-        onCheckedChange={onCheckedChange}
-      />
-    </div>
   )
 }

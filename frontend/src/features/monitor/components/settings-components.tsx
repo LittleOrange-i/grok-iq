@@ -1,14 +1,10 @@
-import { Fragment, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   ArrowRight,
   Copy,
   Eye,
   EyeOff,
-  Inbox,
-  KeyRound,
   SquareCode,
-  Webhook,
-  Workflow,
   type Database,
   type MessageSquareText,
   type Network,
@@ -84,86 +80,83 @@ export function SettingsCard({
 export function IntegrationFlow({
   tokenConfigured,
   automaticProbe,
+  priorityHold,
 }: {
   tokenConfigured: boolean
   automaticProbe: boolean
+  priorityHold: boolean
 }) {
+  const holdActive = tokenConfigured && automaticProbe && priorityHold
   const steps = [
     {
-      icon: Webhook,
-      label: 'grok-register',
-      detail: '导入成功事件',
+      label: '注册完成',
+      detail: 'grok-register 投递导入事件',
       active: true,
     },
     {
-      icon: KeyRound,
-      label: '安全 Webhook',
-      detail: '令牌校验',
+      label: '安全接收',
+      detail: tokenConfigured ? '令牌校验并写入收件箱' : '等待配置联动令牌',
       active: tokenConfigured,
     },
     {
-      icon: Inbox,
-      label: '持久收件箱',
-      detail: '去重与重试',
-      active: tokenConfigured,
+      label: '降低优先级',
+      detail: holdActive
+        ? '先隔离未验证账号的生产流量'
+        : automaticProbe
+          ? '保持 grok2api 原优先级'
+          : '开启自动探针后生效',
+      active: holdActive,
     },
     {
-      icon: Workflow,
-      label: '探针队列',
-      detail: automaticProbe ? '自动创建任务' : '按需启用',
+      label: '首次探针',
+      detail: automaticProbe ? '稳定等待后自动入队' : '仅持久接收事件',
       active: tokenConfigured && automaticProbe,
+    },
+    {
+      label: '恢复优先级',
+      detail: holdActive
+        ? '探针通过后恢复原值，失败则保持低优先级'
+        : '无需调整上游优先级',
+      active: holdActive,
     },
   ]
 
   return (
-    <div className='border-b bg-muted/[0.08] px-4 py-4 md:px-5'>
+    <div className='rounded-xl bg-muted/20 p-3 md:p-4'>
       <div className='mb-3 flex items-center justify-between gap-3'>
-        <div className='text-[11px] font-semibold tracking-[0.16em] text-muted-foreground uppercase'>
-          事件链路
+        <div className='text-xs font-medium text-muted-foreground'>
+          导入链路
         </div>
         <span className='text-xs text-muted-foreground'>
           接收成功即与注册机解耦
         </span>
       </div>
-      <div className='flex items-stretch gap-2 overflow-x-auto pb-1'>
-        {steps.map((step, index) => {
-          const Icon = step.icon
-          return (
-            <Fragment key={step.label}>
-              <div
-                className={cn(
-                  'flex min-w-40 flex-1 items-center gap-3 rounded-lg border px-3 py-2.5',
-                  step.active
-                    ? 'border-primary/20 bg-background'
-                    : 'border-border/70 bg-muted/20'
-                )}
-              >
-                <div
-                  className={cn(
-                    'flex size-8 shrink-0 items-center justify-center rounded-lg',
-                    step.active
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-muted text-muted-foreground'
-                  )}
-                >
-                  <Icon className='size-4' />
-                </div>
-                <div className='min-w-0'>
-                  <div className='truncate text-xs font-medium'>
-                    {step.label}
-                  </div>
-                  <div className='mt-0.5 truncate text-[11px] text-muted-foreground'>
-                    {step.detail}
-                  </div>
-                </div>
-              </div>
-              {index < steps.length - 1 && (
-                <ArrowRight className='my-auto size-4 shrink-0 text-muted-foreground/50' />
+      <ol className='grid gap-2 sm:grid-cols-2 xl:grid-cols-5'>
+        {steps.map((step, index) => (
+          <li
+            key={step.label}
+            className={cn(
+              'min-w-0 rounded-lg px-3 py-3',
+              step.active
+                ? 'bg-background shadow-xs ring-1 ring-primary/15'
+                : 'bg-muted/30 ring-1 ring-border/60'
+            )}
+          >
+            <div
+              className={cn(
+                'text-[11px] font-medium tabular-nums',
+                step.active ? 'text-primary' : 'text-muted-foreground'
               )}
-            </Fragment>
-          )
-        })}
-      </div>
+            >
+              {index + 1}
+            </div>
+            <div className='mt-1 truncate text-sm font-medium'>{step.label}</div>
+            <p className='mt-1 text-[11px] leading-5 text-muted-foreground'>
+              {step.detail}
+            </p>
+          </li>
+        ))}
+      </ol>
     </div>
   )
 }
@@ -174,7 +167,7 @@ export function WebhookContractDialog() {
       <DialogTrigger asChild>
         <button
           type='button'
-          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-background p-3.5 text-start shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
           aria-label='查看 grok-register 请求协议'
         >
           <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
@@ -395,7 +388,7 @@ export function FixedProbeSetting({
   value: string
 }) {
   return (
-    <div className='flex min-h-20 min-w-0 items-center gap-3 bg-muted/[0.12] px-4 py-3'>
+    <div className='flex min-h-20 min-w-0 items-center gap-3 rounded-lg bg-muted/20 px-4 py-3'>
       <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-xs ring-1 ring-border'>
         <Icon className='size-4' />
       </div>
@@ -542,7 +535,7 @@ export function RiskStatusRule({
   return (
     <div
       className={cn(
-        'grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 px-3 py-2.5',
+        'grid grid-cols-[5.5rem_minmax(0,1fr)] items-start gap-3 px-4 py-3.5',
         divided && 'border-t'
       )}
     >
@@ -756,6 +749,52 @@ export function SecretField({
         {clearing ? '待清除' : configured ? '已配置' : '未配置'}
       </Badge>
     </Field>
+  )
+}
+
+export function SettingList({ children }: { children: ReactNode }) {
+  return (
+    <div className='divide-y overflow-hidden rounded-xl border bg-background'>
+      {children}
+    </div>
+  )
+}
+
+export function SettingListItem({
+  label,
+  description,
+  checked,
+  disabled = false,
+  onCheckedChange,
+  children,
+}: {
+  label: string
+  description: string
+  checked?: boolean
+  disabled?: boolean
+  onCheckedChange?: (value: boolean) => void
+  children?: ReactNode
+}) {
+  return (
+    <div className={cn('space-y-3 p-4', disabled && 'bg-muted/10')}>
+      <div className='flex items-start justify-between gap-4'>
+        <div className='min-w-0'>
+          <div className='text-sm font-medium'>{label}</div>
+          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+            {description}
+          </p>
+        </div>
+        {onCheckedChange ? (
+          <Switch
+            checked={Boolean(checked)}
+            disabled={disabled}
+            onCheckedChange={onCheckedChange}
+            aria-label={label}
+          />
+        ) : null}
+      </div>
+      {children}
+    </div>
   )
 }
 

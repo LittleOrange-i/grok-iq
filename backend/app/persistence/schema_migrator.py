@@ -177,6 +177,32 @@ COMPATIBILITY_COLUMNS = {
             "sso_received_at",
             "ALTER TABLE register_webhook_events ADD COLUMN sso_received_at DATETIME",
         ),
+        (
+            "original_priority",
+            "ALTER TABLE register_webhook_events ADD COLUMN original_priority INTEGER",
+        ),
+        (
+            "held_priority",
+            "ALTER TABLE register_webhook_events ADD COLUMN held_priority INTEGER",
+        ),
+        (
+            "priority_hold_status",
+            "ALTER TABLE register_webhook_events ADD COLUMN priority_hold_status "
+            "VARCHAR(24) NOT NULL DEFAULT 'none'",
+        ),
+        (
+            "priority_hold_error",
+            "ALTER TABLE register_webhook_events ADD COLUMN priority_hold_error "
+            "TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "priority_held_at",
+            "ALTER TABLE register_webhook_events ADD COLUMN priority_held_at DATETIME",
+        ),
+        (
+            "priority_restored_at",
+            "ALTER TABLE register_webhook_events ADD COLUMN priority_restored_at DATETIME",
+        ),
     ],
     "request_audit_scan_states": [
         (
@@ -264,6 +290,11 @@ COMPATIBILITY_INDEXES = {
             "ix_register_webhook_upstream_sso_received",
             "CREATE INDEX IF NOT EXISTS ix_register_webhook_upstream_sso_received "
             "ON register_webhook_events (grok2api_account_id, sso_received_at)",
+        ),
+        (
+            "ix_register_webhook_priority_hold",
+            "CREATE INDEX IF NOT EXISTS ix_register_webhook_priority_hold "
+            "ON register_webhook_events (priority_hold_status)",
         ),
     ],
 }

@@ -68,6 +68,8 @@ class Settings(BaseSettings):
         ]
     )
     register_probe_switch_on_degradation: bool = True
+    register_priority_hold_enabled: bool = True
+    register_priority_hold: int = Field(default=-1_000_000, ge=-2_000_000_000, le=0)
 
     # The WeChat public-platform test account uses the same template-message
     # API as a normal public account, which keeps local development independent
@@ -117,8 +119,8 @@ class Settings(BaseSettings):
     # by a later integration can be configured without adding another column.
     # Example: [{"id": "reasoning_zero", "enabled": True, "priority": 50}]
     risk_rule_overrides: list[dict[str, Any]] = Field(default_factory=list)
-    # Repeated TPS-only anomalies with a clean SSO verdict should be routed at
-    # a lower upstream priority while operators try another egress node.
+    # Repeated TPS-only anomalies should be routed at a lower upstream
+    # priority while operators try another egress node.
     request_audit_tps_only_deprioritize_enabled: bool = True
     request_audit_tps_only_priority: int = Field(
         default=-1_000_000,
@@ -127,10 +129,6 @@ class Settings(BaseSettings):
     )
     request_audit_tps_only_min_count: int = Field(default=2, ge=2, le=100)
     request_audit_isolation_enabled: bool = True
-    # Request-audit auto-disable normally rechecks saved SSO through the
-    # configured proxy. Operators can skip that gate when SSO is missing
-    # or the checker is unreliable.
-    request_audit_sso_recheck_enabled: bool = True
     request_audit_retention_days: int = Field(default=90, ge=1, le=90)
 
     # Persistent probe queue. A short Cron interval therefore cannot create
@@ -191,6 +189,8 @@ class Settings(BaseSettings):
         "register_probe_rounds",
         "register_probe_proxy_targets",
         "register_probe_switch_on_degradation",
+        "register_priority_hold_enabled",
+        "register_priority_hold",
         "wechat_notification_enabled",
         "wechat_app_id",
         "wechat_app_secret",
@@ -221,7 +221,6 @@ class Settings(BaseSettings):
         "request_audit_tps_only_priority",
         "request_audit_tps_only_min_count",
         "request_audit_isolation_enabled",
-        "request_audit_sso_recheck_enabled",
         "request_audit_retention_days",
         "probe_worker_concurrency",
         "probe_queue_limit",

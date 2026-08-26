@@ -865,6 +865,18 @@ class ProbeRepository:
             run = session.get(ProbeRun, run_id)
             return model_dict(run) if run else None
 
+    def list_runs_for_source_event(self, source_event_id: str) -> list[dict[str, Any]]:
+        event_id = str(source_event_id or "").strip()
+        if not event_id:
+            return []
+        with self.database.session() as session:
+            runs = session.scalars(
+                select(ProbeRun)
+                .where(ProbeRun.source_event_id == event_id)
+                .order_by(ProbeRun.created_at.asc())
+            ).all()
+            return [model_dict(run) for run in runs]
+
     def clear_upstream_context(self, run_id: str) -> None:
         with self.database.transaction() as session:
             run = session.get(ProbeRun, run_id)

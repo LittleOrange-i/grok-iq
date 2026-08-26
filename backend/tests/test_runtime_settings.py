@@ -192,18 +192,6 @@ def test_register_stabilization_setting_is_persisted_and_exposed(tmp_path: Path)
     assert reloaded_settings.register_probe_stabilization_seconds == 8
 
 
-def test_request_audit_sso_recheck_defaults_on_and_can_be_disabled(tmp_path: Path):
-    _database, settings, service = build_service(tmp_path)
-
-    assert settings.request_audit_sso_recheck_enabled is True
-    assert service.public_view()["requestAuditSsoRecheckEnabled"] is True
-
-    changed = service.update({"request_audit_sso_recheck_enabled": False})
-    assert changed == ["request_audit_sso_recheck_enabled"]
-    assert settings.request_audit_sso_recheck_enabled is False
-    assert service.public_view()["requestAuditSsoRecheckEnabled"] is False
-
-
 def test_runtime_risk_formula_is_persisted_and_exposed(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
 
@@ -444,6 +432,35 @@ def test_register_probe_switch_setting_is_persisted(tmp_path: Path):
     )
     reloaded.load()
     assert reloaded_settings.register_probe_switch_on_degradation is False
+
+
+def test_register_priority_hold_setting_is_persisted(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+
+    changed = service.update(
+        {
+            "register_priority_hold_enabled": False,
+            "register_priority_hold": -500,
+        }
+    )
+
+    assert changed == [
+        "register_priority_hold",
+        "register_priority_hold_enabled",
+    ]
+    assert settings.register_priority_hold_enabled is False
+    assert settings.register_priority_hold == -500
+    public = service.public_view()
+    assert public["registerPriorityHoldEnabled"] is False
+    assert public["registerPriorityHold"] == -500
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(_database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_priority_hold_enabled is False
+    assert reloaded_settings.register_priority_hold == -500
 
 
 def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import {
   api,
+  type RegisterPriorityHoldStatus,
   type RegisterWebhookEvent,
   type RegisterWebhookEventStatus,
 } from '@/lib/api'
@@ -67,6 +68,20 @@ const eventStatusMeta: Record<
   processing: { label: '处理中', variant: 'info' },
   completed: { label: '已完成', variant: 'success' },
   failed: { label: '已失败', variant: 'destructive' },
+}
+
+const priorityHoldMeta: Record<
+  RegisterPriorityHoldStatus,
+  {
+    label: string
+    variant: 'secondary' | 'warning' | 'info' | 'success' | 'destructive'
+  }
+> = {
+  none: { label: '未降权', variant: 'secondary' },
+  held: { label: '已降权', variant: 'warning' },
+  restored: { label: '已恢复优先级', variant: 'success' },
+  restore_failed: { label: '恢复失败，将重试', variant: 'destructive' },
+  kept: { label: '保持低优先级', variant: 'info' },
 }
 
 export function RegisterWebhookInbox() {
@@ -313,6 +328,22 @@ export function RegisterWebhookInbox() {
   )
 }
 
+function priorityHoldLabel(event: RegisterWebhookEvent): string {
+  const status = event.priority_hold_status ?? 'none'
+  const meta = priorityHoldMeta[status] ?? priorityHoldMeta.none
+  const original =
+    event.original_priority == null ? '—' : String(event.original_priority)
+  const held =
+    event.held_priority == null ? '—' : String(event.held_priority)
+  if (status === 'none') return '未调整'
+  if (status === 'held') return `${meta.label}：${original} → ${held}`
+  if (status === 'restored') return `${meta.label}：已回到 ${original}`
+  if (status === 'restore_failed') {
+    return `${meta.label}：目标 ${original}`
+  }
+  return `${meta.label}：保持 ${held}`
+}
+
 function InboxMetric({
   icon: Icon,
   label,
@@ -388,7 +419,21 @@ function RegisterEventRow({
         </div>
       </TableCell>
       <TableCell>
-        <Badge variant={status.variant}>{status.label}</Badge>
+        <div className='flex flex-col items-start gap-1'>
+          <Badge variant={status.variant}>{status.label}</Badge>
+          {event.priority_hold_status &&
+          event.priority_hold_status !== 'none' ? (
+            <Badge
+              variant={
+                priorityHoldMeta[event.priority_hold_status]?.variant ??
+                'secondary'
+              }
+            >
+              {priorityHoldMeta[event.priority_hold_status]?.label ??
+                event.priority_hold_status}
+            </Badge>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell>
         <span className='tabular-nums'>{event.attempts}</span>
@@ -497,6 +542,10 @@ function RegisterEventDetailDialog({
                 : '否'
             }
           />
+          <DetailItem
+            label='grok2api 优先级'
+            value={priorityHoldLabel(event)}
+          />
         </div>
         <DetailBlock label='事件 ID' value={event.event_id} mono />
         <DetailBlock
@@ -509,6 +558,13 @@ function RegisterEventDetailDialog({
         {event.last_error && (
           <DetailBlock label='最近处理结果' value={event.last_error} error />
         )}
+        {event.priority_hold_error ? (
+          <DetailBlock
+            label='优先级处理结果'
+            value={event.priority_hold_error}
+            error={event.priority_hold_status === 'restore_failed'}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   )

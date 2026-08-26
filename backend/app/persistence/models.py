@@ -555,6 +555,7 @@ class RegisterWebhookEvent(Base):
             "grok2api_account_id",
             "sso_received_at",
         ),
+        Index("ix_register_webhook_priority_hold", "priority_hold_status"),
     )
 
     event_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -580,6 +581,14 @@ class RegisterWebhookEvent(Base):
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    original_priority: Mapped[int | None] = mapped_column(Integer)
+    held_priority: Mapped[int | None] = mapped_column(Integer)
+    priority_hold_status: Mapped[str] = mapped_column(
+        String(24), default="none", nullable=False
+    )
+    priority_hold_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    priority_held_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+    priority_restored_at: Mapped[datetime | None] = mapped_column(AppDateTime())
 
 
 def model_dict(value: Any) -> dict[str, Any]:

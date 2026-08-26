@@ -21,6 +21,8 @@ export type SettingsForm = {
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
   registerProbeSwitchOnDegradation: boolean
+  registerPriorityHoldEnabled: boolean
+  registerPriorityHold: number
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecret: string
@@ -48,7 +50,6 @@ export type SettingsForm = {
   requestAuditRetentionDays: number
   requestAuditRiskEnabled: boolean
   requestAuditIsolationEnabled: boolean
-  requestAuditSsoRecheckEnabled: boolean
   reasoningZeroRiskEnabled: boolean
   reasoningModelPolicies: EditableRuntimeSettings['reasoningModelPolicies']
   mediaInputObserveEnabled: boolean
@@ -177,6 +178,8 @@ export function toSettingsForm(
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation:
       settings.registerProbeSwitchOnDegradation ?? true,
+    registerPriorityHoldEnabled: settings.registerPriorityHoldEnabled ?? true,
+    registerPriorityHold: settings.registerPriorityHold ?? -1_000_000,
     wechatNotificationEnabled: settings.wechatNotificationEnabled,
     wechatAppId: settings.wechatAppId,
     wechatAppSecret: settings.wechatAppSecret,
@@ -215,8 +218,6 @@ export function toSettingsForm(
     requestAuditRiskEnabled: settings.requestAuditRiskEnabled ?? true,
     requestAuditIsolationEnabled:
       settings.requestAuditIsolationEnabled ?? true,
-    requestAuditSsoRecheckEnabled:
-      settings.requestAuditSsoRecheckEnabled ?? true,
     reasoningZeroRiskEnabled: settings.reasoningZeroRiskEnabled ?? true,
     reasoningModelPolicies: (settings.reasoningModelPolicies ?? []).map(
       (policy) => ({
@@ -282,6 +283,8 @@ export function buildSettingsPayload(
     registerProbeRounds: form.registerProbeRounds,
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation: form.registerProbeSwitchOnDegradation,
+    registerPriorityHoldEnabled: form.registerPriorityHoldEnabled,
+    registerPriorityHold: form.registerPriorityHold,
     wechatNotificationEnabled: form.wechatNotificationEnabled,
     wechatAppId: form.wechatAppId.trim(),
     wechatOpenid: form.wechatOpenid.trim(),
@@ -312,7 +315,6 @@ export function buildSettingsPayload(
     requestAuditRetentionDays: form.requestAuditRetentionDays,
     requestAuditRiskEnabled: form.requestAuditRiskEnabled,
     requestAuditIsolationEnabled: form.requestAuditIsolationEnabled,
-    requestAuditSsoRecheckEnabled: form.requestAuditSsoRecheckEnabled,
     reasoningZeroRiskEnabled: form.reasoningZeroRiskEnabled,
     reasoningModelPolicies: form.reasoningModelPolicies,
     mediaInputObserveEnabled: form.mediaInputObserveEnabled,
@@ -508,5 +510,12 @@ export function validateSettings(form: SettingsForm) {
     form.registerProbeStabilizationSeconds > 300
   ) {
     throw new Error('新账号稳定等待需在 0–300 秒之间')
+  }
+  if (
+    !Number.isFinite(form.registerPriorityHold) ||
+    form.registerPriorityHold < -2_000_000_000 ||
+    form.registerPriorityHold > 0
+  ) {
+    throw new Error('注册账号临时优先级需在 -2000000000–0 之间')
   }
 }

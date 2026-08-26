@@ -206,7 +206,9 @@ grok-register 注册完成
   -> grok_build 导入 Grok2API 成功
   -> Webhook 通知本项目
   -> 匹配 Grok2API 账号
+  -> 降低 grok2api 优先级，避免未验证账号进入生产流量
   -> 保存可选 SSO / 记录注册风险 / 可选自动创建探针
+  -> 注册探针通过后恢复原优先级
 ```
 
 只有 `grok_build` 已被 Grok2API 接收后才会发送事件。注册成功但导入失败时不会提前触发 GrokIQ。
@@ -267,6 +269,7 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 - 事件列表和 SSO 报告都不回传原始 SSO。未提供 `sso` 的账号可以继续做探针，但不能从账号页发起 SSO 检测。
 - Webhook 返回 `2xx` 只表示本项目已接收。后续账号匹配、排队和探针执行由本项目继续处理。
 - 如果账号暂时还没出现在 Grok2API，本项目会继续重试匹配；关闭自动探针时仍会保留导入事件。
+- 开启注册后探针时，匹配到账号会立即降低 grok2api 优先级；全部注册探针通过后恢复原值。恢复失败由联动后台定时重试，探针未通过则保持低优先级。
 - `grok-register` 的账号详情会显示投递状态、尝试次数、接收时间和最近错误，方便查联动问题。
 
 ### 三个服务一起跑

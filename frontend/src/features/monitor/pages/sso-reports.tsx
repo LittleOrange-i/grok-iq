@@ -144,7 +144,7 @@ export function SsoReportsPage() {
     <Page>
       <PageHeader
         title='SSO 检测'
-        description='SSO 任务在本页独立配置和跟踪；账号中心发起的检测出现 bot 标记会立即停用并同步到账号风控状态。bot=0 记为正常，其他值记为风控标记。'
+        description='SSO 任务在本页独立配置和跟踪，用来确认保存的 SSO 是否仍可登录。上游已不再下发 bot 标记，这里不能判断风控；请求审计自动停用也不再依赖这次检测。'
         descriptionAsHint
         actions={
           <>

@@ -101,6 +101,7 @@ class ProbeManager:
             enqueue_lock=self._enqueue_lock,
             wake=self._wake,
         )
+        self.register_integration = None
 
     async def start(self) -> None:
         if self._started:
@@ -356,6 +357,12 @@ class ProbeManager:
         )
         self._wake.set()
         return new_id
+
+    async def maybe_restore_register_priority_hold(self, run: dict[str, Any]) -> None:
+        service = self.register_integration
+        if service is None:
+            return
+        await service.maybe_restore_priority_hold(run)
 
     async def maybe_switch_register_probe_egress(
         self,

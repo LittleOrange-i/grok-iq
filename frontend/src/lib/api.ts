@@ -91,6 +91,13 @@ export type SsoReportStatus = 'queued' | 'running' | 'completed' | 'failed'
 export type RegisterWebhookEventStatus =
   'pending' | 'processing' | 'completed' | 'failed'
 
+export type RegisterPriorityHoldStatus =
+  | 'none'
+  | 'held'
+  | 'restored'
+  | 'restore_failed'
+  | 'kept'
+
 export type RegisterWebhookEvent = {
   event_id: string
   event_type: string
@@ -109,6 +116,12 @@ export type RegisterWebhookEvent = {
   created_at: string
   updated_at: string
   completed_at: string | null
+  original_priority?: number | null
+  held_priority?: number | null
+  priority_hold_status?: RegisterPriorityHoldStatus
+  priority_hold_error?: string
+  priority_held_at?: string | null
+  priority_restored_at?: string | null
 }
 
 export type RegisterWebhookEventsResponse = Page<RegisterWebhookEvent> & {
@@ -538,6 +551,7 @@ export type RequestAuditPreDisableCheck = {
     | 'pending'
     | 'checking'
     | 'flagged'
+    | 'session_confirmed'
     | 'clean'
     | 'missing_sso'
     | 'proxy_required'
@@ -724,7 +738,7 @@ export type RequestAuditConfig = {
   tpsOnlyPriority: number
   tpsOnlyMinCount: number
   isolationEnabled: boolean
-  ssoRecheckEnabled: boolean
+  ssoRecheckEnabled?: boolean
   retentionDays: number
 }
 
@@ -1150,6 +1164,8 @@ export type RuntimeSettings = {
   registerProbeRounds: number
   registerProbeProxyTargets: ProxyTarget[]
   registerProbeSwitchOnDegradation: boolean
+  registerPriorityHoldEnabled: boolean
+  registerPriorityHold: number
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecretConfigured: boolean
@@ -1181,7 +1197,6 @@ export type RuntimeSettings = {
   requestAuditTpsOnlyPriority: number
   requestAuditTpsOnlyMinCount: number
   requestAuditIsolationEnabled: boolean
-  requestAuditSsoRecheckEnabled: boolean
   requestAuditRetentionDays: number
   probeWorkerConcurrency: number
   probeQueueLimit: number
@@ -1252,6 +1267,8 @@ export type RuntimeSettingsUpdate = Partial<
     | 'registerProbeRounds'
     | 'registerProbeProxyTargets'
     | 'registerProbeSwitchOnDegradation'
+    | 'registerPriorityHoldEnabled'
+    | 'registerPriorityHold'
     | 'wechatNotificationEnabled'
     | 'wechatAppId'
     | 'wechatOpenid'
@@ -1281,7 +1298,6 @@ export type RuntimeSettingsUpdate = Partial<
     | 'requestAuditTpsOnlyPriority'
     | 'requestAuditTpsOnlyMinCount'
     | 'requestAuditIsolationEnabled'
-    | 'requestAuditSsoRecheckEnabled'
     | 'requestAuditRetentionDays'
     | 'probeWorkerConcurrency'
     | 'probeQueueLimit'
@@ -1355,6 +1371,8 @@ type RuntimeSettingsWire = Omit<
   | 'scheduledProbeRegisterCooldownMinutes'
   | 'registerProbeStabilizationSeconds'
   | 'registerProbeSwitchOnDegradation'
+  | 'registerPriorityHoldEnabled'
+  | 'registerPriorityHold'
   | 'ssoProxyConfigured'
   | 'autoQuarantineRecoveryEnabled'
   | 'requestAuditEnabled'
@@ -1377,7 +1395,6 @@ type RuntimeSettingsWire = Omit<
   | 'requestAuditTpsOnlyPriority'
   | 'requestAuditTpsOnlyMinCount'
   | 'requestAuditIsolationEnabled'
-  | 'requestAuditSsoRecheckEnabled'
   | 'requestAuditRetentionDays'
 > & {
   degradationTps?: number
@@ -1409,6 +1426,8 @@ type RuntimeSettingsWire = Omit<
   scheduledProbeRegisterCooldownMinutes?: number
   registerProbeStabilizationSeconds?: number
   registerProbeSwitchOnDegradation?: boolean
+  registerPriorityHoldEnabled?: boolean
+  registerPriorityHold?: number
   ssoProxyConfigured?: boolean
   autoQuarantineRecoveryEnabled?: boolean
   requestAuditEnabled?: boolean
@@ -1431,7 +1450,6 @@ type RuntimeSettingsWire = Omit<
   requestAuditTpsOnlyPriority?: number
   requestAuditTpsOnlyMinCount?: number
   requestAuditIsolationEnabled?: boolean
-  requestAuditSsoRecheckEnabled?: boolean
   requestAuditRetentionDays?: number
 }
 
@@ -1508,6 +1526,8 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     ],
     registerProbeSwitchOnDegradation:
       value.registerProbeSwitchOnDegradation ?? true,
+    registerPriorityHoldEnabled: value.registerPriorityHoldEnabled ?? true,
+    registerPriorityHold: value.registerPriorityHold ?? -1_000_000,
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
@@ -1542,7 +1562,6 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     requestAuditTpsOnlyPriority: value.requestAuditTpsOnlyPriority ?? -1000000,
     requestAuditTpsOnlyMinCount: value.requestAuditTpsOnlyMinCount ?? 2,
     requestAuditIsolationEnabled: value.requestAuditIsolationEnabled ?? true,
-    requestAuditSsoRecheckEnabled: value.requestAuditSsoRecheckEnabled ?? true,
     requestAuditRetentionDays: value.requestAuditRetentionDays ?? 90,
     wechatNotificationEnabled: value.wechatNotificationEnabled ?? false,
     wechatAppId: value.wechatAppId ?? '',

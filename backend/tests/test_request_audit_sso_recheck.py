@@ -11,7 +11,6 @@ def build_service(**overrides: object) -> tuple[
     RequestAuditService,
     MagicMock,
     AsyncMock,
-    AsyncMock,
 ]:
     settings = Settings(_env_file=None)
     for key, value in overrides.items():
@@ -21,15 +20,13 @@ def build_service(**overrides: object) -> tuple[
         lambda audit_id, values: {"audit_upstream_id": audit_id, **values}
     )
     account_service = AsyncMock()
-    sso_reports = AsyncMock()
     service = RequestAuditService(
         settings=settings,
         client=MagicMock(),
         repository=repository,
-        sso_reports=sso_reports,
         account_service=account_service,
     )
-    return service, repository, account_service, sso_reports
+    return service, repository, account_service
 
 
 def quarantine_record() -> dict[str, object]:
@@ -63,11 +60,9 @@ def tps_record() -> dict[str, object]:
     }
 
 
-async def test_disabled_sso_recheck_quarantines_without_calling_sso():
-    service, repository, account_service, sso_reports = build_service(
-        request_audit_sso_recheck_enabled=False,
-    )
-    repository.create_verification.return_value = {
+async def test_pre_disable_quarantines_without_sso_recheck():
+    service, _repository, account_service = build_service()
+    service.repository.create_verification.return_value = {
         "status": "pending",
         "action_status": "pending",
     }
@@ -75,20 +70,18 @@ async def test_disabled_sso_recheck_quarantines_without_calling_sso():
 
     result = await service._process_pre_disable_candidate(quarantine_record())
 
-    sso_reports.check_account_once.assert_not_called()
     account_service.apply_auto_quarantine.assert_awaited()
     note = account_service.apply_auto_quarantine.await_args.kwargs["note"]
-    assert "跳过 SSO" in note
+    assert "自动停用" in note
+    assert "SSO" not in note
     assert result["status"] == "sso_skipped"
     assert result["action_status"] == "disabled"
     assert result["sso_verdict"] == "skipped"
 
 
-async def test_disabled_sso_recheck_retries_missing_sso_records():
-    service, repository, account_service, sso_reports = build_service(
-        request_audit_sso_recheck_enabled=False,
-    )
-    repository.create_verification.return_value = {
+async def test_pre_disable_retries_missing_sso_records():
+    service, _repository, account_service = build_service()
+    service.repository.create_verification.return_value = {
         "status": "missing_sso",
         "action_status": "not_required",
         "sso_verdict": "",
@@ -100,32 +93,48 @@ async def test_disabled_sso_recheck_retries_missing_sso_records():
 
     result = await service._process_pre_disable_candidate(quarantine_record())
 
-    sso_reports.check_account_once.assert_not_called()
     account_service.apply_auto_quarantine.assert_awaited()
     assert result["status"] == "sso_skipped"
     assert result["action_status"] == "disabled"
 
 
-async def test_enabled_sso_recheck_keeps_missing_sso_pending_action():
-    service, _repository, account_service, sso_reports = build_service()
+async def test_pre_disable_retries_false_clean_records():
+    service, _repository, account_service = build_service()
     service.repository.create_verification.return_value = {
-        "status": "missing_sso",
+        "status": "clean",
         "action_status": "not_required",
+        "sso_verdict": "clean",
+        "bot_flag": {"found": False, "flagged": False},
+        "valid_session": True,
+        "email_match": True,
     }
+    account_service.apply_auto_quarantine.return_value = {"actionStatus": "disabled"}
 
     result = await service._process_pre_disable_candidate(quarantine_record())
 
-    sso_reports.check_account_once.assert_not_called()
+    account_service.apply_auto_quarantine.assert_awaited()
+    assert result["status"] == "sso_skipped"
+    assert result["action_status"] == "disabled"
+
+
+async def test_pre_disable_skips_already_disabled_records():
+    service, _repository, account_service = build_service()
+    existing = {
+        "status": "sso_skipped",
+        "action_status": "disabled",
+        "sso_verdict": "skipped",
+    }
+    service.repository.create_verification.return_value = existing
+
+    result = await service._process_pre_disable_candidate(quarantine_record())
+
     account_service.apply_auto_quarantine.assert_not_called()
-    assert result["status"] == "missing_sso"
-    assert result["action_status"] == "not_required"
+    assert result is existing
 
 
-async def test_disabled_sso_recheck_deprioritizes_tps_only_without_sso():
-    service, repository, account_service, sso_reports = build_service(
-        request_audit_sso_recheck_enabled=False,
-    )
-    repository.create_verification.return_value = {
+async def test_pre_disable_deprioritizes_tps_only_without_sso():
+    service, _repository, account_service = build_service()
+    service.repository.create_verification.return_value = {
         "status": "pending",
         "action_status": "pending",
     }
@@ -137,7 +146,6 @@ async def test_disabled_sso_recheck_deprioritizes_tps_only_without_sso():
 
     result = await service._process_pre_disable_candidate(tps_record())
 
-    sso_reports.check_account_once.assert_not_called()
     account_service.apply_auto_quarantine.assert_not_called()
     account_service.apply_tps_only_deprioritization.assert_awaited()
     assert result["status"] == "sso_skipped"

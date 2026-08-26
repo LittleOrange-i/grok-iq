@@ -29,7 +29,6 @@ from app.reasoning_policy import canonical_reasoning_model
 
 if TYPE_CHECKING:
     from app.services.account_service import AccountService
-    from app.services.sso_report_service import SsoReportService
 
 REQUEST_AUDIT_SCOPE = "grok_build_today"
 REQUEST_AUDIT_PAGE_SIZE = 500
@@ -205,7 +204,6 @@ class RequestAuditService:
         repository: RequestAuditRepository,
         accounts: AccountRepository | None = None,
         probes: ProbeRepository | None = None,
-        sso_reports: SsoReportService | None = None,
         account_service: AccountService | None = None,
     ):
         self.settings = settings
@@ -213,7 +211,6 @@ class RequestAuditService:
         self.repository = repository
         self.accounts = accounts
         self.probes = probes
-        self.sso_reports = sso_reports
         self.account_service = account_service
         self._scan_lock = asyncio.Lock()
         self._egress_cache_lock = asyncio.Lock()
@@ -935,7 +932,7 @@ class RequestAuditService:
             if status == "flagged":
                 if completed_now:
                     stats["flagged"] += 1
-            elif status == "clean":
+            elif status in {"clean", "session_confirmed"}:
                 if completed_now:
                     stats["clean"] += 1
             else:
@@ -1097,7 +1094,6 @@ class RequestAuditService:
     ) -> dict[str, Any]:
         account_id = int(record.get("account_id") or 0)
         audit_id = str(record.get("upstream_id") or "")
-        action_mode = str(record.get("_action_mode") or "quarantine")
         created_at = ensure_utc(record.get("created_at")) or utc_now()
         verification = self.repository.create_verification(
             {
@@ -1111,206 +1107,22 @@ class RequestAuditService:
         )
         existing_status = str(verification.get("status") or "")
         existing_action = str(verification.get("action_status") or "")
-        completed_actions = {
+        finished_actions = {
             "disabled",
             "already_disabled",
             "already_quarantined",
             "deprioritized",
             "already_deprioritized",
-            "auto_quarantine_disabled",
-            "deprioritize_disabled",
         }
-        inconclusive_sso_statuses = {
-            "missing_sso",
-            "proxy_required",
-            "check_failed",
-            "invalid_session",
-            "email_mismatch",
-            "sso_skipped",
-        }
+        if existing_action in finished_actions:
+            return verification
         if existing_status == "checking":
             updated_at = ensure_utc(verification.get("updated_at"))
             if updated_at is not None and updated_at > utc_now() - timedelta(
                 minutes=5
             ):
                 return verification
-        elif existing_status != "pending":
-            if (
-                existing_status == "flagged"
-                and existing_action
-                in {"pending", "action_failed", "task_protected"}
-            ):
-                common = {
-                    "sso_verdict": str(verification.get("sso_verdict") or "flagged"),
-                    "bot_flag": verification.get("bot_flag") or {},
-                    "proxy_used": bool(verification.get("proxy_used")),
-                    "valid_session": verification.get("valid_session"),
-                    "email_match": verification.get("email_match"),
-                    "status_code": int(verification.get("status_code") or 0),
-                    "response_ms": int(verification.get("response_ms") or 0),
-                    "check_error": str(verification.get("check_error") or ""),
-                    "checked_at": verification.get("checked_at"),
-                }
-                return await self._apply_flagged_quarantine(
-                    record,
-                    verification,
-                    common=common,
-                )
-            if (
-                existing_status == "clean"
-                and action_mode == "tps_only"
-                and existing_action
-                in {
-                    "deprioritize_disabled",
-                    "deprioritize_failed",
-                    "task_protected",
-                }
-            ):
-                return await self._apply_clean_tps_action(
-                    record,
-                    verification,
-                    common={
-                        "sso_verdict": str(
-                            verification.get("sso_verdict") or "clean"
-                        ),
-                        "bot_flag": verification.get("bot_flag") or {},
-                        "proxy_used": bool(verification.get("proxy_used")),
-                        "valid_session": verification.get("valid_session"),
-                        "email_match": verification.get("email_match"),
-                        "status_code": int(verification.get("status_code") or 0),
-                        "response_ms": int(verification.get("response_ms") or 0),
-                        "check_error": str(verification.get("check_error") or ""),
-                        "checked_at": verification.get("checked_at"),
-                    },
-                )
-            if (
-                not self.settings.request_audit_sso_recheck_enabled
-                and existing_status in inconclusive_sso_statuses
-                and existing_action not in completed_actions
-            ):
-                return await self._apply_sso_skipped_action(record, verification)
-            return verification
-
-        if not self.settings.request_audit_sso_recheck_enabled:
-            return await self._apply_sso_skipped_action(record, verification)
-
-        if self.sso_reports is None or self.account_service is None:
-            return self.repository.update_verification(
-                audit_id,
-                {
-                    "status": "check_failed",
-                    "action_status": "not_required",
-                    "check_error": "停用前 SSO 复检服务尚未接入",
-                },
-            ) or verification
-
-        self.repository.update_verification(
-            audit_id,
-            {"status": "checking", "action_status": "pending"},
-        )
-        try:
-            check = await self.sso_reports.check_account_once(
-                account_id,
-                require_proxy=True,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.exception(
-                "request audit SSO check failed account=%s audit=%s",
-                account_id,
-                audit_id,
-            )
-            return self.repository.update_verification(
-                audit_id,
-                {
-                    "status": "check_failed",
-                    "action_status": "not_required",
-                    "check_error": str(exc)[:1000],
-                    "checked_at": utc_now(),
-                },
-            ) or verification
-
-        check_status = str(check.get("status") or "check_failed")
-        proxy_used = bool(check.get("proxyUsed"))
-        if check_status != "completed":
-            normalized_status = (
-                check_status
-                if check_status in {"missing_sso", "proxy_required", "check_failed"}
-                else "check_failed"
-            )
-            return self.repository.update_verification(
-                audit_id,
-                {
-                    "status": normalized_status,
-                    "proxy_used": proxy_used,
-                    "action_status": "not_required",
-                    "check_error": str(check.get("error") or "")[:1000],
-                    "checked_at": utc_now(),
-                },
-            ) or verification
-
-        result = check.get("result") if isinstance(check.get("result"), dict) else {}
-        bot_flag = (
-            result.get("bot_flag")
-            if isinstance(result.get("bot_flag"), dict)
-            else {}
-        )
-        verdict = str(result.get("verdict") or "error")
-        valid_session = bool(result.get("valid_session"))
-        email_match = (
-            result.get("email_match")
-            if isinstance(result.get("email_match"), bool)
-            else None
-        )
-        checked_at = _parse_datetime(result.get("checked_at")) or utc_now()
-        common = {
-            "sso_verdict": verdict,
-            "bot_flag": bot_flag,
-            "proxy_used": proxy_used,
-            "valid_session": valid_session,
-            "email_match": email_match,
-            "status_code": int(result.get("status_code") or 0),
-            "response_ms": int(result.get("response_ms") or 0),
-            "check_error": str(result.get("error") or "")[:1000],
-            "checked_at": checked_at,
-        }
-        if verdict == "error":
-            status = "check_failed"
-        elif not valid_session:
-            status = "invalid_session"
-        elif email_match is not True:
-            status = "email_mismatch"
-        elif verdict != "flagged" or not bool(bot_flag.get("flagged")):
-            status = "clean"
-        else:
-            status = "flagged"
-
-        if status != "flagged":
-            if status == "clean" and action_mode == "tps_only":
-                return await self._apply_clean_tps_action(
-                    record,
-                    verification,
-                    common=common,
-                )
-            return self.repository.update_verification(
-                audit_id,
-                {
-                    **common,
-                    "status": status,
-                    "action_status": "not_required",
-                },
-            ) or verification
-
-        self.repository.update_verification(
-            audit_id,
-            {**common, "status": "flagged", "action_status": "pending"},
-        )
-        return await self._apply_flagged_quarantine(
-            record,
-            verification,
-            common=common,
-        )
+        return await self._apply_sso_skipped_action(record, verification)
 
     async def _apply_sso_skipped_action(
         self,
@@ -1354,7 +1166,6 @@ class RequestAuditService:
         audit_id = str(record.get("upstream_id") or "")
         created_at = ensure_utc(record.get("created_at")) or utc_now()
         verdict = str(common.get("sso_verdict") or "clean")
-        skipped = status == "sso_skipped" or verdict == "skipped"
         proxy_used = bool(common.get("proxy_used"))
         if not record.get("_tps_anomaly_count"):
             window_start, window_end = self._current_audit_window()
@@ -1412,11 +1223,7 @@ class RequestAuditService:
             action = await self.account_service.apply_tps_only_deprioritization(
                 account_id,
                 source="request_audit",
-                note=(
-                    "TPS 多次异常，已跳过 SSO 复检后降低优先级，建议更换出口节点"
-                    if skipped
-                    else "TPS 多次异常但代理 SSO 复检正常，建议更换出口节点"
-                ),
+                note="TPS 多次异常后降低优先级，建议更换出口节点",
                 detail={
                     "auditId": audit_id,
                     "riskRuleId": str(record.get("_risk_rule_id") or "fast_risk"),
@@ -1493,7 +1300,6 @@ class RequestAuditService:
             common.get("sso_verdict")
             or ("skipped" if status == "sso_skipped" else "flagged")
         )
-        skipped = status == "sso_skipped" or verdict == "skipped"
         bot_flag = (
             common.get("bot_flag")
             if isinstance(common.get("bot_flag"), dict)
@@ -1532,11 +1338,7 @@ class RequestAuditService:
             action = await self.account_service.apply_auto_quarantine(
                 account_id,
                 source="request_audit",
-                note=(
-                    "请求审计高风险已达处置阈值，已跳过 SSO 复检后自动停用"
-                    if skipped
-                    else "请求审计高风险经代理 SSO 复检确认 bot 标记后自动隔离"
-                ),
+                note="请求审计高风险已达处置阈值后自动停用",
                 risk_score=max(float(self.settings.risk_high_floor), 85.0),
                 force=True,
                 permanent=True,
@@ -1574,7 +1376,7 @@ class RequestAuditService:
         action_status = str(action.get("actionStatus") or "action_failed")
         self.repository.set_action_for_account_statuses(
             account_id,
-            statuses={"flagged", "sso_skipped"},
+            statuses={"flagged", "session_confirmed", "sso_skipped"},
             action_status=action_status,
         )
         return self.repository.update_verification(
@@ -1597,17 +1399,16 @@ class RequestAuditService:
         tps_anomaly_count: int,
     ) -> dict[str, Any] | None:
         min_count = int(record.get("_tps_min_count") or 2)
-        if status not in {"clean", "sso_skipped"} or tps_anomaly_count < min_count:
+        if (
+            status not in {"clean", "session_confirmed", "sso_skipped"}
+            or tps_anomaly_count < min_count
+        ):
             return None
         skipped = status == "sso_skipped"
         return {
             "type": "change_egress",
             "label": "建议更换出口节点",
-            "reason": (
-                "TPS 多次异常，已跳过 SSO 复检"
-                if skipped
-                else "TPS 多次异常，但代理 SSO 复检正常"
-            ),
+            "reason": "TPS 多次异常，建议更换出口节点",
             "highRiskCount": int(tps_anomaly_count),
             "maxTps": round(float(record.get("_tps_max") or record.get("tps") or 0), 2),
             "ssoVerdict": "skipped" if skipped else "clean",
@@ -1934,7 +1735,7 @@ class RequestAuditService:
             "tpsOnlyPriority": self.settings.request_audit_tps_only_priority,
             "tpsOnlyMinCount": self.settings.request_audit_tps_only_min_count,
             "isolationEnabled": self.settings.request_audit_isolation_enabled,
-            "ssoRecheckEnabled": self.settings.request_audit_sso_recheck_enabled,
+            "ssoRecheckEnabled": False,
             "retentionDays": self.settings.request_audit_retention_days,
         }
 
@@ -2928,10 +2729,8 @@ class RequestAuditService:
                         f"{streak} 次，达到 {policy.min_count} 次阈值"
                     )
                     # Keep an independently strong primary rule such as
-                    # fast_risk. A clean proxy SSO verdict can then still take
-                    # the TPS-only deprioritization/change-egress path, while a
-                    # flagged verdict is quarantined by the shared SSO flow.
-                    # Reasoning remains visible in rule_ids and reasons.
+                    # fast_risk. TPS-only still deprioritizes, while reasoning
+                    # remains visible in rule_ids and reasons.
                     preserve_primary = bool(
                         classification.hard
                         and classification.rule_id
