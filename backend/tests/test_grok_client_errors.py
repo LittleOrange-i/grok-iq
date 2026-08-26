@@ -20,7 +20,7 @@ class RecordingGrokClient(Grok2APIClient):
 
 def test_openai_error_response_keeps_scheduler_metadata():
     error = _response_error(
-        context="/v1/chat/completions",
+        context="/v1/responses",
         status_code=503,
         body=(
             '{"error":{"code":"client_key_account_scope_unavailable",'
@@ -41,7 +41,7 @@ def test_openai_error_response_keeps_scheduler_metadata():
 
 def test_quota_error_is_not_retried_as_scheduler_cooldown():
     error = _response_error(
-        context="/v1/chat/completions",
+        context="/v1/responses",
         status_code=429,
         body=(
             '{"error":{"code":"upstream_quota_exhausted",'

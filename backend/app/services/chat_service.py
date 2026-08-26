@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+from curl_cffi.const import CurlHttpVersion, CurlOpt
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from app.core.config import Settings
@@ -126,29 +128,48 @@ class ChatService:
             value = request_headers.get(key, "").strip()
             if value:
                 headers[key] = value
-        session = CurlAsyncSession(impersonate=self.settings.grok2api_http_impersonate)
-        try:
-            response = await session.post(
-                self._resource_url(provider["base_url"], "chat/completions"),
-                headers=headers,
-                data=body,
-                stream=True,
-                accept_encoding="identity",
-                timeout=300,
+        candidates = self._completion_urls(provider["base_url"])
+        last_error: ChatUpstreamError | None = None
+        for upstream_url in candidates:
+            session = CurlAsyncSession(
+                impersonate=self.settings.grok2api_http_impersonate,
+                curl_options={
+                    CurlOpt.ACCEPT_ENCODING: b"identity",
+                    CurlOpt.BUFFERSIZE: 1024,
+                    CurlOpt.HTTP_VERSION: CurlHttpVersion.V1_1,
+                },
             )
-        except Exception as exc:
-            await session.close()
-            raise IntegrationError(f"模型提供商请求失败: {exc}") from exc
-        if response.status_code >= 300:
+            upstream_body = self._prepare_completion_body(body, upstream_url)
+            try:
+                response = await session.post(
+                    upstream_url,
+                    headers=headers,
+                    data=upstream_body,
+                    stream=True,
+                    # curl-cffi maps this to CURLOPT_ACCEPT_ENCODING. Identity
+                    # avoids compression while preserving streaming reads.
+                    # Impersonate still overwrites it unless curl_options is set.
+                    accept_encoding="identity",
+                    timeout=300,
+                )
+            except Exception as exc:
+                await session.close()
+                raise IntegrationError(f"模型提供商请求失败: {exc}") from exc
+            if response.status_code < 300:
+                return ChatStream(session=session, response=response)
             content = await response.acontent()
             await session.close()
             detail = content.decode("utf-8", "replace")
-            raise ChatUpstreamError(
+            last_error = ChatUpstreamError(
                 f"模型提供商返回 HTTP {response.status_code}: {detail[:2000]}",
                 status_code=response.status_code,
                 response_body=detail[:4000],
             )
-        return ChatStream(session=session, response=response)
+            if response.status_code not in {404, 405}:
+                raise last_error
+        if last_error is not None:
+            raise last_error
+        raise IntegrationError("模型提供商没有可用的聊天接口")
 
     async def _fetch_models(self, provider: dict[str, Any]) -> list[str]:
         headers = self._upstream_headers(provider, accept="application/json")
@@ -157,7 +178,10 @@ class ChatService:
                 impersonate=self.settings.grok2api_http_impersonate
             ) as session:
                 response = await session.get(
-                    self._resource_url(provider["base_url"], "models"),
+                    self._resource_url(
+                        self._base_without_endpoint(provider["base_url"]),
+                        "models",
+                    ),
                     headers=headers,
                     timeout=60,
                 )
@@ -205,6 +229,8 @@ class ChatService:
         accept: str,
     ) -> dict[str, str]:
         headers = {"Content-Type": "application/json", "Accept": accept}
+        if accept == "text/event-stream":
+            headers["Accept-Encoding"] = "identity"
         api_key = str(provider.get("api_key") or "").strip()
         if api_key:
             headers["Authorization"] = (
@@ -215,7 +241,7 @@ class ChatService:
     @staticmethod
     def _normalize_base_url(value: str) -> str:
         normalized = value.strip().rstrip("/")
-        for suffix in ("/chat/completions", "/models"):
+        for suffix in ("/chat/completions", "/responses", "/models"):
             if normalized.endswith(suffix):
                 normalized = normalized[: -len(suffix)].rstrip("/")
                 break
@@ -223,6 +249,76 @@ class ChatService:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("Base URL 必须是有效的 HTTP(S) 地址")
         return normalized
+
+    @classmethod
+    def _completion_url(cls, base_url: str) -> str:
+        return cls._completion_urls(base_url)[0]
+
+    @classmethod
+    def _completion_urls(cls, base_url: str) -> list[str]:
+        normalized = base_url.rstrip("/")
+        if normalized.endswith("/chat/completions"):
+            return [normalized]
+        if normalized.endswith("/responses"):
+            return [normalized]
+        return [cls._resource_url(normalized, "responses")]
+
+    @staticmethod
+    def _base_without_endpoint(base_url: str) -> str:
+        normalized = base_url.rstrip("/")
+        for suffix in ("/chat/completions", "/responses", "/models"):
+            if normalized.endswith(suffix):
+                return normalized[: -len(suffix)].rstrip("/")
+        return normalized
+
+    @staticmethod
+    def _prepare_completion_body(body: bytes, upstream_url: str) -> bytes:
+        """Translate the playground's chat payload for a Responses provider."""
+        if not upstream_url.endswith("/responses"):
+            return body
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return body
+        if not isinstance(payload, dict):
+            return body
+        if "messages" in payload:
+            messages = payload.pop("messages")
+            if isinstance(messages, list):
+                instructions: list[str] = []
+                inputs: list[dict[str, object]] = []
+                for message in messages:
+                    if not isinstance(message, dict):
+                        continue
+                    role = str(message.get("role") or "user")
+                    content = message.get("content", "")
+                    if isinstance(content, list):
+                        text = "".join(
+                            str(part.get("text") or part.get("content") or "")
+                            for part in content
+                            if isinstance(part, dict)
+                        )
+                    else:
+                        text = str(content or "")
+                    if role == "system":
+                        instructions.append(text)
+                    else:
+                        inputs.append({"role": role, "content": text})
+                if instructions:
+                    payload["instructions"] = "\n\n".join(instructions)
+                payload["input"] = inputs
+        payload.pop("stream_options", None)
+        if "max_output_tokens" not in payload:
+            limit = payload.pop("max_tokens", None)
+            if limit is None:
+                limit = payload.pop("max_completion_tokens", None)
+            if limit is not None:
+                payload["max_output_tokens"] = limit
+        else:
+            payload.pop("max_tokens", None)
+            payload.pop("max_completion_tokens", None)
+        payload["stream"] = True
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     @staticmethod
     def _resource_url(base_url: str, resource: str) -> str:

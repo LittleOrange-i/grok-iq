@@ -680,7 +680,7 @@ function ProviderDetailDialog({
         <dl className='grid gap-x-4 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]'>
           <dt className='text-muted-foreground'>Base URL</dt>
           <dd className='font-mono text-xs break-all'>{provider.baseUrl}</dd>
-          <dt className='text-muted-foreground'>Chat Completions</dt>
+          <dt className='text-muted-foreground'>Responses</dt>
           <dd className='font-mono text-xs break-all'>
             {chatCompletionUrl(provider.baseUrl)}
           </dd>

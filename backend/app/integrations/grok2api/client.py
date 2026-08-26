@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+from curl_cffi.const import CurlHttpVersion, CurlOpt
 from curl_cffi.requests import AsyncSession as CurlAsyncSession
 
 from app.core.config import Settings
@@ -197,7 +198,7 @@ class Grok2APIClient:
 
     Account and proxy lists are read live. For a probe run this adapter creates
     a temporary account-bound model route and (when needed) a temporary client
-    key, calls the normal ``/v1/chat/completions`` endpoint, and verifies the
+    key, calls the grok2api ``/v1/responses`` endpoint, and verifies the
     request audit. Normal checks preserve the account's current egress binding;
     explicit diagnostics may change it temporarily and restore it afterwards.
     """
@@ -222,7 +223,16 @@ class Grok2APIClient:
         )
 
     def _session(self) -> CurlAsyncSession:
-        return CurlAsyncSession(impersonate=self.settings.grok2api_http_impersonate)
+        return CurlAsyncSession(
+            impersonate=self.settings.grok2api_http_impersonate,
+            # Impersonate overwrites ACCEPT_ENCODING after the request kwarg is
+            # applied. Force identity so gzip cannot buffer the SSE body.
+            curl_options={
+                CurlOpt.ACCEPT_ENCODING: b"identity",
+                CurlOpt.BUFFERSIZE: 1024,
+                CurlOpt.HTTP_VERSION: CurlHttpVersion.V1_1,
+            },
+        )
 
     def reset_credentials(self) -> None:
         """Drop cached login state after runtime connection settings change."""

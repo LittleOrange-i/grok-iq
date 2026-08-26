@@ -291,5 +291,5 @@ export const api = {
   scheduler: () => request<Record<string, unknown>>('/scheduler'),
   settings: () => request<Record<string, unknown>>('/settings'),
   chatModels: () => request<unknown[]>('/chat/models'),
-  chatUrl: `${API_BASE}/chat/completions`,
+  chatUrl: `${API_BASE}/responses`,
 }

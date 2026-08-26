@@ -11,7 +11,6 @@ from app.core.config import (
     DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS,
     REGISTER_PROBE_EXECUTION_MODE,
     REGISTER_PROBE_PROXY_TARGETS,
-    REGISTER_PROBE_ROUNDS,
     Settings,
 )
 from app.persistence.account_repository import AccountRepository
@@ -189,7 +188,7 @@ class RegisterIntegrationService:
             account=account,
             profile_ids=self.settings.register_probe_profile_ids,
             execution_mode=REGISTER_PROBE_EXECUTION_MODE,
-            rounds=REGISTER_PROBE_ROUNDS,
+            rounds=self.settings.register_probe_rounds,
             proxy_targets=[
                 dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
             ],

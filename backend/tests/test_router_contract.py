@@ -84,6 +84,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/chat/providers/{provider_id}/api-key"),
     ("POST", "/api/chat/providers/{provider_id}/sync-models"),
     ("GET", "/api/chat/models"),
+    ("POST", "/api/responses"),
     ("POST", "/api/chat/completions"),
     ("GET", "/api/sso-reports"),
     ("POST", "/api/sso-reports"),

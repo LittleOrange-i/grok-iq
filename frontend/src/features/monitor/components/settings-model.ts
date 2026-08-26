@@ -173,7 +173,7 @@ export function toSettingsForm(
       settings.registerProbeStabilizationSeconds ?? 15,
     registerProbeProfileIds: settings.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
-    registerProbeRounds: REGISTER_PROBE_ROUNDS,
+    registerProbeRounds: settings.registerProbeRounds ?? REGISTER_PROBE_ROUNDS,
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation:
       settings.registerProbeSwitchOnDegradation ?? true,
@@ -279,7 +279,7 @@ export function buildSettingsPayload(
     registerProbeStabilizationSeconds: form.registerProbeStabilizationSeconds,
     registerProbeProfileIds: form.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
-    registerProbeRounds: REGISTER_PROBE_ROUNDS,
+    registerProbeRounds: form.registerProbeRounds,
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation: form.registerProbeSwitchOnDegradation,
     wechatNotificationEnabled: form.wechatNotificationEnabled,

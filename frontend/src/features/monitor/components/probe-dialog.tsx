@@ -259,7 +259,7 @@ export function ProbeDialog({
             </Select>
             <p className='text-xs leading-5 text-muted-foreground'>
               {executionMode === 'chat'
-                ? '固定目标账号并调用 /v1/chat/completions；正常定检保持账号现有出口绑定不变。'
+                ? '固定目标账号并调用 /v1/responses；正常定检保持账号现有出口绑定不变。'
                 : '通过 grok2api 出口 quality-test 接口获取哈希和指标，并使用审计记录核验实际账号与出口。'}
             </p>
           </div>
@@ -536,7 +536,7 @@ export function ProbeDialog({
               }
               tooltip={
                 executionMode === 'chat'
-                  ? '/v1/chat/completions 请求总数'
+                  ? '/v1/responses 请求总数'
                   : '出口质量请求总数'
               }
             />

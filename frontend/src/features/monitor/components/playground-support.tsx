@@ -19,9 +19,10 @@ const STORE = 'state'
 
 export function chatCompletionUrl(baseUrl: string): string {
   const base = baseUrl.trim().replace(/\/+$/, '')
-  return base.endsWith('/v1')
-    ? `${base}/chat/completions`
-    : `${base}/v1/chat/completions`
+  if (base.endsWith('/chat/completions') || base.endsWith('/responses')) {
+    return base
+  }
+  return base.endsWith('/v1') ? `${base}/responses` : `${base}/v1/responses`
 }
 
 export function isJsonObject(value: string): boolean {
@@ -132,6 +133,15 @@ export function parseCompletionStreamEvent(
     }>
   }
   if (payload.error) throw new Error(completionStreamError(payload.error))
+
+  if (
+    payload.type === 'response.completed' ||
+    payload.type === 'response.failed' ||
+    payload.type === 'response.incomplete' ||
+    payload.type === 'response.done'
+  ) {
+    return { done: true }
+  }
 
   if (
     payload.type === 'response.reasoning_summary_text.delta' ||

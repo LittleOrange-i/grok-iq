@@ -17,17 +17,17 @@ class StubStreamResponse:
     headers: dict[str, str] = {}
 
     async def aiter_content(self):  # type: ignore[no-untyped-def]
-        yield b'data: {"choices":[{"delta":{"content":"OK"}}]}\n\n'
+        yield b'data: {"type":"response.output_text.delta","delta":"OK"}\n\n'
         yield (
-            b'data: {"choices":[],"usage":{"completion_tokens":1,'
-            b'"completion_tokens_details":{"reasoning_tokens":0}}}\n\n'
+            b'data: {"type":"response.completed","response":{"usage":{"output_tokens":1,'
+            b'"output_tokens_details":{"reasoning_tokens":0}}}}\n\n'
         )
-        yield b"data: [DONE]\n\n"
 
 
 class StubStreamSession:
     def __init__(self, request_body: dict[str, Any]):
         self.request_body = request_body
+        self.url = ""
 
     async def __aenter__(self):  # type: ignore[no-untyped-def]
         return self
@@ -35,8 +35,10 @@ class StubStreamSession:
     async def __aexit__(self, *_: Any):  # type: ignore[no-untyped-def]
         return None
 
-    async def post(self, _: str, *, json: dict[str, Any], **__: Any):
+    async def post(self, url: str, *, json: dict[str, Any], **__: Any):
+        self.url = url
         self.request_body.update(json)
+        self.request_body["_url"] = url
         return StubStreamResponse()
 
 
@@ -113,7 +115,11 @@ async def test_chat_probe_only_sends_explicit_output_limit(
         extra_body={},
     )
 
-    assert request_body.get("max_tokens") == expected
+    assert request_body.get("_url", "").endswith("/v1/responses")
+    assert request_body.get("input") == [{"role": "user", "content": "prompt"}]
+    assert "messages" not in request_body
+    assert "max_tokens" not in request_body
+    assert request_body.get("max_output_tokens") == expected
 
 
 @pytest.mark.asyncio

@@ -94,19 +94,29 @@ class ChatProbeRunner:
         temperature: float | None,
         extra_body: dict[str, Any],
     ) -> dict[str, Any]:
-        messages: list[dict[str, str]] = []
-        if system_prompt.strip():
-            messages.append({"role": "system", "content": system_prompt.strip()})
-        messages.append({"role": "user", "content": prompt})
         body: dict[str, Any] = {
             **extra_body,
             "model": public_model,
-            "messages": messages,
+            "input": [{"role": "user", "content": prompt}],
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        body.pop("messages", None)
+        body.pop("stream_options", None)
+        if system_prompt.strip():
+            body["instructions"] = system_prompt.strip()
         if max_output_tokens > 0:
-            body["max_tokens"] = max_output_tokens
+            body["max_output_tokens"] = max_output_tokens
+            body.pop("max_tokens", None)
+            body.pop("max_completion_tokens", None)
+        elif "max_output_tokens" not in body:
+            limit = body.pop("max_tokens", None)
+            if limit is None:
+                limit = body.pop("max_completion_tokens", None)
+            if limit is not None:
+                body["max_output_tokens"] = limit
+        else:
+            body.pop("max_tokens", None)
+            body.pop("max_completion_tokens", None)
         if temperature is not None:
             body["temperature"] = temperature
         return body
@@ -123,23 +133,25 @@ class ChatProbeRunner:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            "Accept-Encoding": "identity",
             "X-Request-ID": request_id,
             "X-Thread-ID": request_id,
         }
         try:
             async with self.session_factory() as client:
                 response = await client.post(
-                    f"{self.base_url()}/v1/chat/completions",
+                    f"{self.base_url()}/v1/responses",
                     headers=headers,
                     json=body,
                     stream=True,
+                    accept_encoding="identity",
                     timeout=300,
                 )
                 state.status_code = response.status_code
                 if state.status_code < 200 or state.status_code >= 300:
                     error_body = await response.acontent()
                     raise self.response_error(
-                        context="/v1/chat/completions",
+                        context="/v1/responses",
                         status_code=state.status_code,
                         body=error_body.decode("utf-8", "replace"),
                         retry_after=response.headers.get("Retry-After"),
@@ -154,9 +166,9 @@ class ChatProbeRunner:
         except Exception as exc:
             if isinstance(exc, self.error_type):
                 raise
-            raise self.error_type(f"读取 /v1/chat/completions 流失败: {exc}") from exc
+            raise self.error_type(f"读取 /v1/responses 流失败: {exc}") from exc
         if not state.terminal:
-            raise self.error_type("流式响应未收到 [DONE]")
+            raise self.error_type("流式响应未收到结束事件")
 
     def _consume_chunk(
         self, chunk: bytes, state: ChatProbeStreamState, request_id: str
@@ -190,20 +202,75 @@ class ChatProbeRunner:
             payload = json.loads(data)
         except json.JSONDecodeError:
             return
+        if not isinstance(payload, dict):
+            return
         self._raise_payload_error(payload, state.status_code, request_id)
+        usage = self._usage_from_payload(payload)
+        if usage is not None:
+            state.usage = usage
+        event_type = str(payload.get("type") or "")
+        if event_type in {
+            "response.completed",
+            "response.failed",
+            "response.incomplete",
+            "response.done",
+        }:
+            state.terminal = True
+            return
+        content, reasoning = self._delta_from_payload(payload, event_type)
+        if (content or reasoning) and state.first_generated_at is None:
+            state.first_generated_at = time.perf_counter()
+        if content:
+            state.visible_parts.append(content)
+            state.chunk_count += 1
+        if reasoning:
+            state.reasoning_parts.append(reasoning)
+
+    @staticmethod
+    def _usage_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(payload.get("usage"), dict):
-            state.usage = payload["usage"]
+            return payload["usage"]
+        response = payload.get("response")
+        if isinstance(response, dict) and isinstance(response.get("usage"), dict):
+            return response["usage"]
+        return None
+
+    @classmethod
+    def _delta_from_payload(
+        cls, payload: dict[str, Any], event_type: str
+    ) -> tuple[str, str]:
+        if event_type in {
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+        }:
+            return "", cls._delta_text(payload.get("delta"))
+        if event_type == "response.output_text.delta":
+            return cls._delta_text(payload.get("delta")), ""
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         for choice in payload.get("choices", []):
+            if not isinstance(choice, dict):
+                continue
             delta = choice.get("delta") or {}
-            content = str(delta.get("content") or "")
-            reasoning = str(delta.get("reasoning") or delta.get("reasoning_content") or "")
-            if (content or reasoning) and state.first_generated_at is None:
-                state.first_generated_at = time.perf_counter()
+            if not isinstance(delta, dict):
+                continue
+            content = cls._delta_text(delta.get("content"))
+            reasoning = cls._delta_text(
+                delta.get("reasoning") or delta.get("reasoning_content")
+            )
             if content:
-                state.visible_parts.append(content)
-                state.chunk_count += 1
+                content_parts.append(content)
             if reasoning:
-                state.reasoning_parts.append(reasoning)
+                reasoning_parts.append(reasoning)
+        return "".join(content_parts), "".join(reasoning_parts)
+
+    @staticmethod
+    def _delta_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return str(value.get("text") or value.get("content") or "")
+        return ""
 
     def _raise_payload_error(
         self, payload: dict[str, Any], status_code: int, request_id: str
@@ -237,9 +304,15 @@ class ChatProbeRunner:
         )
         generation_ms = max(0, duration_ms - first_token_ms) if state.first_generated_at is not None else 0
         usage = state.usage or {}
-        details = usage.get("completion_tokens_details") or {}
-        output_tokens = int(usage.get("completion_tokens") or 0)
-        reasoning_tokens = int(details.get("reasoning_tokens") or 0)
+        details = (
+            usage.get("output_tokens_details")
+            or usage.get("completion_tokens_details")
+            or {}
+        )
+        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+        reasoning_tokens = int(
+            details.get("reasoning_tokens") or details.get("thinking_tokens") or 0
+        )
         reasoning_tokens_reported = "reasoning_tokens" in details
         visible_tokens = max(output_tokens - reasoning_tokens, 0)
         if visible_tokens == 0 and response_text:

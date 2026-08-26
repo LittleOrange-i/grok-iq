@@ -380,14 +380,14 @@ def test_registration_strategy_migrates_to_fixed_current_egress_policy(tmp_path:
     assert settings.initial_probe_on_register is True
     assert settings.register_probe_profile_ids == ["custom-profile"]
     assert settings.register_probe_execution_mode == "chat"
-    assert settings.register_probe_rounds == 3
+    assert settings.register_probe_rounds == 8
     assert settings.register_probe_proxy_targets == [
         {"kind": "current", "id": None}
     ]
     stored = repository.load()
     assert stored["register_probe_profile_ids"] == ["custom-profile"]
     assert stored["register_probe_execution_mode"] == "chat"
-    assert stored["register_probe_rounds"] == 3
+    assert stored["register_probe_rounds"] == 8
     assert stored["register_probe_proxy_targets"] == [
         {"kind": "current", "id": None}
     ]
@@ -408,7 +408,7 @@ def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Pa
 
     assert settings.register_probe_profile_ids == ["profile-a", "profile-b"]
     assert settings.register_probe_execution_mode == "chat"
-    assert settings.register_probe_rounds == 3
+    assert settings.register_probe_rounds == 9
     assert settings.register_probe_proxy_targets == [
         {"kind": "current", "id": None}
     ]
@@ -423,7 +423,7 @@ def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Pa
         "profile-b",
     ]
     assert reloaded_settings.register_probe_execution_mode == "chat"
-    assert reloaded_settings.register_probe_rounds == 3
+    assert reloaded_settings.register_probe_rounds == 9
     assert reloaded_settings.register_probe_proxy_targets == [
         {"kind": "current", "id": None}
     ]

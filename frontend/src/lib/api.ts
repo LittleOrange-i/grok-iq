@@ -2480,5 +2480,5 @@ export const api = {
     }),
   chatModels: (providerId = '') =>
     request<ChatModel[]>(`/chat/models${query({ providerId })}`),
-  chatUrl: `${API_BASE}/chat/completions`,
+  chatUrl: `${API_BASE}/responses`,
 }

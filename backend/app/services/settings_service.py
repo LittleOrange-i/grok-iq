@@ -7,7 +7,6 @@ from app.core.config import (
     DEFAULT_REGISTER_PROBE_PROFILE_IDS,
     REGISTER_PROBE_EXECUTION_MODE,
     REGISTER_PROBE_PROXY_TARGETS,
-    REGISTER_PROBE_ROUNDS,
     Settings,
 )
 from app.persistence.settings_repository import SettingsRepository
@@ -24,7 +23,6 @@ RISK_RULE_SWITCH_FIELDS = {
 def fixed_register_probe_strategy() -> dict[str, Any]:
     return {
         "register_probe_execution_mode": REGISTER_PROBE_EXECUTION_MODE,
-        "register_probe_rounds": REGISTER_PROBE_ROUNDS,
         "register_probe_proxy_targets": [
             dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
         ],

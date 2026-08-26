@@ -315,6 +315,10 @@ export function PlaygroundPage() {
         )
       )
     }
+    const scheduleFlush = () => {
+      if (animationFrame) return
+      animationFrame = window.requestAnimationFrame(flushPending)
+    }
     const cancelPendingFlush = () => {
       if (!animationFrame) return
       window.cancelAnimationFrame(animationFrame)
@@ -383,11 +387,6 @@ export function PlaygroundPage() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
-      const scheduleFlush = () => {
-        // Coalesce a burst into one render without slowing down SSE consumption.
-        if (animationFrame) return
-        animationFrame = window.requestAnimationFrame(flushPending)
-      }
       const consumeEvent = (event: string) => {
         const parsed = parseCompletionStreamEvent(event)
         if (!parsed) return false
@@ -398,6 +397,9 @@ export function PlaygroundPage() {
         if (parsed.delta.content || parsed.delta.reasoning) {
           pending.content += parsed.delta.content
           pending.reasoning += parsed.delta.reasoning
+          // Keep reading the network as fast as it arrives. Only throttle
+          // React renders to one paint per frame so a finished SSE burst
+          // cannot keep typing long after the stream has closed.
           scheduleFlush()
         }
         return false
@@ -406,7 +408,11 @@ export function PlaygroundPage() {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        buffer = buffer.replace(/\r\n/g, '\n')
+        // SSE permits CRLF, LF, and legacy CR event separators. Normalize all
+        // of them before splitting so a provider using `\r\r` still streams
+        // each delta immediately instead of failing on one concatenated JSON
+        // payload at the end of the response.
+        buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
         const events = buffer.split('\n\n')
         buffer = events.pop() ?? ''
         for (const event of events) {
@@ -414,7 +420,7 @@ export function PlaygroundPage() {
         }
       }
       buffer += decoder.decode()
-      buffer = buffer.replace(/\r\n/g, '\n')
+      buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
       if (buffer.trim() && consumeEvent(buffer)) return
       complete()
     } catch (error) {

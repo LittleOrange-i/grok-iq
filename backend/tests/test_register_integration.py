@@ -107,7 +107,7 @@ async def test_webhook_auto_binds_before_enqueue():
     assert probes.values is not None
     assert probes.values["profile_ids"] == ["profile-a", "profile-b"]
     assert probes.values["execution_mode"] == "chat"
-    assert probes.values["rounds"] == 3
+    assert probes.values["rounds"] == 9
     assert probes.values["proxy_targets"] == [{"kind": "current", "id": None}]
     assert repository.completed == ("event-1", 17, ["run-1"])
     assert repository.bound == ("event-1", 17)

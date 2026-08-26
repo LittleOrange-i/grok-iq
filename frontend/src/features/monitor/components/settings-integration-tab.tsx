@@ -333,12 +333,24 @@ export function SettingsIntegrationTab({
               <FixedProbeSetting
                 icon={Layers3}
                 label='执行轮数'
-                value='每个方案 3 轮'
+                value={`每个方案 ${form.registerProbeRounds} 轮`}
               />
               <FixedProbeSetting
                 icon={ShieldCheck}
                 label='出口策略'
                 value='账号当前绑定出口'
+              />
+            </div>
+            <div className='mt-4 max-w-xs'>
+              <NumberField
+                label='每个方案执行轮数'
+                hint='每个选中的探针方案都会按此次数执行；默认 3 轮，可设置 1–20 轮。'
+                value={form.registerProbeRounds}
+                min={1}
+                max={20}
+                step={1}
+                suffix='轮'
+                onChange={(value) => set('registerProbeRounds', value)}
               />
             </div>
           </IntegrationPanel>

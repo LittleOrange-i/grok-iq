@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -55,8 +56,9 @@ def build_chat_router(service: ChatService) -> APIRouter:
     ) -> list[dict[str, Any]]:
         return await service.list_models(provider_id)
 
+    @router.post("/responses")
     @router.post("/chat/completions")
-    async def chat_completions(request: Request) -> StreamingResponse:
+    async def create_response(request: Request) -> StreamingResponse:
         stream = await service.open_completion(
             provider_id=request.headers.get("x-chat-provider-id", ""),
             body=await request.body(),
@@ -67,13 +69,21 @@ def build_chat_router(service: ChatService) -> APIRouter:
             buffer = bytearray()
             try:
                 async for chunk in stream.response.aiter_content():
+                    if not chunk:
+                        continue
                     buffer.extend(chunk)
                     while True:
                         boundary = _sse_event_boundary(buffer)
                         if boundary is None:
                             break
-                        yield bytes(buffer[:boundary])
+                        event = bytes(buffer[:boundary])
                         del buffer[:boundary]
+                        yield event
+                        # Let h11 flush this SSE event before reading more
+                        # upstream data, so the browser sees tokens live.
+                        await asyncio.sleep(0)
+                        if _stream_chunk_is_terminal(event):
+                            return
                 if buffer:
                     yield bytes(buffer)
             finally:
@@ -85,7 +95,9 @@ def build_chat_router(service: ChatService) -> APIRouter:
                 "content-type", "text/event-stream"
             ),
             headers={
+                "Content-Type": "text/event-stream; charset=utf-8",
                 "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
         )
@@ -100,3 +112,19 @@ def _sse_event_boundary(buffer: bytearray) -> int | None:
         if (index := buffer.find(separator)) >= 0
     ]
     return min(boundaries, default=None)
+
+
+def _stream_chunk_is_terminal(chunk: bytes) -> bool:
+    """Stop proxying once an upstream SSE stream has declared completion."""
+    text = chunk.decode("utf-8", "ignore")
+    return (
+        "data: [DONE]" in text
+        or '"type":"response.completed"' in text
+        or '"type": "response.completed"' in text
+        or '"type":"response.failed"' in text
+        or '"type": "response.failed"' in text
+        or '"type":"response.incomplete"' in text
+        or '"type": "response.incomplete"' in text
+        or '"type":"response.done"' in text
+        or '"type": "response.done"' in text
+    )

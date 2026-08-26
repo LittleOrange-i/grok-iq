@@ -338,7 +338,7 @@ export function RequestConfiguration({
                   </Badge>
                 </div>
                 <div>
-                  <div className='text-muted-foreground'>Chat Completions</div>
+                  <div className='text-muted-foreground'>Responses</div>
                   <div className='mt-1 font-mono text-[10px] leading-4 break-all'>
                     {chatCompletionUrl(selectedProvider.baseUrl)}
                   </div>

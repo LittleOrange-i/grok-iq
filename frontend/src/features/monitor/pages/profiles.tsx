@@ -928,7 +928,7 @@ const DEFAULT_PROFILE_FORM = {
   name: '',
   description: '用于检测账号在固定格式、指令遵循和完整输出方面是否出现异常。',
   model: '',
-  system_prompt: '请严格遵循用户要求，完整输出结果，不要省略关键内容。',
+  system_prompt: '',
   prompt:
     '请用三点解释为什么天空呈蓝色，每点包含标题和一句说明，最后给出一句总结。',
   expected_text: '',
