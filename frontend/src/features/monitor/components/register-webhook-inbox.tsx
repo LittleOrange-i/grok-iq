@@ -446,9 +446,17 @@ function RegisterEventRow({
       <TableCell>
         <div>{event.run_ids.length} 个任务</div>
         {event.bot_risk && (
-          <div className='mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400'>
+          <div
+            className={
+              event.bfs === '1' || event.bfs === '2'
+                ? 'mt-1 flex items-center gap-1 text-xs text-destructive'
+                : 'mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400'
+            }
+          >
             <Bot className='size-3' />
-            注册风控{event.bfs ? ` · bfs ${event.bfs}` : ''}
+            {event.bfs === '1' || event.bfs === '2'
+              ? `确认降智 · bfs ${event.bfs}`
+              : `注册风控${event.bfs ? ` · bfs ${event.bfs}` : ''}`}
           </div>
         )}
       </TableCell>
@@ -538,7 +546,9 @@ function RegisterEventDetailDialog({
             label='注册风控'
             value={
               event.bot_risk
-                ? `是${event.bfs ? ` · bfs ${event.bfs}` : ''}`
+                ? event.bfs === '1' || event.bfs === '2'
+                  ? `确认降智 · bfs ${event.bfs}`
+                  : `是${event.bfs ? ` · bfs ${event.bfs}` : ''}`
                 : '否'
             }
           />

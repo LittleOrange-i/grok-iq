@@ -507,7 +507,12 @@ class AccountRepository:
             if assessment is None:
                 assessment = AccountAssessment(account_id=account_id)
                 session.add(assessment)
-            reason = f"grok-register 报告 bot_risk/bfs={bfs}"
+            bfs_text = str(bfs or "").strip()
+            reason = (
+                f"grok-register 确认降智：bot_risk/bfs={bfs}"
+                if bfs_text in {"1", "2"}
+                else f"grok-register 报告 bot_risk/bfs={bfs}"
+            )
             assessment.monitor_status = "high_risk"
             assessment.risk_score = min(
                 risk_score_cap,

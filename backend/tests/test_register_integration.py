@@ -7,7 +7,10 @@ import pytest
 
 from app.core.clock import utc_now
 from app.core.config import Settings
-from app.services.register_integration import RegisterIntegrationService
+from app.services.register_integration import (
+    RegisterIntegrationService,
+    is_confirmed_register_degradation,
+)
 
 
 class FakeGrokClient:
@@ -100,6 +103,12 @@ class RegisterAccountService:
         self.auto_bound = False
         self.client = FakeGrokClient()
         self.account_priority = 8
+        self.quarantines: list[dict[str, Any]] = []
+
+    async def apply_auto_quarantine(self, account_id: int, **values: Any) -> dict[str, Any]:
+        payload = {"accountId": int(account_id), **values, "actionStatus": "disabled"}
+        self.quarantines.append(payload)
+        return payload
 
     async def find_registered_account(
         self,
@@ -151,6 +160,26 @@ class RegisterProbeManager:
 
 class UnusedAccountRepository:
     pass
+
+
+class FakeAccountRepository:
+    def __init__(self) -> None:
+        self.marked: list[dict[str, Any]] = []
+        self.assessments: dict[int, dict[str, Any]] = {}
+
+    def get_assessment(self, account_id: int) -> dict[str, Any] | None:
+        return self.assessments.get(int(account_id))
+
+    def mark_registration_risk(self, **values: Any) -> dict[str, Any]:
+        self.marked.append(values)
+        assessment = {
+            "account_id": int(values["account_id"]),
+            "monitor_status": "high_risk",
+            "risk_score": 85,
+            "risk_reasons": [f"grok-register 报告 bot_risk/bfs={values.get('bfs')}"],
+        }
+        self.assessments[int(values["account_id"])] = assessment
+        return assessment
 
 
 @pytest.mark.asyncio
@@ -371,6 +400,14 @@ def _service(
     return service, repository, account_service, probes
 
 
+def test_confirmed_register_degradation_only_for_bfs_1_or_2():
+    assert is_confirmed_register_degradation(bot_risk=True, bfs=1) is True
+    assert is_confirmed_register_degradation(bot_risk=True, bfs="2") is True
+    assert is_confirmed_register_degradation(bot_risk=True, bfs=3) is False
+    assert is_confirmed_register_degradation(bot_risk=False, bfs=1) is False
+    assert is_confirmed_register_degradation(bot_risk=True, bfs="") is False
+
+
 @pytest.mark.asyncio
 async def test_webhook_holds_priority_before_stabilization_wait():
     service, repository, account_service, probes = _service(
@@ -582,3 +619,77 @@ async def test_priority_hold_does_not_overwrite_original_on_retry():
     assert held["original_priority"] == 8
     assert held["priority_hold_status"] == "held"
     assert account_service.client.priorities[17] == -1000
+
+
+@pytest.mark.asyncio
+async def test_confirmed_bfs_quarantines_without_probe_or_hold():
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    accounts = FakeAccountRepository()
+    service = RegisterIntegrationService(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_priority_hold_enabled=True,
+            register_priority_hold=-1000,
+        ),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=accounts,  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-bfs-1",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "risk@example.test",
+            "bot_risk": True,
+            "bfs": 1,
+            "registration_id": "reg-1",
+        }
+    )
+
+    assert repository.completed == ("event-bfs-1", 17, [])
+    assert probes.values is None
+    assert account_service.client.priorities == {}
+    assert len(account_service.quarantines) == 1
+    quarantine = account_service.quarantines[0]
+    assert quarantine["accountId"] == 17
+    assert quarantine["force"] is True
+    assert quarantine["permanent"] is True
+    assert quarantine["source"] == "grok-register"
+    assert accounts.marked[0]["bfs"] == 1
+
+
+@pytest.mark.asyncio
+async def test_bot_risk_without_confirmed_bfs_still_enqueues_probe():
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    accounts = FakeAccountRepository()
+    service = RegisterIntegrationService(
+        settings=Settings(initial_probe_on_register=True),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=accounts,  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-bfs-3",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "watch@example.test",
+            "bot_risk": True,
+            "bfs": 3,
+        }
+    )
+
+    assert repository.completed == ("event-bfs-3", 17, ["run-1"])
+    assert probes.values is not None
+    assert account_service.quarantines == []
+    assert accounts.marked[0]["bfs"] == 3
+

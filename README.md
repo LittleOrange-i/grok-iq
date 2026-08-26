@@ -257,7 +257,7 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 | `grok2api_account_id` | integer | 已知时可传；未知时按邮箱匹配 |
 | `sso` | string | 原始 SSO；供账号页批量检测。支持裸 token、`sso=` 前缀或 `email----token` |
 | `bot_risk` | boolean | 注册阶段是否发现风控，默认 `false` |
-| `bfs` | string / integer | 注册阶段的 bfs 风控值 |
+| `bfs` | string / integer | 注册阶段的 bfs 风控值。`bot_risk=true` 且 `bfs` 为 `1` 或 `2` 时视为确认降智，接入后立即永久停用，不再排队注册探针 |
 | `occurred_at` | string | 事件发生时间，建议使用 ISO 8601 |
 
 接口返回 HTTP `202` 表示事件已经持久接收，账号匹配、失败重试和探针执行由后台继续完成。探针方案、模式、轮次和出口均使用 GrokIQ 的默认策略，调用方不需要传入。

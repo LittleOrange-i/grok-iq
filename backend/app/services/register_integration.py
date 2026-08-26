@@ -36,6 +36,15 @@ HOLD_SCAN_INTERVAL_SECONDS = 30.0
 # Kept as a compatibility alias for integrations importing the former constant;
 # runtime behavior uses the hot-updatable Settings value below.
 REGISTER_PROBE_STABILIZATION_SECONDS = DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS
+CONFIRMED_REGISTER_DEGRADATION_BFS = frozenset({"1", "2"})
+
+
+def is_confirmed_register_degradation(*, bot_risk: Any, bfs: Any) -> bool:
+    """Return True when grok-register reports a confirmed 降智 account."""
+
+    if not bool(bot_risk):
+        return False
+    return str(bfs or "").strip() in CONFIRMED_REGISTER_DEGRADATION_BFS
 
 
 class RegisteredAccountPending(RuntimeError):
@@ -128,10 +137,23 @@ class RegisterIntegrationService:
             account = await self._registered_account(event)
             account_id = int(account.get("id") or 0)
             self.repository.bind_account(event_id, account_id)
+            await self._record_registration_risk(event_id, event, account)
+            if is_confirmed_register_degradation(
+                bot_risk=event.get("bot_risk"),
+                bfs=event.get("bfs"),
+            ):
+                await self._quarantine_confirmed_register_account(event, account)
+                self.repository.complete(event_id, account_id, [])
+                logger.info(
+                    "register webhook completed event_id=%s account_id=%s "
+                    "confirmed_degradation=1 runs=0",
+                    event_id,
+                    account_id,
+                )
+                return
             await self._apply_priority_hold(event, account)
             if self.settings.initial_probe_on_register:
                 self._ensure_initial_probe_ready(event, account)
-            await self._record_registration_risk(event_id, event, account)
             run_ids = await self._enqueue_initial_probe(event_id, account)
             self.repository.complete(event_id, account_id, run_ids)
             logger.info(
@@ -188,6 +210,36 @@ class RegisterIntegrationService:
                 event_id,
                 account_id,
             )
+
+    async def _quarantine_confirmed_register_account(
+        self,
+        event: dict[str, Any],
+        account: dict[str, Any],
+    ) -> dict[str, Any]:
+        account_id = int(account.get("id") or 0)
+        bfs = event.get("bfs")
+        result = await self.account_service.apply_auto_quarantine(
+            account_id,
+            source="grok-register",
+            note=f"grok-register 确认降智：bot_risk/bfs={bfs}",
+            risk_score=max(float(self.settings.risk_high_floor), 85.0),
+            force=True,
+            permanent=True,
+            detail={
+                "botRisk": True,
+                "bfs": bfs,
+                "registrationId": str(event.get("registration_id") or ""),
+                "eventId": str(event.get("event_id") or ""),
+            },
+        )
+        logger.info(
+            "register confirmed degradation quarantined event_id=%s "
+            "account_id=%s action=%s",
+            event.get("event_id"),
+            account_id,
+            result.get("actionStatus"),
+        )
+        return result
 
     async def _enqueue_initial_probe(
         self, event_id: str, account: dict[str, Any]

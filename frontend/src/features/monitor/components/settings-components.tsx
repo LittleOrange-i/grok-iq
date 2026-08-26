@@ -238,7 +238,8 @@ function WebhookContract() {
     {
       name: 'bfs',
       type: 'string | integer',
-      description: '注册阶段的 bfs 风控值。',
+      description:
+        '注册阶段的 bfs 风控值。bot_risk 为 true 且 bfs 为 1 或 2 时视为确认降智，接入后立即永久停用。',
     },
     {
       name: 'occurred_at',
