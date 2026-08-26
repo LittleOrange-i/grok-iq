@@ -57,7 +57,7 @@ export const settingsSections = [
     value: 'risk',
     href: '/settings/risk',
     title: '风险与隔离',
-    description: '模型能力、风险规则、评分、连续信号与账号处置。',
+    description: '探针判定、审计规则和账号隔离处置。',
     icon: BrainCircuit,
   },
   {
@@ -71,7 +71,7 @@ export const settingsSections = [
     value: 'integrations',
     href: '/settings/integrations',
     title: '联动与启动项',
-    description: '注册 Webhook、导入后降权、首次探针和启动参数。',
+    description: '注册接入、导入探针和启动参数。',
     icon: Workflow,
   },
   {

@@ -21,6 +21,7 @@ import { copyText } from '@/lib/clipboard'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
   TooltipContent,
@@ -80,7 +81,23 @@ export function SettingsIntegrationTab({
       : 'secondary'
 
   return (
-    <div className='space-y-4'>
+    <Tabs defaultValue='register' className='space-y-4'>
+      <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+        <TabsTrigger value='register'>
+          <Webhook />
+          注册接入
+        </TabsTrigger>
+        <TabsTrigger value='import'>
+          <Workflow />
+          导入探针
+        </TabsTrigger>
+        <TabsTrigger value='bootstrap'>
+          <ServerCog />
+          启动项
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value='register' className='mt-0 space-y-4'>
       <SettingsCard
         icon={Webhook}
         title='grok-register 自动联动'
@@ -175,7 +192,9 @@ export function SettingsIntegrationTab({
           </Field>
         </div>
       </SettingsCard>
+      </TabsContent>
 
+      <TabsContent value='import' className='mt-0 space-y-4'>
       <SettingsCard
         icon={Workflow}
         title='导入后处理'
@@ -288,7 +307,9 @@ export function SettingsIntegrationTab({
           </div>
         </div>
       </SettingsCard>
+      </TabsContent>
 
+      <TabsContent value='bootstrap' className='mt-0 space-y-4'>
       <SettingsCard
         icon={ServerCog}
         title='启动级参数'
@@ -312,6 +333,7 @@ export function SettingsIntegrationTab({
           />
         </div>
       </SettingsCard>
-    </div>
+      </TabsContent>
+    </Tabs>
   )
 }

@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { InfoTooltip } from '@/components/info-tooltip'
 import {
   NumberField,
@@ -37,7 +38,23 @@ export function SettingsRiskTab({
   restoreRecommendedRiskScoring: () => void
 }) {
   return (
-    <div className='space-y-4'>
+    <Tabs defaultValue='probe' className='space-y-4'>
+      <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+        <TabsTrigger value='probe'>
+          <Activity />
+          探针判定
+        </TabsTrigger>
+        <TabsTrigger value='audit'>
+          <ShieldCheck />
+          审计规则
+        </TabsTrigger>
+        <TabsTrigger value='isolation'>
+          <Power />
+          隔离处置
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value='probe' className='mt-0 space-y-4'>
       <div className='grid gap-4 xl:grid-cols-2'>
         <SettingsCard
           icon={Activity}
@@ -174,8 +191,6 @@ export function SettingsRiskTab({
         </SettingsCard>
       </div>
 
-      <SettingsReasoningPolicyCard form={form} set={set} />
-
       <SettingsCard
         icon={Calculator}
         title='风险评分规则'
@@ -308,6 +323,10 @@ export function SettingsRiskTab({
           </div>
         </div>
       </SettingsCard>
+      </TabsContent>
+
+      <TabsContent value='audit' className='mt-0 space-y-4'>
+      <SettingsReasoningPolicyCard form={form} set={set} />
 
       <SettingsCard
         icon={ShieldCheck}
@@ -416,16 +435,18 @@ export function SettingsRiskTab({
           </div>
         </div>
       </SettingsCard>
+      </TabsContent>
 
+      <TabsContent value='isolation' className='mt-0 space-y-4'>
       <SettingsCard
         icon={Power}
-        title='自动隔离'
-        description='高风险账号可以自动停用 grok2api 账号；请求审计工作台的处置开关也在这里统一管理。'
+        title='请求审计处置'
+        description='请求审计工作台命中停用或 TPS-only 规则后的账号动作。这里的隔离就是停用 grok2api 账号。'
       >
         <SettingList>
           <SettingListItem
             label='请求审计账号处置'
-            description='控制请求审计工作台和自动处置流程是否可以停用或调整账号；关闭后仍保存风险证据。这里的隔离就是停用 grok2api 账号。'
+            description='控制请求审计工作台和自动处置流程是否可以停用或调整账号；关闭后仍保存风险证据。'
             checked={form.requestAuditIsolationEnabled}
             onCheckedChange={(value) =>
               set('requestAuditIsolationEnabled', value)
@@ -454,9 +475,18 @@ export function SettingsRiskTab({
               </div>
             ) : null}
           </SettingListItem>
+        </SettingList>
+      </SettingsCard>
+
+      <SettingsCard
+        icon={ShieldCheck}
+        title='探针自动停用'
+        description='探针侧账号进入高风险后，通过 grok2api 管理 API 停用账号。'
+      >
+        <SettingList>
           <SettingListItem
             label='自动停用高风险账号'
-            description={`探针侧重复异常成立且强信号达到 ${form.highRiskHardCount} 次后，通过 grok2api 管理 API 停用账号。`}
+            description={`探针侧重复异常成立且强信号达到 ${form.highRiskHardCount} 次后停用账号。`}
             checked={form.autoQuarantine}
             onCheckedChange={(value) => set('autoQuarantine', value)}
           />
@@ -486,6 +516,7 @@ export function SettingsRiskTab({
           </SettingListItem>
         </SettingList>
       </SettingsCard>
-    </div>
+      </TabsContent>
+    </Tabs>
   )
 }
