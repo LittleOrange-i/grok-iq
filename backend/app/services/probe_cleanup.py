@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from app.integrations.grok2api.client import Grok2APIClient
+from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import AccountSettingsSnapshot, ProbeRepository
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -20,9 +24,40 @@ class UpstreamCleanupResult:
 class ProbeCleanupCoordinator:
     """Restores account state and removes temporary upstream resources."""
 
-    def __init__(self, repository: ProbeRepository, client: Grok2APIClient):
+    def __init__(
+        self,
+        repository: ProbeRepository,
+        client: Grok2APIClient,
+        accounts: AccountRepository | None = None,
+    ):
         self.repository = repository
         self.client = client
+        self.accounts = accounts
+
+    def _account_is_isolated(self, account_id: int) -> bool:
+        if self.accounts is None or account_id <= 0:
+            return False
+        assessment = self.accounts.get_assessment(account_id) or {}
+        if str(assessment.get("monitor_status") or "") == "quarantined":
+            return True
+        return bool(assessment.get("disabled_by_monitor"))
+
+    def _enabled_for_snapshot_restore(
+        self,
+        account_id: int,
+        snapshot_enabled: bool,
+    ) -> bool:
+        """Never re-enable an account GrokIQ has already isolated."""
+
+        if not snapshot_enabled:
+            return False
+        if self._account_is_isolated(account_id):
+            logger.info(
+                "probe restore kept account %s disabled; GrokIQ isolation is active",
+                account_id,
+            )
+            return False
+        return True
 
     async def restore_diagnostic_activation(
         self,
@@ -34,7 +69,9 @@ class ProbeCleanupCoordinator:
         async def restore() -> None:
             await self.client.set_account_routing_settings(
                 account_id,
-                enabled=snapshot.enabled,
+                enabled=self._enabled_for_snapshot_restore(
+                    account_id, snapshot.enabled
+                ),
                 priority=snapshot.priority,
                 max_concurrent=snapshot.max_concurrent,
             )
@@ -137,13 +174,20 @@ class ProbeCleanupCoordinator:
             try:
                 await self.client.set_account_routing_settings(
                     account_id,
-                    enabled=snapshot.enabled,
+                    enabled=self._enabled_for_snapshot_restore(
+                        account_id, snapshot.enabled
+                    ),
                     priority=snapshot.priority,
                     max_concurrent=snapshot.max_concurrent,
                 )
                 self.repository.set_diagnostic_activation(run_id, False)
             except Exception as exc:
                 errors.append(f"恢复启用状态、优先级和并发数失败: {exc}")
+        elif self._account_is_isolated(account_id):
+            try:
+                await self.client.set_account_enabled(account_id, False)
+            except Exception as exc:
+                errors.append(f"保持隔离账号停用失败: {exc}")
         if restore_egress_requested:
             try:
                 await self.client.restore_account_egress(

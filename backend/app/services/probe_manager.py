@@ -88,7 +88,7 @@ class ProbeManager:
         self._current_probe_lock = asyncio.Lock()
         self._next_current_probe_at = 0.0
         self._target_validator = ProbeTargetValidator(client)
-        self._cleanup_coordinator = ProbeCleanupCoordinator(repository, client)
+        self._cleanup_coordinator = ProbeCleanupCoordinator(repository, client, accounts)
         self._call_runner = ProbeCallRunner(self, logger)
         self._run_executor = ProbeRunExecutor(self, logger)
         self._worker_loop = ProbeWorkerLoop(self, logger)
