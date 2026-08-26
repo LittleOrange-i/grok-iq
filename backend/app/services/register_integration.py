@@ -253,7 +253,7 @@ class RegisterIntegrationService:
             account=account,
             profile_ids=self.settings.register_probe_profile_ids,
             execution_mode=REGISTER_PROBE_EXECUTION_MODE,
-            rounds=self.settings.register_probe_rounds,
+            rounds=self.settings.register_probe_rounds_by_profile(),
             proxy_targets=[
                 dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
             ],

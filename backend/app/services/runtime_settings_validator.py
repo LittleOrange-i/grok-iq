@@ -159,6 +159,30 @@ class RuntimeSettingsValidator:
             raise ValueError("账号当前出口不能与诊断出口混用")
         candidate.register_probe_profile_ids = profile_ids
         candidate.register_probe_proxy_targets = targets
+        candidate.register_probe_profile_rounds = self._normalize_register_profile_rounds(
+            profile_ids,
+            candidate.register_probe_profile_rounds,
+            candidate.register_probe_rounds,
+        )
+
+    @staticmethod
+    def _normalize_register_profile_rounds(
+        profile_ids: list[str],
+        raw_rounds: dict[str, object] | None,
+        default_rounds: int,
+    ) -> dict[str, int]:
+        source = raw_rounds if isinstance(raw_rounds, dict) else {}
+        normalized: dict[str, int] = {}
+        for profile_id in profile_ids:
+            raw = source.get(profile_id, default_rounds)
+            try:
+                value = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"探针方案 {profile_id} 的执行轮数无效") from exc
+            if value < 1 or value > 20:
+                raise ValueError(f"探针方案 {profile_id} 的执行轮数需在 1–20 之间")
+            normalized[profile_id] = value
+        return normalized
 
     @staticmethod
     def _normalize_register_targets(

@@ -66,6 +66,34 @@ def create_run(
     )
 
 
+def test_register_runs_use_per_profile_rounds(repository: ProbeRepository):
+    result = repository.create_register_runs(
+        source_event_id="registration-10",
+        account={
+            "id": 10,
+            "name": "new-account",
+            "email": "new@example.test",
+        },
+        profile_ids=["quality-marker", "reasoning-check"],
+        rounds={"quality-marker": 1, "reasoning-check": 4},
+        proxy_targets=[{"kind": "current", "id": None}],
+        execution_mode="chat",
+        priority=150,
+        queue_limit=20,
+    )
+
+    assert result["created"] == 2
+    runs = repository.list_runs(page=1, page_size=20)["items"]
+    assert {run["profile_id"]: run["rounds"] for run in runs} == {
+        "quality-marker": 1,
+        "reasoning-check": 4,
+    }
+    assert {run["profile_id"]: run["total_steps"] for run in runs} == {
+        "quality-marker": 1,
+        "reasoning-check": 4,
+    }
+
+
 def test_worker_queue_stats_include_oldest_wait(repository: ProbeRepository):
     run_id = create_run(repository)
     with repository.database.transaction() as session:

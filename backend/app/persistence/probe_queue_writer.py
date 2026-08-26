@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -145,7 +145,7 @@ class ProbeQueueWriter:
         source_event_id: str,
         account: dict[str, Any],
         profile_ids: list[str],
-        rounds: int,
+        rounds: int | Mapping[str, int],
         proxy_targets: list[dict[str, Any]],
         execution_mode: str,
         priority: int,
@@ -345,7 +345,7 @@ class ProbeQueueWriter:
         accounts: dict[int, dict[str, Any]],
         account_ids: list[int],
         profile_ids: list[str],
-        rounds: int,
+        rounds: int | Mapping[str, int],
         proxy_targets: list[dict[str, Any]],
         execution_mode: str,
         priority: int,
@@ -358,6 +358,7 @@ class ProbeQueueWriter:
         for account_id in account_ids:
             account = accounts[account_id]
             for profile_id in profile_ids:
+                profile_rounds = ProbeQueueWriter._rounds_for_profile(rounds, profile_id)
                 rows.append(
                     ProbeRun(
                         id=uuid.uuid4().hex,
@@ -373,14 +374,25 @@ class ProbeQueueWriter:
                         automatic=trigger != "manual",
                         priority=priority,
                         execution_mode=execution_mode,
-                        rounds=rounds,
+                        rounds=profile_rounds,
                         proxy_targets=proxy_targets,
-                        total_steps=rounds * len(proxy_targets),
+                        total_steps=profile_rounds * len(proxy_targets),
                         created_at=now,
                         queued_at=now,
                     )
                 )
         return rows
+
+    @staticmethod
+    def _rounds_for_profile(rounds: int | Mapping[str, Any], profile_id: str) -> int:
+        raw = rounds.get(profile_id) if isinstance(rounds, Mapping) else rounds
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"探针方案 {profile_id} 的执行轮数无效") from exc
+        if value < 1 or value > 20:
+            raise ValueError("探针执行轮数需在 1–20 之间")
+        return value
 
     @staticmethod
     def _empty_batch(

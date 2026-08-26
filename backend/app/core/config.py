@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     )
     register_probe_execution_mode: str = REGISTER_PROBE_EXECUTION_MODE
     register_probe_rounds: int = Field(default=REGISTER_PROBE_ROUNDS, ge=1, le=20)
+    register_probe_profile_rounds: dict[str, int] = Field(default_factory=dict)
     register_probe_proxy_targets: list[dict[str, Any]] = Field(
         default_factory=lambda: [
             dict(target) for target in REGISTER_PROBE_PROXY_TARGETS
@@ -187,6 +188,7 @@ class Settings(BaseSettings):
         "register_probe_profile_ids",
         "register_probe_execution_mode",
         "register_probe_rounds",
+        "register_probe_profile_rounds",
         "register_probe_proxy_targets",
         "register_probe_switch_on_degradation",
         "register_priority_hold_enabled",
@@ -273,6 +275,16 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    def register_probe_rounds_by_profile(self) -> dict[str, int]:
+        return {
+            profile_id: int(
+                self.register_probe_profile_rounds.get(
+                    profile_id, self.register_probe_rounds
+                )
+            )
+            for profile_id in self.register_probe_profile_ids
+        }
 
     def apply_runtime(self, validated: Settings) -> None:
         """Update the shared settings object after a validated ORM write."""

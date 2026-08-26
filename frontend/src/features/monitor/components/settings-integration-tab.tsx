@@ -5,7 +5,6 @@ import {
   Layers3,
   MessageSquareText,
   Power,
-  ServerCog,
   ShieldCheck,
   Webhook,
   Workflow,
@@ -21,6 +20,7 @@ import { copyText } from '@/lib/clipboard'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/tooltip'
 import { ProfileMultiSelect } from '@/features/monitor/components/profile-multi-select'
 import {
-  BootstrapSetting,
   Field,
   FixedProbeSetting,
   IntegrationFlow,
@@ -42,6 +41,7 @@ import {
 } from './settings-components'
 import {
   GROK_REGISTER_REPOSITORY_URL,
+  syncRegisterProbeProfileRounds,
   type SettingsForm,
   type SettingsSetter,
 } from './settings-model'
@@ -90,10 +90,6 @@ export function SettingsIntegrationTab({
         <TabsTrigger value='import'>
           <Workflow />
           导入探针
-        </TabsTrigger>
-        <TabsTrigger value='bootstrap'>
-          <ServerCog />
-          启动项
         </TabsTrigger>
       </TabsList>
 
@@ -261,43 +257,95 @@ export function SettingsIntegrationTab({
       <SettingsCard
         icon={Layers3}
         title='首次探针策略'
-        description='选择新账号导入后使用的探针方案；执行方式和出口策略保持固定。'
+        description='选择新账号导入后使用的探针方案，并为每个方案单独设置执行轮次；执行方式和出口策略保持固定。'
         className={cn(!automaticProbe && 'opacity-70')}
       >
         <div className='space-y-4'>
-          <Field label='探针方案' hint='可多选；每个方案分别生成一个持久任务'>
+          <Field
+            label='探针方案'
+            hint='可多选；每个方案分别生成一个持久任务，并可单独设置轮次'
+          >
             <ProfileMultiSelect
               profiles={profiles}
               value={form.registerProbeProfileIds}
-              onChange={(value) => set('registerProbeProfileIds', value)}
+              onChange={(value) => {
+                set('registerProbeProfileIds', value)
+                set(
+                  'registerProbeProfileRounds',
+                  syncRegisterProbeProfileRounds(
+                    value,
+                    form.registerProbeProfileRounds,
+                    form.registerProbeRounds
+                  )
+                )
+              }}
               enabledOnly
               disabled={profilesLoading || !automaticProbe}
               invalid={automaticProbe && !form.registerProbeProfileIds.length}
             />
           </Field>
-          <div className='max-w-xs'>
-            <NumberField
-              label='每个方案执行轮数'
-              hint='每个选中的探针方案都会按此次数执行；默认 3 轮，可设置 1–20 轮。'
-              value={form.registerProbeRounds}
-              min={1}
-              max={20}
-              step={1}
-              suffix='轮'
-              disabled={!automaticProbe}
-              onChange={(value) => set('registerProbeRounds', value)}
-            />
-          </div>
-          <div className='grid gap-3 sm:grid-cols-3'>
+          <Field
+            label='各方案执行轮数'
+            hint='每个选中方案单独设置 1–20 轮，互不影响。'
+          >
+            {form.registerProbeProfileIds.length ? (
+              <div className='space-y-2'>
+                {form.registerProbeProfileIds.map((profileId) => {
+                  const profile = profiles.find((item) => item.id === profileId)
+                  return (
+                    <div
+                      key={profileId}
+                      className='flex items-center justify-between gap-3 rounded-lg border bg-muted/15 px-3 py-2.5'
+                    >
+                      <div className='min-w-0'>
+                        <div className='truncate text-sm font-medium'>
+                          {profile?.name || profileId}
+                        </div>
+                        <div className='truncate font-mono text-[11px] text-muted-foreground'>
+                          {profileId}
+                        </div>
+                      </div>
+                      <div className='relative w-24 shrink-0'>
+                        <Input
+                          type='number'
+                          min={1}
+                          max={20}
+                          step={1}
+                          disabled={profilesLoading || !automaticProbe}
+                          className='pr-8'
+                          value={
+                            form.registerProbeProfileRounds[profileId] ??
+                            form.registerProbeRounds
+                          }
+                          onChange={(event) => {
+                            const next = Math.trunc(Number(event.target.value))
+                            set('registerProbeProfileRounds', {
+                              ...form.registerProbeProfileRounds,
+                              [profileId]: Number.isFinite(next)
+                                ? Math.min(20, Math.max(1, next))
+                                : form.registerProbeRounds,
+                            })
+                          }}
+                        />
+                        <span className='pointer-events-none absolute inset-y-0 end-3 flex items-center text-xs text-muted-foreground'>
+                          轮
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className='text-sm text-muted-foreground'>
+                先选择探针方案，再为每个方案设置执行轮次。
+              </p>
+            )}
+          </Field>
+          <div className='grid gap-3 sm:grid-cols-2'>
             <FixedProbeSetting
               icon={MessageSquareText}
               label='执行方式'
               value='完整对话'
-            />
-            <FixedProbeSetting
-              icon={Layers3}
-              label='执行轮数'
-              value={`每个方案 ${form.registerProbeRounds} 轮`}
             />
             <FixedProbeSetting
               icon={ShieldCheck}
@@ -305,32 +353,6 @@ export function SettingsIntegrationTab({
               value='账号当前绑定出口'
             />
           </div>
-        </div>
-      </SettingsCard>
-      </TabsContent>
-
-      <TabsContent value='bootstrap' className='mt-0 space-y-4'>
-      <SettingsCard
-        icon={ServerCog}
-        title='启动级参数'
-        description='由容器或环境变量提供，只读展示当前进程实际值；修改后需要重启。'
-      >
-        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-          <BootstrapSetting label='监听地址' value={settings.bootstrap.host} />
-          <BootstrapSetting
-            label='监听端口'
-            value={String(settings.bootstrap.port)}
-          />
-          <BootstrapSetting
-            label='数据库路径'
-            value={settings.bootstrap.databasePath}
-            mono
-          />
-          <BootstrapSetting
-            label='CORS Origins'
-            value={settings.bootstrap.corsOrigins.join(', ') || '—'}
-            mono
-          />
         </div>
       </SettingsCard>
       </TabsContent>

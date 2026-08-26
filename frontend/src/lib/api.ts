@@ -1162,6 +1162,7 @@ export type RuntimeSettings = {
   registerProbeProfileIds: string[]
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
+  registerProbeProfileRounds: Record<string, number>
   registerProbeProxyTargets: ProxyTarget[]
   registerProbeSwitchOnDegradation: boolean
   registerPriorityHoldEnabled: boolean
@@ -1265,6 +1266,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'registerProbeProfileIds'
     | 'registerProbeExecutionMode'
     | 'registerProbeRounds'
+    | 'registerProbeProfileRounds'
     | 'registerProbeProxyTargets'
     | 'registerProbeSwitchOnDegradation'
     | 'registerPriorityHoldEnabled'
@@ -1519,6 +1521,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     ],
     registerProbeExecutionMode: value.registerProbeExecutionMode ?? 'chat',
     registerProbeRounds: value.registerProbeRounds ?? 3,
+    registerProbeProfileRounds: value.registerProbeProfileRounds ?? {},
     registerProbeStabilizationSeconds:
       value.registerProbeStabilizationSeconds ?? 15,
     registerProbeProxyTargets: value.registerProbeProxyTargets ?? [

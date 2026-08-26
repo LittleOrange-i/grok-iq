@@ -1,3 +1,4 @@
+import { SettingsBootstrapTab } from '@/features/monitor/components/settings-bootstrap-tab'
 import { SettingsConnectionTab } from '@/features/monitor/components/settings-connection-tab'
 import { SettingsExecutionTab } from '@/features/monitor/components/settings-execution-tab'
 import { SettingsIntegrationTab } from '@/features/monitor/components/settings-integration-tab'
@@ -87,6 +88,15 @@ export function SettingsIntegrationsPage() {
         set={workspace.set}
         toggleSecretClear={workspace.toggleSecretClear}
       />
+    </SettingsRouteContent>
+  )
+}
+
+export function SettingsBootstrapPage() {
+  const { settings } = useSettingsWorkspace()
+  return (
+    <SettingsRouteContent>
+      <SettingsBootstrapTab settings={settings} />
     </SettingsRouteContent>
   )
 }

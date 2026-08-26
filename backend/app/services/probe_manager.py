@@ -316,7 +316,7 @@ class ProbeManager:
         account: dict[str, Any],
         profile_ids: list[str],
         execution_mode: str,
-        rounds: int,
+        rounds: int | dict[str, int],
         proxy_targets: list[dict[str, Any]],
     ) -> dict[str, Any]:
         account_id = int(account.get("id") or 0)

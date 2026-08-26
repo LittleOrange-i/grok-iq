@@ -325,6 +325,9 @@ class RuntimeSettingsInput(BaseModel):
     register_probe_rounds: int | None = Field(
         default=None, alias="registerProbeRounds", ge=1, le=20
     )
+    register_probe_profile_rounds: dict[str, int] | None = Field(
+        default=None, alias="registerProbeProfileRounds", max_length=1000
+    )
     register_probe_proxy_targets: list[ProxyTargetInput] | None = Field(
         default=None, alias="registerProbeProxyTargets", max_length=20
     )

@@ -19,6 +19,7 @@ export type SettingsForm = {
   registerProbeProfileIds: string[]
   registerProbeExecutionMode: ExecutionMode
   registerProbeRounds: number
+  registerProbeProfileRounds: Record<string, number>
   registerProbeProxyTargets: ProxyTarget[]
   registerProbeSwitchOnDegradation: boolean
   registerPriorityHoldEnabled: boolean
@@ -137,6 +138,28 @@ export const REGISTER_PROBE_ROUNDS = 3
 export const REGISTER_PROBE_PROXY_TARGETS: ProxyTarget[] = [
   { kind: 'current', id: null },
 ]
+
+export function syncRegisterProbeProfileRounds(
+  profileIds: string[],
+  current: Record<string, number> | null | undefined,
+  fallback: number
+): Record<string, number> {
+  const source = current ?? {}
+  const safeFallback =
+    Number.isFinite(fallback) && fallback >= 1 && fallback <= 20
+      ? Math.trunc(fallback)
+      : REGISTER_PROBE_ROUNDS
+  const next: Record<string, number> = {}
+  for (const id of profileIds) {
+    const value = source[id]
+    next[id] =
+      Number.isFinite(value) && value >= 1 && value <= 20
+        ? Math.trunc(value)
+        : safeFallback
+  }
+  return next
+}
+
 export const REGISTER_WEBHOOK_MINIMAL_BODY = `{
   "email": "user@example.com"
 }`
@@ -175,6 +198,11 @@ export function toSettingsForm(
     registerProbeProfileIds: settings.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: settings.registerProbeRounds ?? REGISTER_PROBE_ROUNDS,
+    registerProbeProfileRounds: syncRegisterProbeProfileRounds(
+      settings.registerProbeProfileIds,
+      settings.registerProbeProfileRounds,
+      settings.registerProbeRounds ?? REGISTER_PROBE_ROUNDS
+    ),
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation:
       settings.registerProbeSwitchOnDegradation ?? true,
@@ -281,6 +309,11 @@ export function buildSettingsPayload(
     registerProbeProfileIds: form.registerProbeProfileIds,
     registerProbeExecutionMode: REGISTER_PROBE_EXECUTION_MODE,
     registerProbeRounds: form.registerProbeRounds,
+    registerProbeProfileRounds: syncRegisterProbeProfileRounds(
+      form.registerProbeProfileIds,
+      form.registerProbeProfileRounds,
+      form.registerProbeRounds
+    ),
     registerProbeProxyTargets: REGISTER_PROBE_PROXY_TARGETS,
     registerProbeSwitchOnDegradation: form.registerProbeSwitchOnDegradation,
     registerPriorityHoldEnabled: form.registerPriorityHoldEnabled,
@@ -503,6 +536,12 @@ export function validateSettings(form: SettingsForm) {
   }
   if (form.initialProbeOnRegister && !form.registerProbeProfileIds.length) {
     throw new Error('注册后探针至少选择一个探针方案')
+  }
+  for (const profileId of form.registerProbeProfileIds) {
+    const rounds = form.registerProbeProfileRounds[profileId]
+    if (!Number.isFinite(rounds) || rounds < 1 || rounds > 20) {
+      throw new Error(`探针方案 ${profileId} 的执行轮数需在 1–20 之间`)
+    }
   }
   if (
     !Number.isFinite(form.registerProbeStabilizationSeconds) ||

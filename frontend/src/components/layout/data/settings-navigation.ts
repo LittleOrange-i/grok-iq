@@ -5,6 +5,7 @@ import {
   PackageCheck,
   PlugZap,
   ScanSearch,
+  ServerCog,
   Workflow,
   type LucideIcon,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ export type SettingsSection = {
     | 'risk'
     | 'notifications'
     | 'integrations'
+    | 'bootstrap'
     | 'version'
   href:
     | '/settings/connection'
@@ -25,6 +27,7 @@ export type SettingsSection = {
     | '/settings/risk'
     | '/settings/notifications'
     | '/settings/integrations'
+    | '/settings/bootstrap'
     | '/settings/version'
   title: string
   description: string
@@ -70,9 +73,16 @@ export const settingsSections = [
   {
     value: 'integrations',
     href: '/settings/integrations',
-    title: '联动与启动项',
-    description: '注册接入、导入探针和启动参数。',
+    title: '注册联动',
+    description: '注册接入、导入探针和首次探针策略。',
     icon: Workflow,
+  },
+  {
+    value: 'bootstrap',
+    href: '/settings/bootstrap',
+    title: '启动项',
+    description: '监听地址、数据库路径和 CORS 等启动级参数。',
+    icon: ServerCog,
   },
   {
     value: 'version',

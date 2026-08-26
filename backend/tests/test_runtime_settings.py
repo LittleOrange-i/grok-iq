@@ -412,9 +412,62 @@ def test_registration_strategy_updates_only_allow_profile_selection(tmp_path: Pa
     ]
     assert reloaded_settings.register_probe_execution_mode == "chat"
     assert reloaded_settings.register_probe_rounds == 9
+    assert reloaded_settings.register_probe_profile_rounds == {
+        "profile-a": 9,
+        "profile-b": 9,
+    }
     assert reloaded_settings.register_probe_proxy_targets == [
         {"kind": "current", "id": None}
     ]
+
+
+def test_registration_strategy_persists_per_profile_rounds(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+    service.load()
+
+    service.update(
+        {
+            "register_probe_profile_ids": ["profile-a", "profile-b"],
+            "register_probe_rounds": 3,
+            "register_probe_profile_rounds": {
+                "profile-a": 1,
+                "profile-b": 5,
+            },
+        }
+    )
+
+    assert settings.register_probe_profile_ids == ["profile-a", "profile-b"]
+    assert settings.register_probe_rounds == 3
+    assert settings.register_probe_profile_rounds == {
+        "profile-a": 1,
+        "profile-b": 5,
+    }
+    assert service.public_view()["registerProbeProfileRounds"] == {
+        "profile-a": 1,
+        "profile-b": 5,
+    }
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(_database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_probe_profile_rounds == {
+        "profile-a": 1,
+        "profile-b": 5,
+    }
+
+
+def test_registration_strategy_rejects_invalid_profile_rounds(tmp_path: Path):
+    _database, _settings, service = build_service(tmp_path)
+    service.load()
+    with pytest.raises(ValueError, match="执行轮数需在 1–20 之间"):
+        service.update(
+            {
+                "register_probe_profile_ids": ["profile-a"],
+                "register_probe_profile_rounds": {"profile-a": 21},
+            }
+        )
 
 
 def test_register_probe_switch_setting_is_persisted(tmp_path: Path):

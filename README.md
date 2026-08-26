@@ -215,9 +215,9 @@ grok-register 注册完成
 
 ### 怎么接
 
-1. 在本项目打开“系统设置 → 联动与启动项”。
+1. 在本项目打开“系统设置 → 注册联动”。
 2. 设置 `grok-register` 联动令牌，复制页面生成的完整 Webhook 地址。
-3. 按需开启“注册后自动探针”，并选择方案、执行模式、轮次和出口。
+3. 按需开启“注册后自动探针”，选择方案并为每个方案设置执行轮次。
 4. 在 `grok-register` 打开“系统设置 → Grok2API”，开启 GrokIQ 联动。
 5. 粘贴 Webhook 地址和同一个 Token，保存即可。
 
@@ -293,7 +293,7 @@ docker compose -f compose.yaml -f compose.grokiq.yaml up -d
 
 默认端口：`grok-register` 使用 `8787`，本项目 Web 页面使用 `8091`。探针配置只在本项目维护，注册机只负责在导入成功后发送事件。
 
-新账号首次探针默认等待 `15` 秒，可通过 `GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS` 或“联动与启动项”调整；设为 `0` 可关闭等待。
+新账号首次探针默认等待 `15` 秒，可通过 `GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS` 或“注册联动”调整；设为 `0` 可关闭等待。
 
 ## grok2api 运行依赖
 

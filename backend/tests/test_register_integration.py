@@ -218,10 +218,45 @@ async def test_webhook_auto_binds_before_enqueue():
     assert probes.values is not None
     assert probes.values["profile_ids"] == ["profile-a", "profile-b"]
     assert probes.values["execution_mode"] == "chat"
-    assert probes.values["rounds"] == 9
+    assert probes.values["rounds"] == {"profile-a": 9, "profile-b": 9}
     assert probes.values["proxy_targets"] == [{"kind": "current", "id": None}]
     assert repository.completed == ("event-1", 17, ["run-1"])
     assert repository.bound == ("event-1", 17)
+
+
+@pytest.mark.asyncio
+async def test_webhook_uses_per_profile_register_probe_rounds():
+    settings = Settings(
+        initial_probe_on_register=True,
+        register_probe_stabilization_seconds=0,
+        register_probe_profile_ids=["profile-a", "profile-b"],
+        register_probe_rounds=3,
+        register_probe_profile_rounds={"profile-a": 1, "profile-b": 4},
+    )
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    service = RegisterIntegrationService(
+        settings=settings,
+        repository=repository,  # type: ignore[arg-type]
+        accounts=UnusedAccountRepository(),  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    await service._process_claimed(
+        {
+            "event_id": "event-profile-rounds",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+
+    assert probes.values is not None
+    assert probes.values["profile_ids"] == ["profile-a", "profile-b"]
+    assert probes.values["rounds"] == {"profile-a": 1, "profile-b": 4}
 
 
 @pytest.mark.asyncio

@@ -172,6 +172,7 @@ class RuntimeSettingsService:
             "registerProbeProfileIds": s.register_probe_profile_ids,
             "registerProbeExecutionMode": s.register_probe_execution_mode,
             "registerProbeRounds": s.register_probe_rounds,
+            "registerProbeProfileRounds": s.register_probe_rounds_by_profile(),
             "registerProbeProxyTargets": s.register_probe_proxy_targets,
             "registerProbeSwitchOnDegradation": s.register_probe_switch_on_degradation,
             "registerPriorityHoldEnabled": s.register_priority_hold_enabled,

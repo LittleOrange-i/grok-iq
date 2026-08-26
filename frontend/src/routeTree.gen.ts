@@ -42,6 +42,7 @@ import { Route as AuthenticatedRunsIndexRouteImport } from './routes/_authentica
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_authenticated/settings/account'
 import { Route as AuthenticatedSettingsAppearanceRouteImport } from './routes/_authenticated/settings/appearance'
+import { Route as AuthenticatedSettingsBootstrapRouteImport } from './routes/_authenticated/settings/bootstrap'
 import { Route as AuthenticatedSettingsConnectionRouteImport } from './routes/_authenticated/settings/connection'
 import { Route as AuthenticatedSettingsDisplayRouteImport } from './routes/_authenticated/settings/display'
 import { Route as AuthenticatedSettingsExecutionRouteImport } from './routes/_authenticated/settings/execution'
@@ -231,6 +232,12 @@ const AuthenticatedSettingsAppearanceRoute =
     path: '/appearance',
     getParentRoute: () => AuthenticatedSettingsRouteRoute,
   } as any)
+const AuthenticatedSettingsBootstrapRoute =
+  AuthenticatedSettingsBootstrapRouteImport.update({
+    id: '/bootstrap',
+    path: '/bootstrap',
+    getParentRoute: () => AuthenticatedSettingsRouteRoute,
+  } as any)
 const AuthenticatedSettingsConnectionRoute =
   AuthenticatedSettingsConnectionRouteImport.update({
     id: '/connection',
@@ -337,6 +344,7 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/settings/bootstrap': typeof AuthenticatedSettingsBootstrapRoute
   '/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
   '/settings/execution': typeof AuthenticatedSettingsExecutionRoute
@@ -383,6 +391,7 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/settings/bootstrap': typeof AuthenticatedSettingsBootstrapRoute
   '/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
   '/settings/execution': typeof AuthenticatedSettingsExecutionRoute
@@ -434,6 +443,7 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/_authenticated/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
+  '/_authenticated/settings/bootstrap': typeof AuthenticatedSettingsBootstrapRoute
   '/_authenticated/settings/connection': typeof AuthenticatedSettingsConnectionRoute
   '/_authenticated/settings/display': typeof AuthenticatedSettingsDisplayRoute
   '/_authenticated/settings/execution': typeof AuthenticatedSettingsExecutionRoute
@@ -483,6 +493,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/settings/account'
     | '/settings/appearance'
+    | '/settings/bootstrap'
     | '/settings/connection'
     | '/settings/display'
     | '/settings/execution'
@@ -529,6 +540,7 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/settings/account'
     | '/settings/appearance'
+    | '/settings/bootstrap'
     | '/settings/connection'
     | '/settings/display'
     | '/settings/execution'
@@ -579,6 +591,7 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/settings/account'
     | '/_authenticated/settings/appearance'
+    | '/_authenticated/settings/bootstrap'
     | '/_authenticated/settings/connection'
     | '/_authenticated/settings/display'
     | '/_authenticated/settings/execution'
@@ -858,6 +871,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSettingsAppearanceRouteImport
       parentRoute: typeof AuthenticatedSettingsRouteRoute
     }
+    '/_authenticated/settings/bootstrap': {
+      id: '/_authenticated/settings/bootstrap'
+      path: '/bootstrap'
+      fullPath: '/settings/bootstrap'
+      preLoaderRoute: typeof AuthenticatedSettingsBootstrapRouteImport
+      parentRoute: typeof AuthenticatedSettingsRouteRoute
+    }
     '/_authenticated/settings/connection': {
       id: '/_authenticated/settings/connection'
       path: '/connection'
@@ -969,6 +989,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedSettingsRouteRouteChildren {
   AuthenticatedSettingsAccountRoute: typeof AuthenticatedSettingsAccountRoute
   AuthenticatedSettingsAppearanceRoute: typeof AuthenticatedSettingsAppearanceRoute
+  AuthenticatedSettingsBootstrapRoute: typeof AuthenticatedSettingsBootstrapRoute
   AuthenticatedSettingsConnectionRoute: typeof AuthenticatedSettingsConnectionRoute
   AuthenticatedSettingsDisplayRoute: typeof AuthenticatedSettingsDisplayRoute
   AuthenticatedSettingsExecutionRoute: typeof AuthenticatedSettingsExecutionRoute
@@ -984,6 +1005,7 @@ const AuthenticatedSettingsRouteRouteChildren: AuthenticatedSettingsRouteRouteCh
   {
     AuthenticatedSettingsAccountRoute: AuthenticatedSettingsAccountRoute,
     AuthenticatedSettingsAppearanceRoute: AuthenticatedSettingsAppearanceRoute,
+    AuthenticatedSettingsBootstrapRoute: AuthenticatedSettingsBootstrapRoute,
     AuthenticatedSettingsConnectionRoute: AuthenticatedSettingsConnectionRoute,
     AuthenticatedSettingsDisplayRoute: AuthenticatedSettingsDisplayRoute,
     AuthenticatedSettingsExecutionRoute: AuthenticatedSettingsExecutionRoute,
