@@ -543,6 +543,49 @@ async def test_priority_hold_keeps_low_priority_when_probe_fails():
 
 
 @pytest.mark.asyncio
+async def test_priority_hold_keeps_low_priority_when_samples_insufficient():
+    service, repository, account_service, probes = _service(
+        settings=Settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+            register_priority_hold=-500,
+        )
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-insufficient",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+        }
+    )
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-insufficient",
+            "status": "completed",
+            "summary": {
+                "anomaly_count": 0,
+                "warning_count": 1,
+                "sample_count": 1,
+                "classifications": {"insufficient": 1},
+            },
+        }
+    ]
+
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-insufficient", "id": "run-1"}
+    )
+
+    assert account_service.client.priorities[17] == -500
+    kept = repository.get_event("event-insufficient")
+    assert kept is not None
+    assert kept["priority_hold_status"] == "kept"
+    assert "样本不足" in str(kept.get("priority_hold_error") or "")
+
+
+@pytest.mark.asyncio
 async def test_priority_hold_scan_retries_failed_restore():
     service, repository, account_service, probes = _service(
         settings=Settings(

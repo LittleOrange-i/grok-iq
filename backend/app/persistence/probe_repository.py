@@ -51,6 +51,7 @@ DEGRADATION_CLASSIFICATIONS = frozenset(
         "reasoning_zero_observe",
     }
 )
+PROBE_WARNING_CLASSIFICATIONS = frozenset({"insufficient"})
 PROBE_DURATION_ESTIMATE_BACKFILL_KEY = _PROBE_DURATION_ESTIMATE_BACKFILL_KEY
 SAFE_CURRENT_EGRESS_MIGRATION_KEY = _SAFE_CURRENT_EGRESS_MIGRATION_KEY
 
@@ -984,6 +985,10 @@ class ProbeRepository:
                     "anomaly_count": sum(
                         int(counts.get(name, 0)) for name in DEGRADATION_CLASSIFICATIONS
                     ),
+                    "warning_count": sum(
+                        int(counts.get(name, 0))
+                        for name in PROBE_WARNING_CLASSIFICATIONS
+                    ),
                     "classifications": counts,
                     "max_tps": max_tps,
                     "avg_tps": (tps_sum / tps_count) if tps_count else None,
@@ -1015,6 +1020,9 @@ class ProbeRepository:
             "sample_count": len(sample_values),
             "anomaly_count": sum(
                 counts.get(name, 0) for name in DEGRADATION_CLASSIFICATIONS
+            ),
+            "warning_count": sum(
+                counts.get(name, 0) for name in PROBE_WARNING_CLASSIFICATIONS
             ),
             "classifications": counts,
             "max_tps": max(tps_values) if tps_values else None,

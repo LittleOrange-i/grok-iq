@@ -188,6 +188,7 @@ const degradationClassifications = new Set([
   'reasoning_zero',
   'reasoning_zero_observe',
 ])
+const warningClassifications = new Set(['insufficient'])
 
 const RUNS_VIEW_STORAGE_KEY = 'grokiq.monitor.runs-view.v1'
 const defaultRunsView = {
@@ -1782,6 +1783,12 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
             <TriangleAlert className='size-3.5' />
             {stats.anomalies}
           </span>
+          {stats.warnings > 0 && (
+            <span className='inline-flex items-center gap-1 text-destructive'>
+              <CircleAlert className='size-3.5' />
+              {stats.warnings}
+            </span>
+          )}
           <span className='inline-flex items-center gap-1 text-muted-foreground'>
             <Activity className='size-3.5' />
             {stats.samples}
@@ -1795,10 +1802,14 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
         </div>
       </TooltipTrigger>
       <TooltipContent className='max-w-96'>
-        本任务探针统计：{stats.anomalies} 个降智信号 / {stats.samples} 个样本
+        本任务探针统计：{stats.anomalies} 个降智信号
+        {stats.warnings > 0 ? `，${stats.warnings} 个样本不足` : ''} /{' '}
+        {stats.samples} 个样本
         {stats.maxTps != null
           ? `，最高 ${formatNumber(stats.maxTps)} TPS，平均 ${formatNumber(stats.avgTps)}`
           : ''}
+        。样本不足会在任务中心标记异常提示，不能视为探针通过
+        {run.trigger === 'register' ? '，注册联动也不会恢复优先级' : ''}
         。这些数字只代表本任务，不等同账号最终监控判定。
       </TooltipContent>
     </Tooltip>
@@ -1864,12 +1875,19 @@ function getRunProbeStats(run: ProbeRun) {
       (degradationClassifications.has(name) ? toFiniteNumber(value) || 0 : 0),
     0
   )
+  const classificationWarnings = Object.entries(classifications).reduce(
+    (total, [name, value]) =>
+      total +
+      (warningClassifications.has(name) ? toFiniteNumber(value) || 0 : 0),
+    0
+  )
   return {
     samples:
       toFiniteNumber(summary.sample_count) ??
       toFiniteNumber(summary.completed) ??
       run.completed_steps,
     anomalies: toFiniteNumber(summary.anomaly_count) ?? classificationAnomalies,
+    warnings: toFiniteNumber(summary.warning_count) ?? classificationWarnings,
     maxTps: toFiniteNumber(summary.max_tps),
     avgTps: toFiniteNumber(summary.avg_tps),
   }
@@ -1909,6 +1927,7 @@ function RunDetail({
   const run = data.run
   const profile = data.profile
   const restoreBlocked = accountRestoreNeedsAttention(run)
+  const probeStats = getRunProbeStats(run)
   return (
     <div className='space-y-5'>
       <div className='grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(6,minmax(0,1fr))]'>
@@ -2009,6 +2028,15 @@ function RunDetail({
           </a>
         )}
       </div>
+      {probeStats.warnings > 0 && (
+        <div className='rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive'>
+          本任务有 {probeStats.warnings}{' '}
+          个样本不足，输出长度不够，不能视为有效探针结果。
+          {run.trigger === 'register'
+            ? '注册联动账号将保持降低后的优先级。'
+            : ''}
+        </div>
+      )}
       <div className='space-y-3'>
         {data.samples.map((sample) => (
           <SampleCard

@@ -499,7 +499,13 @@ function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
       title: '样本不足',
       badge: <StatusBadge value='insufficient' />,
       summary: `输出 Token 少于 ${thresholds.minimumOutputTokens}，证据长度不足。`,
-      conditions: ['不记录降智信号', '不会打断既有连续信号序列'],
+      conditions: [
+        '任务中心标记为异常提示',
+        '不计入账号降智信号',
+        '不会打断既有连续信号序列',
+        '注册联动不会恢复 grok2api 优先级',
+      ],
+      tone: 'warning',
     },
     {
       icon: Activity,

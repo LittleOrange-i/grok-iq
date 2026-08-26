@@ -415,13 +415,16 @@ class RegisterIntegrationService:
         outcome = self._register_probe_outcome(event)
         if outcome == "pending":
             return
-        if outcome == "failed":
-            self.repository.mark_priority_kept(
-                event_id,
-                "注册探针未通过，保持降低后的 grok2api 优先级",
+        if outcome != "passed":
+            reason = (
+                "注册探针样本不足，保持降低后的 grok2api 优先级"
+                if outcome == "insufficient"
+                else "注册探针未通过，保持降低后的 grok2api 优先级"
             )
+            self.repository.mark_priority_kept(event_id, reason)
             logger.info(
-                "register priority kept after failed probe event_id=%s account_id=%s",
+                "register priority kept after %s probe event_id=%s account_id=%s",
+                outcome,
                 event_id,
                 event.get("resolved_account_id") or event.get("grok2api_account_id"),
             )
@@ -455,15 +458,38 @@ class RegisterIntegrationService:
         ]
         if not leaves:
             return "pending"
+        if any(self._register_run_insufficient(run) for run in leaves):
+            return "insufficient"
         if all(self._register_run_passed(run) for run in leaves):
             return "passed"
         return "failed"
 
     @staticmethod
-    def _register_run_passed(run: dict[str, Any]) -> bool:
+    def _register_run_summary(run: dict[str, Any]) -> dict[str, Any]:
+        summary = run.get("summary")
+        return summary if isinstance(summary, dict) else {}
+
+    @classmethod
+    def _register_run_insufficient(cls, run: dict[str, Any]) -> bool:
+        summary = cls._register_run_summary(run)
+        classifications = summary.get("classifications")
+        counts = classifications if isinstance(classifications, dict) else {}
+        if int(summary.get("warning_count") or 0) > 0:
+            return True
+        if int(counts.get("insufficient") or 0) > 0:
+            return True
+        sample_count = summary.get("sample_count")
+        if sample_count is not None and int(sample_count) <= 0:
+            return True
+        return False
+
+    @classmethod
+    def _register_run_passed(cls, run: dict[str, Any]) -> bool:
         if str(run.get("status") or "") != "completed":
             return False
-        summary = run.get("summary") if isinstance(run.get("summary"), dict) else {}
+        if cls._register_run_insufficient(run):
+            return False
+        summary = cls._register_run_summary(run)
         return int(summary.get("anomaly_count") or 0) == 0
 
     async def _restore_held_priority(self, event: dict[str, Any]) -> None:

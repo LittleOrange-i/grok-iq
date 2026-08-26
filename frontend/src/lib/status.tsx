@@ -40,7 +40,8 @@ export function StatusBadge({ value }: { value?: string | null }) {
           value === 'buffered_soft' ||
           value === 'elevated' ||
           value === 'reasoning_zero' ||
-          value === 'reasoning_zero_observe'
+          value === 'reasoning_zero_observe' ||
+          value === 'insufficient'
         ? 'warning'
         : value === 'running' || value === 'recovering'
           ? 'info'
