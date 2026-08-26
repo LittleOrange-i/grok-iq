@@ -329,6 +329,22 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.5.0 (2026-08-26)
+
+### Feat
+
+- hold grok2api priority for newly imported register accounts until probes pass
+- permanently disable confirmed register degradation when bot_risk and bfs is 1 or 2
+- stream playground and probes through grok2api /v1/responses
+- skip request-audit SSO recheck and keep Media Input observe from auto-disabling
+- split risk and integration settings into related tabs
+- compact request-audit account risk evidence
+
+### Fix
+
+- retry request-audit disable after failed actions or probe-restored isolation
+- keep isolated accounts disabled when probe snapshots roll back
+
 ## v0.4.2 (2026-08-25)
 
 ### Feat
