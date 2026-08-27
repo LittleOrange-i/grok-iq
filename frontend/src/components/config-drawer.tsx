@@ -14,6 +14,7 @@ import { IconThemeSystem } from '@/assets/custom/icon-theme-system'
 import { cn } from '@/lib/utils'
 import { useDirection } from '@/context/direction-provider'
 import { type Collapsible, useLayout } from '@/context/layout-provider'
+import { useTanStackDevtools } from '@/context/tanstack-devtools-provider'
 import { useTheme } from '@/context/theme-provider'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,6 +26,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet'
+import { Switch } from '@/components/ui/switch'
 import { useSidebar } from './ui/sidebar'
 
 export function ConfigDrawer() {
@@ -32,12 +34,14 @@ export function ConfigDrawer() {
   const { resetDir } = useDirection()
   const { resetTheme } = useTheme()
   const { resetLayout } = useLayout()
+  const { resetTanStackDevtools } = useTanStackDevtools()
 
   const handleReset = () => {
     setOpen(true)
     resetDir()
     resetTheme()
     resetLayout()
+    resetTanStackDevtools()
   }
 
   return (
@@ -64,6 +68,7 @@ export function ConfigDrawer() {
           <SidebarConfig />
           <LayoutConfig />
           <DirConfig />
+          <TanStackDevtoolsConfig />
         </div>
         <SheetFooter className='gap-2'>
           <Button
@@ -357,6 +362,33 @@ function DirConfig() {
       <div id='direction-description' className='sr-only'>
         Choose between left-to-right or right-to-left site direction
       </div>
+    </div>
+  )
+}
+
+function TanStackDevtoolsConfig() {
+  const { defaultEnabled, enabled, setEnabled } = useTanStackDevtools()
+  return (
+    <div>
+      <SectionTitle
+        title='TanStack'
+        showReset={enabled !== defaultEnabled}
+        onReset={() => setEnabled(defaultEnabled)}
+        resetAriaLabel='Reset TanStack panel visibility to default'
+      />
+      <label className='flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2'>
+        <span className='text-sm'>
+          Show floating panels
+          <span className='mt-0.5 block text-xs font-normal text-muted-foreground'>
+            Query and router debug buttons. Hidden by default.
+          </span>
+        </span>
+        <Switch
+          checked={enabled}
+          onCheckedChange={setEnabled}
+          aria-label='Show TanStack floating panels'
+        />
+      </label>
     </div>
   )
 }

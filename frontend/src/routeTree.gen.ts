@@ -37,6 +37,7 @@ import { Route as AuthenticatedHelpCenterIndexRouteImport } from './routes/_auth
 import { Route as AuthenticatedPlansIndexRouteImport } from './routes/_authenticated/plans/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProbeProfilesIndexRouteImport } from './routes/_authenticated/probe-profiles/index'
+import { Route as AuthenticatedQuarantineIndexRouteImport } from './routes/_authenticated/quarantine/index'
 import { Route as AuthenticatedRequestAuditsIndexRouteImport } from './routes/_authenticated/request-audits/index'
 import { Route as AuthenticatedRunsIndexRouteImport } from './routes/_authenticated/runs/index'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
@@ -203,6 +204,12 @@ const AuthenticatedProbeProfilesIndexRoute =
     path: '/probe-profiles/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedQuarantineIndexRoute =
+  AuthenticatedQuarantineIndexRouteImport.update({
+    id: '/quarantine/',
+    path: '/quarantine/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedRequestAuditsIndexRoute =
   AuthenticatedRequestAuditsIndexRouteImport.update({
     id: '/request-audits/',
@@ -365,6 +372,7 @@ export interface FileRoutesByFullPath {
   '/plans/': typeof AuthenticatedPlansIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
+  '/quarantine/': typeof AuthenticatedQuarantineIndexRoute
   '/request-audits/': typeof AuthenticatedRequestAuditsIndexRoute
   '/runs/': typeof AuthenticatedRunsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
@@ -412,6 +420,7 @@ export interface FileRoutesByTo {
   '/plans': typeof AuthenticatedPlansIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/probe-profiles': typeof AuthenticatedProbeProfilesIndexRoute
+  '/quarantine': typeof AuthenticatedQuarantineIndexRoute
   '/request-audits': typeof AuthenticatedRequestAuditsIndexRoute
   '/runs': typeof AuthenticatedRunsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
@@ -464,6 +473,7 @@ export interface FileRoutesById {
   '/_authenticated/plans/': typeof AuthenticatedPlansIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/probe-profiles/': typeof AuthenticatedProbeProfilesIndexRoute
+  '/_authenticated/quarantine/': typeof AuthenticatedQuarantineIndexRoute
   '/_authenticated/request-audits/': typeof AuthenticatedRequestAuditsIndexRoute
   '/_authenticated/runs/': typeof AuthenticatedRunsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
@@ -514,6 +524,7 @@ export interface FileRouteTypes {
     | '/plans/'
     | '/playground/'
     | '/probe-profiles/'
+    | '/quarantine/'
     | '/request-audits/'
     | '/runs/'
     | '/settings/'
@@ -561,6 +572,7 @@ export interface FileRouteTypes {
     | '/plans'
     | '/playground'
     | '/probe-profiles'
+    | '/quarantine'
     | '/request-audits'
     | '/runs'
     | '/settings'
@@ -612,6 +624,7 @@ export interface FileRouteTypes {
     | '/_authenticated/plans/'
     | '/_authenticated/playground/'
     | '/_authenticated/probe-profiles/'
+    | '/_authenticated/quarantine/'
     | '/_authenticated/request-audits/'
     | '/_authenticated/runs/'
     | '/_authenticated/settings/'
@@ -836,6 +849,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedProbeProfilesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/quarantine/': {
+      id: '/_authenticated/quarantine/'
+      path: '/quarantine'
+      fullPath: '/quarantine/'
+      preLoaderRoute: typeof AuthenticatedQuarantineIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/request-audits/': {
       id: '/_authenticated/request-audits/'
       path: '/request-audits'
@@ -1038,6 +1058,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlansIndexRoute: typeof AuthenticatedPlansIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProbeProfilesIndexRoute: typeof AuthenticatedProbeProfilesIndexRoute
+  AuthenticatedQuarantineIndexRoute: typeof AuthenticatedQuarantineIndexRoute
   AuthenticatedRequestAuditsIndexRoute: typeof AuthenticatedRequestAuditsIndexRoute
   AuthenticatedRunsIndexRoute: typeof AuthenticatedRunsIndexRoute
   AuthenticatedSsoReportsIndexRoute: typeof AuthenticatedSsoReportsIndexRoute
@@ -1059,6 +1080,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedPlansIndexRoute: AuthenticatedPlansIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProbeProfilesIndexRoute: AuthenticatedProbeProfilesIndexRoute,
+  AuthenticatedQuarantineIndexRoute: AuthenticatedQuarantineIndexRoute,
   AuthenticatedRequestAuditsIndexRoute: AuthenticatedRequestAuditsIndexRoute,
   AuthenticatedRunsIndexRoute: AuthenticatedRunsIndexRoute,
   AuthenticatedSsoReportsIndexRoute: AuthenticatedSsoReportsIndexRoute,

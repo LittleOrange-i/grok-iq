@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Route,
   ShieldAlert,
+  ShieldBan,
   ShieldCheck,
   Timer,
   Undo2,
@@ -25,6 +26,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { api, type RuntimeSettings } from '@/lib/api'
+import { autoIsolationMinStatusLabel } from '../components/settings-model'
 import { StatusBadge } from '@/lib/status'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -64,6 +66,8 @@ type Thresholds = Pick<
   | 'minimumOutputTokens'
   | 'reasoningZeroRiskEnabled'
   | 'autoQuarantine'
+  | 'autoIsolationEnabled'
+  | 'autoIsolationMinStatus'
   | 'quarantineMinutes'
 >
 
@@ -101,6 +105,8 @@ const defaultThresholds: Thresholds = {
   minimumOutputTokens: 32,
   reasoningZeroRiskEnabled: true,
   autoQuarantine: false,
+  autoIsolationEnabled: false,
+  autoIsolationMinStatus: 'high_risk',
   quarantineMinutes: 30,
 }
 
@@ -336,12 +342,25 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           icon={Ban}
           title='已停用'
           badge={<StatusBadge value='quarantined' />}
-          summary='由人工操作，或高风险命中自动隔离策略后进入。'
+          summary='由人工暂时停用，或高风险命中到期停用策略后进入；到期后可自动恢复。'
           conditions={[
             thresholds.autoQuarantine
-              ? `当前已启用自动隔离，默认 ${thresholds.quarantineMinutes} 分钟`
-              : '当前未启用自动隔离，只会由人工操作产生',
+              ? `当前已启用到期停用，默认 ${thresholds.quarantineMinutes} 分钟`
+              : '当前未启用到期停用，只会由人工暂时停用产生',
             '隔离有效期内会覆盖重新计算出的普通监控状态',
+          ]}
+          tone='danger'
+        />
+        <RuleCard
+          icon={ShieldBan}
+          title='隔离区'
+          badge={<Badge variant='outline'>长期隔离</Badge>}
+          summary='永久隔离账号并停用上游，不删除 grok2api 账号，也不会按停用时长自动恢复。'
+          conditions={[
+            thresholds.autoIsolationEnabled
+              ? `当前已启用自动移入：探针判定达到「${autoIsolationMinStatusLabel(thresholds.autoIsolationMinStatus)}」及更严重时会停用上游并移入隔离区`
+              : '当前未启用自动移入，只能从账号探针人工移入',
+            '恢复上游需确认；也可只删除本系统评估、样本和告警记录',
           ]}
           tone='danger'
         />

@@ -16,7 +16,7 @@ import psutil
 
 from app.analyzer import Thresholds
 from app.core.clock import account_created_at, app_isoformat, utc_now
-from app.core.config import Settings
+from app.core.config import Settings, should_auto_isolate
 from app.core.logging import (
     PROBE_LOG_FILE_NAME,
     PROBE_LOG_RETENTION_DAYS,
@@ -1027,7 +1027,28 @@ class ProbeManager:
         account_id: int,
         assessment: dict[str, Any],
     ) -> dict[str, Any]:
-        if not self.settings.auto_quarantine or assessment["monitor_status"] != "high_risk":
+        status = str(assessment.get("monitor_status") or "")
+        if should_auto_isolate(
+            status,
+            enabled=self.settings.auto_isolation_enabled,
+            min_status=self.settings.auto_isolation_min_status,
+        ):
+            if self.account_service is not None:
+                result = await self.account_service.isolate_account(
+                    account_id,
+                    note="风险周期达到自动隔离区阈值",
+                    source="probe",
+                    automatic=True,
+                    detail={
+                        "riskScore": float(assessment.get("risk_score") or 0),
+                        "monitorStatus": status,
+                        "minStatus": self.settings.auto_isolation_min_status,
+                    },
+                )
+                return result.get("assessment") or assessment
+            return await self._isolate_account_fallback(account_id, assessment)
+
+        if not self.settings.auto_quarantine or status != "high_risk":
             return assessment
         if assessment.get("disabled_by_monitor"):
             return assessment
@@ -1074,6 +1095,37 @@ class ProbeManager:
         )
         return quarantined
 
+    async def _isolate_account_fallback(
+        self,
+        account_id: int,
+        assessment: dict[str, Any],
+    ) -> dict[str, Any]:
+        account = await self.client.get_account(account_id)
+        was_enabled = bool(account.get("enabled"))
+        if was_enabled:
+            await self.client.set_account_enabled(account_id, False)
+        isolated = self.accounts.set_manual_status(
+            account_id=account_id,
+            status="quarantined",
+            note="风险周期达到自动隔离区阈值",
+            quarantine_until=None,
+            previous_upstream_enabled=was_enabled,
+            disabled_by_monitor=was_enabled,
+            recovery_guarded=False,
+        )
+        self.accounts.create_alert(
+            account_id=account_id,
+            kind="auto_isolate",
+            severity="critical",
+            title="账号已被自动移入隔离区",
+            detail={
+                "quarantineUntil": None,
+                "recoveryMode": "permanent",
+                "riskScore": assessment.get("risk_score"),
+            },
+        )
+        return isolated
+
     @staticmethod
     def _target_key(target: dict[str, Any]) -> str:
         kind = target.get("kind")
@@ -1099,17 +1151,13 @@ class ProbeManager:
         expected_node_id = original_node_id if kind == "current" else int(target.get("id") or 0) or None
         if kind == "direct" or expected_node_id == verified_node_id:
             return
-        label = "账号当前出口" if kind == "current" else "指定诊断出口"
-        actual = str(verified_node_id) if verified_node_id is not None else "本地/未知出口"
-        error = IntegrationError(
-            f"{label}应为节点 {expected_node_id}，但请求审计记录为 {actual}",
-            request_id=str(result.request_id or ""),
+        logger.warning(
+            "probe egress differed expected=%s actual=%s kind=%s request=%s",
+            expected_node_id,
+            verified_node_id,
+            kind,
+            getattr(result, "request_id", ""),
         )
-        error.audit_id = result.audit_id
-        error.verified_account_id = result.verified_account_id
-        error.verified_egress_node_id = result.verified_egress_node_id
-        error.probe_result = result
-        raise error
 
     def _error_sample(
         self,

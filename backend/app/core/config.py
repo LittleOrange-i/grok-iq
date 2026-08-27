@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +16,37 @@ DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS = 15.0
 REGISTER_PROBE_EXECUTION_MODE = "chat"
 REGISTER_PROBE_ROUNDS = 3
 REGISTER_PROBE_PROXY_TARGETS = [{"kind": "current", "id": None}]
+
+AutoIsolationMinStatus = Literal["watch", "suspect", "high_risk"]
+AUTO_ISOLATION_STATUS_ORDER: tuple[AutoIsolationMinStatus, ...] = (
+    "watch",
+    "suspect",
+    "high_risk",
+)
+DEFAULT_AUTO_ISOLATION_MIN_STATUS: AutoIsolationMinStatus = "high_risk"
+
+
+def should_auto_isolate(
+    status: str,
+    *,
+    enabled: bool,
+    min_status: str = DEFAULT_AUTO_ISOLATION_MIN_STATUS,
+) -> bool:
+    """Return whether a probe status should enter the isolation zone.
+
+    The configured minimum status and every more severe status match.
+    ``healthy`` and ``quarantined`` are never used as thresholds.
+    """
+
+    if not enabled:
+        return False
+    order = {name: index for index, name in enumerate(AUTO_ISOLATION_STATUS_ORDER)}
+    status_rank = order.get(str(status or "").strip())
+    min_rank = order.get(
+        str(min_status or "").strip(),
+        order[DEFAULT_AUTO_ISOLATION_MIN_STATUS],
+    )
+    return status_rank is not None and status_rank >= min_rank
 
 
 class Settings(BaseSettings):
@@ -120,8 +151,9 @@ class Settings(BaseSettings):
     # by a later integration can be configured without adding another column.
     # Example: [{"id": "reasoning_zero", "enabled": True, "priority": 50}]
     risk_rule_overrides: list[dict[str, Any]] = Field(default_factory=list)
-    # Repeated TPS-only anomalies should be routed at a lower upstream
-    # priority while operators try another egress node.
+    # Repeated TPS-only anomalies used to deprioritize when SSO was clean.
+    # SSO bot markers are gone, so these rows now isolate like other
+    # request-audit high-risk rules. Min-count still gates the action.
     request_audit_tps_only_deprioritize_enabled: bool = True
     request_audit_tps_only_priority: int = Field(
         default=-1_000_000,
@@ -172,6 +204,10 @@ class Settings(BaseSettings):
     minimum_output_tokens: int = Field(default=32, ge=1, le=4096)
     auto_quarantine: bool = False
     auto_quarantine_recovery_enabled: bool = True
+    auto_isolation_enabled: bool = False
+    auto_isolation_min_status: AutoIsolationMinStatus = (
+        DEFAULT_AUTO_ISOLATION_MIN_STATUS
+    )
     quarantine_minutes: int = Field(default=30, ge=1, le=7 * 24 * 60)
 
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -257,6 +293,8 @@ class Settings(BaseSettings):
         "minimum_output_tokens",
         "auto_quarantine",
         "auto_quarantine_recovery_enabled",
+        "auto_isolation_enabled",
+        "auto_isolation_min_status",
         "quarantine_minutes",
     )
     SECRET_RUNTIME_FIELDS: ClassVar[frozenset[str]] = frozenset(

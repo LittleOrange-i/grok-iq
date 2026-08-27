@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -1146,6 +1146,15 @@ class ProbeRepository:
             session.flush()
             self._refresh_run_summary(session, run)
             return account_id
+
+    def delete_samples_for_account(self, account_id: int) -> int:
+        """Delete probe samples for one account while keeping probe runs."""
+
+        with self.database.transaction() as session:
+            result = session.execute(
+                delete(ProbeSample).where(ProbeSample.account_id == account_id)
+            )
+            return int(result.rowcount or 0)
 
     def delete_runs(self, run_ids: list[str]) -> tuple[int, set[int], list[str]]:
         """Delete every deletable run, skipping the ones still holding state.

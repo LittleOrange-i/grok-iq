@@ -336,9 +336,43 @@ class AccountService:
         propagate: bool,
         quarantine_minutes: int | None,
     ) -> dict[str, Any]:
-        allowed = {"healthy", "watch", "suspect", "high_risk", "quarantine", "restore"}
+        allowed = {
+            "healthy",
+            "watch",
+            "suspect",
+            "high_risk",
+            "quarantine",
+            "isolate",
+            "restore",
+        }
         if action not in allowed:
             raise ValueError("账号动作无效")
+        if action == "isolate":
+            result = await self.isolate_account(
+                account_id,
+                note=note,
+                source="manual",
+            )
+            action_status = str(result.get("actionStatus") or "")
+            if action_status == "task_protected":
+                raise ValueError("账号正在执行探针任务，设置恢复完成后再移入隔离区")
+            if action_status == "already_quarantined":
+                return {
+                    "accountId": account_id,
+                    "status": "quarantined",
+                    "propagated": False,
+                    "quarantineUntil": None,
+                    "assessment": result.get("assessment"),
+                    "actionStatus": action_status,
+                }
+            return {
+                "accountId": account_id,
+                "status": "quarantined",
+                "propagated": bool(result.get("propagated")),
+                "quarantineUntil": None,
+                "assessment": result.get("assessment"),
+                "actionStatus": action_status,
+            }
         account = await self.client.get_account(account_id)
         current_enabled = bool(account.get("enabled"))
         propagated = False
@@ -404,7 +438,7 @@ class AccountService:
     ) -> dict[str, Any]:
         """Apply one account-level risk action with bounded concurrency."""
 
-        if action != "quarantine":
+        if action not in {"quarantine", "isolate", "restore"}:
             raise ValueError("批量账号动作无效")
         unique_ids = list(
             dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
@@ -414,16 +448,35 @@ class AccountService:
 
         locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
         assessments = self.accounts.get_assessments(unique_ids)
-        already_quarantined_ids = {
-            account_id
-            for account_id, assessment in assessments.items()
-            if str(assessment.get("monitor_status") or "") == "quarantined"
-        } - locked_ids
+        already_ids: set[int] = set()
+        already_key = ""
+        if action == "quarantine":
+            already_ids = {
+                account_id
+                for account_id, assessment in assessments.items()
+                if str(assessment.get("monitor_status") or "") == "quarantined"
+            } - locked_ids
+            already_key = "alreadyQuarantinedAccountIds"
+        elif action == "isolate":
+            already_ids = {
+                account_id
+                for account_id, assessment in assessments.items()
+                if self._is_isolation_zone(assessment)
+            } - locked_ids
+            already_key = "alreadyIsolatedAccountIds"
+        else:
+            already_ids = {
+                account_id
+                for account_id in unique_ids
+                if account_id not in locked_ids
+                and not self._is_quarantined(assessments.get(account_id))
+            }
+            already_key = "alreadyRestoredAccountIds"
         eligible_ids = [
             account_id
             for account_id in unique_ids
             if account_id not in locked_ids
-            and account_id not in already_quarantined_ids
+            and account_id not in already_ids
         ]
         semaphore = asyncio.Semaphore(6)
 
@@ -454,9 +507,108 @@ class AccountService:
             "updated": len(eligible_ids) - len(failures),
             "action": action,
             "skippedAccountIds": sorted(locked_ids),
-            "alreadyQuarantinedAccountIds": sorted(already_quarantined_ids),
+            already_key: sorted(already_ids),
             "failedAccountIds": sorted(failed_ids),
             "failures": failures,
+        }
+
+    async def isolate_account(
+        self,
+        account_id: int,
+        *,
+        note: str = "",
+        source: str = "manual",
+        force: bool = False,
+        automatic: bool = False,
+        detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Move an account into the permanent isolation zone.
+
+        Manual isolation always applies. Automatic callers honor
+        ``auto_isolation_enabled`` unless ``force=True``.
+        """
+
+        normalized_account_id = int(account_id)
+        assessment = self.accounts.get_assessment(normalized_account_id) or {}
+        already_isolated = self._is_isolation_zone(assessment)
+        if automatic and not self.settings.auto_isolation_enabled and not force:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "auto_isolation_disabled",
+                "propagated": False,
+                "assessment": assessment,
+            }
+        if already_isolated and not force:
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "already_quarantined",
+                "propagated": False,
+                "assessment": assessment,
+            }
+        if normalized_account_id in self.probes.account_settings_locked_ids(
+            {normalized_account_id}
+        ):
+            return {
+                "accountId": normalized_account_id,
+                "actionStatus": "task_protected",
+                "propagated": False,
+                "assessment": assessment,
+            }
+
+        account = await self.client.get_account(normalized_account_id)
+        was_enabled = bool(account.get("enabled"))
+        if was_enabled:
+            await self.client.set_account_enabled(normalized_account_id, False)
+        previous_enabled = assessment.get("previous_upstream_enabled")
+        if previous_enabled is None:
+            previous_enabled = was_enabled
+        disabled_by_monitor = bool(assessment.get("disabled_by_monitor")) or was_enabled
+        isolated = self.accounts.set_manual_status(
+            account_id=normalized_account_id,
+            status="quarantined",
+            note=note,
+            quarantine_until=None,
+            previous_upstream_enabled=bool(previous_enabled),
+            disabled_by_monitor=disabled_by_monitor,
+            recovery_guarded=False,
+        )
+        action_status = "disabled" if was_enabled else "already_disabled"
+        normalized_source = str(source or "manual").strip() or "manual"
+        if normalized_source == "manual":
+            alert_kind = "manual_isolate"
+            severity = "warning"
+            title = "账号已移入隔离区"
+        else:
+            alert_kind = (
+                "auto_isolate"
+                if normalized_source == "probe"
+                else f"{normalized_source}_auto_isolate"[:48]
+            )
+            severity = "critical"
+            title = (
+                "账号已被自动移入隔离区"
+                if was_enabled
+                else "账号已处于停用状态并移入隔离区"
+            )
+        self.accounts.create_alert(
+            account_id=normalized_account_id,
+            kind=alert_kind,
+            severity=severity,
+            title=title,
+            detail={
+                "source": normalized_source,
+                "actionStatus": action_status,
+                "quarantineUntil": None,
+                "recoveryMode": "permanent",
+                **(detail or {}),
+            },
+        )
+        return {
+            "accountId": normalized_account_id,
+            "actionStatus": action_status,
+            "propagated": was_enabled,
+            "quarantineUntil": None,
+            "assessment": isolated,
         }
 
     async def apply_auto_quarantine(
@@ -575,11 +727,11 @@ class AccountService:
         note: str,
         detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Lower an account's upstream priority when TPS is anomalous but SSO is clean.
+        """Lower an account's upstream priority for TPS-only anomalies.
 
-        This action deliberately changes only the routing priority. It does not
-        disable the account and is idempotent when a prior audit already placed
-        the account at the configured low priority.
+        Kept for compatibility with historical request-audit rows. New
+        TPS-only high-risk accounts are isolated instead of deprioritized
+        because SSO can no longer confirm the account is clean.
         """
 
         normalized_account_id = int(account_id)
@@ -618,7 +770,7 @@ class AccountService:
             account_id=normalized_account_id,
             kind="request_audit_deprioritize",
             severity="warning",
-            title="TPS 异常但 SSO 正常，账号已降低优先级",
+            title="TPS 多次异常，账号已降低优先级",
             detail={
                 "source": normalized_source,
                 "actionStatus": "deprioritized",
@@ -792,6 +944,94 @@ class AccountService:
             ),
         )
 
+    async def list_isolation_zone(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        search: str = "",
+        upstream_status: str = "",
+        sso_risk: str = "",
+        egress_node_id: str = "",
+    ) -> dict[str, Any]:
+        assessments = self.accounts.list_isolation_zone()
+        account_ids = [int(item["account_id"]) for item in assessments]
+        upstream_by_id: dict[int, dict[str, Any]] = {}
+        if account_ids:
+            upstream_items = await self.client.get_accounts_by_ids(set(account_ids))
+            upstream_by_id = {
+                int(item.get("id") or 0): item for item in upstream_items
+            }
+        sso_account_ids = self._account_ids_with_sso(account_ids)
+        verifications = self._latest_verifications(account_ids)
+        values = []
+        for assessment in assessments:
+            account_id = int(assessment["account_id"])
+            item = upstream_by_id.get(account_id)
+            missing_upstream = item is None
+            if missing_upstream:
+                item = self._missing_upstream_stub(account_id)
+            sso_available = False if missing_upstream else account_id in sso_account_ids
+            verification = None if missing_upstream else verifications.get(account_id)
+            overlaid = self._overlay(
+                item,
+                assessment,
+                sso_available=sso_available,
+                verification=verification,
+            )
+            if (
+                self._matches(overlaid, search=search, enabled="")
+                and self._matches_upstream_status(overlaid, upstream_status)
+                and self._matches_egress(overlaid, egress_node_id)
+                and self._matches_sso_risk(
+                    verification,
+                    sso_available=sso_available,
+                    sso_risk=sso_risk,
+                )
+            ):
+                values.append(overlaid)
+        start = (page - 1) * page_size
+        return {
+            "items": values[start : start + page_size],
+            "total": len(values),
+            "page": page,
+            "pageSize": page_size,
+        }
+
+    async def delete_local_quarantine_records(
+        self,
+        *,
+        account_ids: list[int],
+    ) -> dict[str, Any]:
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
+        if not unique_ids:
+            raise ValueError("至少选择一个账号")
+        locked_ids = self.probes.account_settings_locked_ids(set(unique_ids))
+        eligible_ids = [
+            account_id for account_id in unique_ids if account_id not in locked_ids
+        ]
+        deleted = 0
+        failures: list[dict[str, Any]] = []
+        for account_id in eligible_ids:
+            try:
+                self.accounts.delete_assessment(account_id)
+                self.accounts.delete_alerts_for_account(account_id)
+                self.probes.delete_samples_for_account(account_id)
+            except Exception as exc:
+                failures.append({"id": account_id, "error": str(exc)})
+                continue
+            deleted += 1
+        return {
+            "requested": len(unique_ids),
+            "eligible": len(eligible_ids),
+            "deleted": deleted,
+            "skippedAccountIds": sorted(locked_ids),
+            "failedAccountIds": sorted(int(item["id"]) for item in failures),
+            "failures": failures,
+        }
+
     async def delete_upstream_account(self, account_id: int) -> dict[str, Any]:
         await self.client.delete_account(account_id)
         self.accounts.create_alert(
@@ -904,6 +1144,31 @@ class AccountService:
         )
 
     @staticmethod
+    def _matches_upstream_status(item: dict[str, Any], upstream_status: str) -> bool:
+        requested = str(upstream_status or "").strip()
+        if not requested or requested == "all":
+            return True
+        if requested == "missing":
+            return bool(item.get("missingUpstream"))
+        auth_status = str(item.get("authStatus") or "")
+        quota = item.get("quota") if isinstance(item.get("quota"), dict) else {}
+        quota_status = str(quota.get("status") or "")
+        enabled = bool(item.get("enabled"))
+        if requested == "disabled":
+            return not enabled
+        if requested == "active":
+            return enabled and auth_status in {"", "active"}
+        if requested == "reauthRequired":
+            return auth_status == "reauthRequired"
+        if requested == "cooldown":
+            return auth_status == "cooldown"
+        if requested == "waitingReset":
+            return quota_status == "waitingReset"
+        if requested == "probing":
+            return quota_status == "probing"
+        return True
+
+    @staticmethod
     def _matches_egress(item: dict[str, Any], egress_node_id: str) -> bool:
         requested = str(egress_node_id or "").strip().lower()
         if not requested or requested == "all":
@@ -911,6 +1176,28 @@ class AccountService:
         if requested in {"unbound", "none"}:
             return not str(item.get("egressNodeId") or "").strip()
         return str(item.get("egressNodeId") or "").strip() == requested
+
+    @staticmethod
+    def _is_quarantined(assessment: dict[str, Any] | None) -> bool:
+        value = assessment or {}
+        return str(value.get("monitor_status") or "") == "quarantined"
+
+    @staticmethod
+    def _is_isolation_zone(assessment: dict[str, Any] | None) -> bool:
+        value = assessment or {}
+        return (
+            str(value.get("monitor_status") or "") == "quarantined"
+            and value.get("quarantine_until") is None
+        )
+
+    @staticmethod
+    def _missing_upstream_stub(account_id: int) -> dict[str, Any]:
+        return {
+            "id": account_id,
+            "name": f"账号 #{account_id}",
+            "enabled": False,
+            "missingUpstream": True,
+        }
 
     @staticmethod
     def _matches_assessment(

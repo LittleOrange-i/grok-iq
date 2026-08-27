@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 
 from app.analyzer import (
     SampleMetrics,
@@ -69,6 +69,20 @@ class AccountRepository:
                 select(AccountAssessment)
                 .order_by(AccountAssessment.risk_score.desc(), AccountAssessment.updated_at.desc())
                 .limit(limit)
+            ).all()
+            return [model_dict(value) for value in values]
+
+    def list_isolation_zone(self) -> list[dict[str, Any]]:
+        """Return permanent isolations: quarantined with no recovery deadline."""
+
+        with self.database.session() as session:
+            values = session.scalars(
+                select(AccountAssessment)
+                .where(
+                    AccountAssessment.monitor_status == "quarantined",
+                    AccountAssessment.quarantine_until.is_(None),
+                )
+                .order_by(AccountAssessment.updated_at.desc())
             ).all()
             return [model_dict(value) for value in values]
 
@@ -553,6 +567,30 @@ class AccountRepository:
             assessment.previous_upstream_enabled = None
             assessment.recovery_guarded = recovery_guarded
             assessment.updated_at = utc_now()
+
+    def delete_assessment(self, account_id: int) -> bool:
+        return self.delete_assessments([account_id]) == 1
+
+    def delete_assessments(self, account_ids: list[int]) -> int:
+        unique_ids = list(
+            dict.fromkeys(account_id for account_id in account_ids if account_id > 0)
+        )
+        if not unique_ids:
+            return 0
+        with self.database.transaction() as session:
+            result = session.execute(
+                delete(AccountAssessment).where(
+                    AccountAssessment.account_id.in_(unique_ids)
+                )
+            )
+            return int(result.rowcount or 0)
+
+    def delete_alerts_for_account(self, account_id: int) -> int:
+        with self.database.transaction() as session:
+            result = session.execute(
+                delete(Alert).where(Alert.account_id == account_id)
+            )
+            return int(result.rowcount or 0)
 
     def create_alert(
         self,

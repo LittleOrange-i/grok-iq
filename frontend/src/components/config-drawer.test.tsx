@@ -5,6 +5,7 @@ import { userEvent } from 'vitest/browser'
 import { getCookie, setCookie } from '@/lib/cookies'
 import { DirectionProvider } from '@/context/direction-provider'
 import { LayoutProvider } from '@/context/layout-provider'
+import { TanStackDevtoolsProvider } from '@/context/tanstack-devtools-provider'
 import { ThemeProvider } from '@/context/theme-provider'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import { ConfigDrawer } from './config-drawer'
@@ -18,9 +19,11 @@ async function renderConfigDrawer({
     <DirectionProvider>
       <ThemeProvider>
         <LayoutProvider>
-          <SidebarProvider defaultOpen={sidebarDefaultOpen}>
-            <ConfigDrawer />
-          </SidebarProvider>
+          <TanStackDevtoolsProvider>
+            <SidebarProvider defaultOpen={sidebarDefaultOpen}>
+              <ConfigDrawer />
+            </SidebarProvider>
+          </TanStackDevtoolsProvider>
         </LayoutProvider>
       </ThemeProvider>
     </DirectionProvider>
@@ -61,6 +64,7 @@ describe('ConfigDrawer (integration)', () => {
       .element(drawer.getByText(/^Sidebar$/i).first())
       .toBeInTheDocument()
     await expect.element(drawer.getByText(/^Direction$/i)).toBeInTheDocument()
+    await expect.element(drawer.getByText(/^TanStack$/i)).toBeInTheDocument()
     await expect
       .element(
         screen.getByRole('button', {
@@ -315,5 +319,20 @@ describe('ConfigDrawer (integration)', () => {
     await vi.waitFor(() =>
       expect(document.documentElement.getAttribute('dir')).toBe('ltr')
     )
+    await vi.waitFor(() => expect(getCookie('tanstack_devtools')).toBe('0'))
+  })
+
+  it('can show TanStack floating panels from the theme drawer', async () => {
+    const screen = await renderConfigDrawer()
+    await openDrawer(screen)
+
+    const toggle = screen.getByRole('switch', {
+      name: /show tanstack floating panels/i,
+    })
+    await expect.element(toggle).toHaveAttribute('data-state', 'unchecked')
+
+    await userEvent.click(toggle)
+    await vi.waitFor(() => expect(getCookie('tanstack_devtools')).toBe('1'))
+    await expect.element(toggle).toHaveAttribute('data-state', 'checked')
   })
 })

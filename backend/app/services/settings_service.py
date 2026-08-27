@@ -268,6 +268,8 @@ class RuntimeSettingsService:
             "minimumOutputTokens": s.minimum_output_tokens,
             "autoQuarantine": s.auto_quarantine,
             "autoQuarantineRecoveryEnabled": s.auto_quarantine_recovery_enabled,
+            "autoIsolationEnabled": s.auto_isolation_enabled,
+            "autoIsolationMinStatus": s.auto_isolation_min_status,
             "quarantineMinutes": s.quarantine_minutes,
             "bootstrap": {
                 "host": s.host,

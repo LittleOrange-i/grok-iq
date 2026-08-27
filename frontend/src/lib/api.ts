@@ -348,6 +348,7 @@ export type UpstreamAccount = {
   ssoBotFlagged?: boolean
   ssoBotSource?: number | null
   ssoPreDisableAction?: string
+  missingUpstream?: boolean
   egressRecommendation?: EgressRecommendation | null
   quota?: UpstreamQuota
   assessment: Assessment
@@ -1150,6 +1151,8 @@ export type ReasoningModelPolicy = {
   mediaInputMode: ReasoningMediaInputMode
 }
 
+export type AutoIsolationMinStatus = 'watch' | 'suspect' | 'high_risk'
+
 export type RuntimeSettings = {
   grok2apiBaseUrl: string
   grok2apiAdminUsername: string
@@ -1232,6 +1235,8 @@ export type RuntimeSettings = {
   minimumOutputTokens: number
   autoQuarantine: boolean
   autoQuarantineRecoveryEnabled: boolean
+  autoIsolationEnabled: boolean
+  autoIsolationMinStatus: AutoIsolationMinStatus
   quarantineMinutes: number
   bootstrap: {
     host: string
@@ -1334,6 +1339,8 @@ export type RuntimeSettingsUpdate = Partial<
     | 'minimumOutputTokens'
     | 'autoQuarantine'
     | 'autoQuarantineRecoveryEnabled'
+    | 'autoIsolationEnabled'
+    | 'autoIsolationMinStatus'
     | 'quarantineMinutes'
   >
 > & {
@@ -1377,6 +1384,8 @@ type RuntimeSettingsWire = Omit<
   | 'registerPriorityHold'
   | 'ssoProxyConfigured'
   | 'autoQuarantineRecoveryEnabled'
+  | 'autoIsolationEnabled'
+  | 'autoIsolationMinStatus'
   | 'requestAuditEnabled'
   | 'requestAuditAutoScanEnabled'
   | 'requestAuditAdaptiveScanEnabled'
@@ -1432,6 +1441,8 @@ type RuntimeSettingsWire = Omit<
   registerPriorityHold?: number
   ssoProxyConfigured?: boolean
   autoQuarantineRecoveryEnabled?: boolean
+  autoIsolationEnabled?: boolean
+  autoIsolationMinStatus?: AutoIsolationMinStatus
   requestAuditEnabled?: boolean
   requestAuditAutoScanEnabled?: boolean
   requestAuditAdaptiveScanEnabled?: boolean
@@ -1453,6 +1464,15 @@ type RuntimeSettingsWire = Omit<
   requestAuditTpsOnlyMinCount?: number
   requestAuditIsolationEnabled?: boolean
   requestAuditRetentionDays?: number
+}
+
+
+function normalizeAutoIsolationMinStatus(
+  value: unknown
+): AutoIsolationMinStatus {
+  return value === 'watch' || value === 'suspect' || value === 'high_risk'
+    ? value
+    : 'high_risk'
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -1535,6 +1555,10 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,
     autoQuarantineRecoveryEnabled: value.autoQuarantineRecoveryEnabled ?? true,
+    autoIsolationEnabled: value.autoIsolationEnabled ?? false,
+    autoIsolationMinStatus: normalizeAutoIsolationMinStatus(
+      value.autoIsolationMinStatus
+    ),
     scheduledProbeRegisterCooldownMinutes:
       value.scheduledProbeRegisterCooldownMinutes ?? 360,
     requestAuditEnabled: value.requestAuditEnabled ?? true,
@@ -1658,13 +1682,25 @@ type AccountBatchUpdateResult = {
   failures: { id: number; error: string }[]
 }
 
+export type AccountActionName = 'isolate' | 'restore' | 'quarantine'
+
 export type AccountBatchActionResult = {
   requested: number
   eligible: number
   updated: number
-  action: 'quarantine'
+  action: AccountActionName
   skippedAccountIds: number[]
   alreadyQuarantinedAccountIds: number[]
+  alreadyIsolatedAccountIds: number[]
+  failedAccountIds: number[]
+  failures: { id: number; error: string }[]
+}
+
+export type AccountQuarantineLocalDeleteResult = {
+  requested: number
+  eligible: number
+  deleted: number
+  skippedAccountIds: number[]
   failedAccountIds: number[]
   failures: { id: number; error: string }[]
 }
@@ -2029,6 +2065,169 @@ function isRetryableAccountBatchError(error: unknown): boolean {
   )
 }
 
+async function accountBatchAction(body: {
+  account_ids: number[]
+  action: AccountActionName
+  note?: string
+  propagate?: boolean
+  quarantine_minutes?: number
+}): Promise<AccountBatchActionResult> {
+  const uniqueIds = Array.from(
+    new Set(
+      body.account_ids.filter(
+        (accountId) => Number.isSafeInteger(accountId) && accountId > 0
+      )
+    )
+  )
+  const result: AccountBatchActionResult = {
+    requested: 0,
+    eligible: 0,
+    updated: 0,
+    action: body.action,
+    skippedAccountIds: [],
+    alreadyQuarantinedAccountIds: [],
+    alreadyIsolatedAccountIds: [],
+    failedAccountIds: [],
+    failures: [],
+  }
+
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += ACCOUNT_BATCH_REQUEST_SIZE
+  ) {
+    const accountBatch = uniqueIds.slice(
+      start,
+      start + ACCOUNT_BATCH_REQUEST_SIZE
+    )
+    let batchResult: AccountBatchActionResult | undefined
+    for (
+      let attempt = 1;
+      attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        batchResult = await request<AccountBatchActionResult>(
+          '/accounts/batch/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              account_ids: accountBatch,
+              action: body.action,
+              ...(body.note ? { note: body.note } : {}),
+              ...(body.propagate != null
+                ? { propagate: body.propagate }
+                : {}),
+              ...(body.quarantine_minutes != null
+                ? { quarantine_minutes: body.quarantine_minutes }
+                : {}),
+            }),
+          }
+        )
+        break
+      } catch (error) {
+        const retrying =
+          isRetryableAccountBatchError(error) &&
+          attempt < ACCOUNT_BATCH_NETWORK_ATTEMPTS
+        if (!retrying) throw error
+        await new Promise<void>((resolve) =>
+          globalThis.setTimeout(resolve, attempt * 250)
+        )
+      }
+    }
+    if (!batchResult) throw new Error('批量账号操作请求异常结束')
+    result.requested += batchResult.requested ?? accountBatch.length
+    result.eligible += batchResult.eligible ?? 0
+    result.updated += batchResult.updated ?? 0
+    result.skippedAccountIds.push(...(batchResult.skippedAccountIds ?? []))
+    result.alreadyQuarantinedAccountIds.push(
+      ...(batchResult.alreadyQuarantinedAccountIds ?? [])
+    )
+    result.alreadyIsolatedAccountIds.push(
+      ...(batchResult.alreadyIsolatedAccountIds ?? [])
+    )
+    result.failedAccountIds.push(...(batchResult.failedAccountIds ?? []))
+    result.failures.push(...(batchResult.failures ?? []))
+  }
+
+  result.skippedAccountIds = Array.from(new Set(result.skippedAccountIds))
+  result.alreadyQuarantinedAccountIds = Array.from(
+    new Set(result.alreadyQuarantinedAccountIds)
+  )
+  result.alreadyIsolatedAccountIds = Array.from(
+    new Set(result.alreadyIsolatedAccountIds)
+  )
+  result.failedAccountIds = Array.from(new Set(result.failedAccountIds))
+  return result
+}
+
+async function deleteQuarantineLocal(
+  accountIds: number[]
+): Promise<AccountQuarantineLocalDeleteResult> {
+  const uniqueIds = Array.from(
+    new Set(
+      accountIds.filter(
+        (accountId) => Number.isSafeInteger(accountId) && accountId > 0
+      )
+    )
+  )
+  const result: AccountQuarantineLocalDeleteResult = {
+    requested: 0,
+    eligible: 0,
+    deleted: 0,
+    skippedAccountIds: [],
+    failedAccountIds: [],
+    failures: [],
+  }
+
+  for (
+    let start = 0;
+    start < uniqueIds.length;
+    start += ACCOUNT_BATCH_REQUEST_SIZE
+  ) {
+    const accountBatch = uniqueIds.slice(
+      start,
+      start + ACCOUNT_BATCH_REQUEST_SIZE
+    )
+    let batchResult: AccountQuarantineLocalDeleteResult | undefined
+    for (
+      let attempt = 1;
+      attempt <= ACCOUNT_BATCH_NETWORK_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        batchResult = await request<AccountQuarantineLocalDeleteResult>(
+          '/accounts/quarantine/local',
+          {
+            method: 'DELETE',
+            body: JSON.stringify({ account_ids: accountBatch }),
+          }
+        )
+        break
+      } catch (error) {
+        const retrying =
+          isRetryableAccountBatchError(error) &&
+          attempt < ACCOUNT_BATCH_NETWORK_ATTEMPTS
+        if (!retrying) throw error
+        await new Promise<void>((resolve) =>
+          globalThis.setTimeout(resolve, attempt * 250)
+        )
+      }
+    }
+    if (!batchResult) throw new Error('删除隔离区本地记录请求异常结束')
+    result.requested += batchResult.requested ?? accountBatch.length
+    result.eligible += batchResult.eligible ?? 0
+    result.deleted += batchResult.deleted ?? 0
+    result.skippedAccountIds.push(...(batchResult.skippedAccountIds ?? []))
+    result.failedAccountIds.push(...(batchResult.failedAccountIds ?? []))
+    result.failures.push(...(batchResult.failures ?? []))
+  }
+
+  result.skippedAccountIds = Array.from(new Set(result.skippedAccountIds))
+  result.failedAccountIds = Array.from(new Set(result.failedAccountIds))
+  return result
+}
+
 async function deleteAccounts(
   accountIds: number[]
 ): Promise<AccountBatchDeleteResult> {
@@ -2250,22 +2449,28 @@ export const api = {
     id: number,
     params: { page?: number; pageSize?: number } = {}
   ) => request<Page<ProbeSample>>(`/accounts/${id}/samples${query(params)}`),
-  accountAction: (id: number, body: Record<string, unknown>) =>
+  accountAction: (
+    id: number,
+    body: {
+      action: AccountActionName
+      note?: string
+      propagate?: boolean
+      quarantine_minutes?: number
+    }
+  ) =>
     request<Record<string, unknown>>(`/accounts/${id}/action`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  accountBatchAction: (body: {
-    account_ids: number[]
-    action: 'quarantine'
-    note?: string
-    propagate?: boolean
-    quarantine_minutes?: number
-  }) =>
-    request<AccountBatchActionResult>('/accounts/batch/action', {
-      method: 'POST',
-      body: JSON.stringify(body),
+  accountBatchAction,
+  quarantineAccounts: (
+    params: Record<string, string | number | undefined> = {},
+    signal?: AbortSignal
+  ) =>
+    request<Page<UpstreamAccount>>(`/accounts/quarantine${query(params)}`, {
+      signal,
     }),
+  deleteQuarantineLocal,
   updateAccountsEnabled,
   updateAccountsEgress,
   deleteAccounts,

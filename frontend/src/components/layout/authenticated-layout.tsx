@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { AppSidebar } from '@/components/layout/app-sidebar'
+import { WorkspaceShell } from '@/components/layout/workspace-shell'
 import { Header } from '@/components/layout/header'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { SkipToMain } from '@/components/skip-to-main'
@@ -60,7 +61,7 @@ export function AuthenticatedLayout({
               'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,3.5rem)-(var(--spacing)*4))]'
             )}
           >
-            {children ?? <Outlet />}
+            <WorkspaceShell>{children ?? <Outlet />}</WorkspaceShell>
           </SidebarInset>
         </div>
         <SystemUpdateDialog />

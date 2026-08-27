@@ -9,7 +9,7 @@ import pytest
 from fastapi.routing import APIRoute
 from sqlalchemy import select
 
-from app.core.config import DEFAULT_DATABASE_PATH, Settings
+from app.core.config import DEFAULT_DATABASE_PATH, Settings, should_auto_isolate
 from app.persistence.database import Database
 from app.persistence.models import AppSetting
 from app.persistence.settings_repository import SettingsRepository
@@ -172,6 +172,44 @@ def test_auto_quarantine_recovery_policy_is_persisted_and_exposed(tmp_path: Path
     )
     reloaded.load()
     assert reloaded_settings.auto_quarantine_recovery_enabled is False
+
+
+def test_auto_isolation_setting_is_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update({
+        "auto_isolation_enabled": True,
+        "auto_isolation_min_status": "suspect",
+    })
+
+    assert changed == ["auto_isolation_enabled", "auto_isolation_min_status"]
+    assert settings.auto_isolation_enabled is True
+    assert settings.auto_isolation_min_status == "suspect"
+    assert service.public_view()["autoIsolationEnabled"] is True
+    assert service.public_view()["autoIsolationMinStatus"] == "suspect"
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded_settings.auto_isolation_enabled is True
+    assert reloaded_settings.auto_isolation_min_status == "suspect"
+
+
+def test_should_auto_isolate_matches_min_status_and_more_severe():
+    assert should_auto_isolate("high_risk", enabled=False, min_status="watch") is False
+    assert should_auto_isolate("watch", enabled=True, min_status="high_risk") is False
+    assert should_auto_isolate("suspect", enabled=True, min_status="high_risk") is False
+    assert should_auto_isolate("high_risk", enabled=True, min_status="high_risk") is True
+    assert should_auto_isolate("watch", enabled=True, min_status="suspect") is False
+    assert should_auto_isolate("suspect", enabled=True, min_status="suspect") is True
+    assert should_auto_isolate("high_risk", enabled=True, min_status="suspect") is True
+    assert should_auto_isolate("watch", enabled=True, min_status="watch") is True
+    assert should_auto_isolate("healthy", enabled=True, min_status="watch") is False
+    assert should_auto_isolate("quarantined", enabled=True, min_status="watch") is False
+    assert should_auto_isolate("high_risk", enabled=True, min_status="unknown") is True
 
 
 def test_register_stabilization_setting_is_persisted_and_exposed(tmp_path: Path):

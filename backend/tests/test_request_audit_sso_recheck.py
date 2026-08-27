@@ -136,24 +136,43 @@ async def test_pre_disable_skips_already_disabled_records():
     assert result is existing
 
 
-async def test_pre_disable_deprioritizes_tps_only_without_sso():
+async def test_pre_disable_isolates_tps_only_without_sso():
     service, _repository, account_service = build_service()
     service.repository.create_verification.return_value = {
         "status": "pending",
         "action_status": "pending",
     }
-    account_service.apply_tps_only_deprioritization.return_value = {
-        "actionStatus": "deprioritized",
-        "priority": -1_000_000,
-        "previousPriority": 0,
-    }
+    account_service.apply_auto_quarantine.return_value = {"actionStatus": "disabled"}
 
     result = await service._process_pre_disable_candidate(tps_record())
 
-    account_service.apply_auto_quarantine.assert_not_called()
-    account_service.apply_tps_only_deprioritization.assert_awaited()
+    account_service.apply_tps_only_deprioritization.assert_not_called()
+    account_service.apply_auto_quarantine.assert_awaited()
+    note = account_service.apply_auto_quarantine.await_args.kwargs["note"]
+    detail = account_service.apply_auto_quarantine.await_args.kwargs["detail"]
+    assert "TPS" in note
+    assert "SSO" not in note
+    assert account_service.apply_auto_quarantine.await_args.kwargs["permanent"] is True
+    assert detail["riskRuleId"] == "fast_risk"
+    assert detail["tpsAnomalyCount"] == 2
     assert result["status"] == "sso_skipped"
-    assert result["action_status"] == "deprioritized"
+    assert result["action_status"] == "disabled"
+
+
+async def test_pre_disable_retries_deprioritized_tps_only_for_isolation():
+    service, _repository, account_service = build_service()
+    service.repository.create_verification.return_value = {
+        "status": "sso_skipped",
+        "action_status": "deprioritized",
+        "sso_verdict": "skipped",
+    }
+    account_service.apply_auto_quarantine.return_value = {"actionStatus": "disabled"}
+
+    result = await service._process_pre_disable_candidate(tps_record())
+
+    account_service.apply_tps_only_deprioritization.assert_not_called()
+    account_service.apply_auto_quarantine.assert_awaited()
+    assert result["action_status"] == "disabled"
 
 
 async def test_pre_disable_retries_sso_skipped_action_failed():
@@ -393,6 +412,20 @@ def test_retryable_verification_account_ids_follow_sso_skipped_and_restore(
         status="clean",
         action_status="deprioritize_failed",
     )
+    _seed_verification(
+        repository,
+        upstream_id="tps-deprioritized",
+        account_id=19,
+        status="sso_skipped",
+        action_status="deprioritized",
+    )
+    _seed_verification(
+        repository,
+        upstream_id="tps-already-deprioritized",
+        account_id=20,
+        status="sso_skipped",
+        action_status="already_deprioritized",
+    )
     accounts.set_manual_status(
         account_id=14,
         status="healthy",
@@ -406,5 +439,5 @@ def test_retryable_verification_account_ids_follow_sso_skipped_and_restore(
 
     retryable = repository.retryable_verification_account_ids()
 
-    assert retryable == {11, 12, 13, 14, 17, 18}
+    assert retryable == {11, 12, 13, 14, 17, 18, 19, 20}
     database.dispose()

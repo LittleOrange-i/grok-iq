@@ -121,6 +121,32 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             egress_node_id=payload.egress_node_id,
         )
 
+    @router.get("/accounts/quarantine")
+    async def isolation_zone(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=50, ge=1, le=200, alias="pageSize"),
+        search: str = "",
+        upstream_status: str = Query(default="", alias="status"),
+        sso_risk: str = Query(default="", alias="ssoRisk"),
+        egress_node_id: str = Query(default="", alias="egressNodeId"),
+    ) -> dict[str, Any]:
+        return await service.list_isolation_zone(
+            page=page,
+            page_size=page_size,
+            search=search,
+            upstream_status=upstream_status,
+            sso_risk=sso_risk,
+            egress_node_id=egress_node_id,
+        )
+
+    @router.delete("/accounts/quarantine/local")
+    async def delete_local_quarantine_records(
+        payload: AccountBatchDeleteInput,
+    ) -> dict[str, Any]:
+        return await service.delete_local_quarantine_records(
+            account_ids=payload.account_ids,
+        )
+
     @router.get("/accounts/{account_id}")
     async def account_detail(
         account_id: int,

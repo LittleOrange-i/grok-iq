@@ -1116,8 +1116,6 @@ class RequestAuditService:
         finished_actions = {
             "disabled",
             "already_disabled",
-            "deprioritized",
-            "already_deprioritized",
         }
         if existing_action in finished_actions:
             return verification
@@ -1132,10 +1130,7 @@ class RequestAuditService:
                 minutes=5
             ):
                 return verification
-        if (
-            str(record.get("_action_mode") or "quarantine") != "tps_only"
-            and self._account_is_quarantined(account_id)
-        ):
+        if self._account_is_quarantined(account_id):
             if existing_action != "pending":
                 return verification
             return self.repository.update_verification(
@@ -1173,150 +1168,12 @@ class RequestAuditService:
             "check_error": "",
             "checked_at": utc_now(),
         }
-        if str(record.get("_action_mode") or "quarantine") == "tps_only":
-            return await self._apply_clean_tps_action(
-                record,
-                verification,
-                common=common,
-                status="sso_skipped",
-            )
         return await self._apply_flagged_quarantine(
             record,
             verification,
             common=common,
             status="sso_skipped",
         )
-
-    async def _apply_clean_tps_action(
-        self,
-        record: dict[str, Any],
-        verification: dict[str, Any],
-        *,
-        common: dict[str, Any],
-        status: str = "clean",
-    ) -> dict[str, Any]:
-        account_id = int(record.get("account_id") or 0)
-        audit_id = str(record.get("upstream_id") or "")
-        created_at = ensure_utc(record.get("created_at")) or utc_now()
-        verdict = str(common.get("sso_verdict") or "clean")
-        proxy_used = bool(common.get("proxy_used"))
-        if not record.get("_tps_anomaly_count"):
-            window_start, window_end = self._current_audit_window()
-            account_rows = [
-                row
-                for row in self.repository.records_for_range(window_start, window_end)
-                if int(row.get("account_id") or 0) == account_id
-            ]
-            evaluations = self._audit_risk_evaluations(account_rows)
-            tps_rows = [
-                row
-                for row in account_rows
-                if (
-                    (rule := get_risk_rule(
-                        self._evaluation_for(
-                            row, evaluations
-                        ).classification.rule_id
-                    ))
-                    is not None
-                    and rule.audit_action_mode == "tps_only"
-                    and self._evaluation_for(
-                        row, evaluations
-                    ).classification.name
-                    == "high"
-                )
-            ]
-            record = {
-                **record,
-                "_tps_anomaly_count": len(tps_rows),
-                "_tps_min_count": int(
-                    self.settings.request_audit_tps_only_min_count
-                ),
-                "_tps_max": max(
-                    (float(row.get("tps") or 0) for row in tps_rows),
-                    default=float(record.get("tps") or 0),
-                ),
-                "_tps_egress_node_ids": sorted(
-                    {
-                        int(row["egress_node_id"])
-                        for row in tps_rows
-                        if _positive_int(row.get("egress_node_id")) is not None
-                    }
-                ),
-            }
-        recommendation = self._egress_recommendation(
-            record,
-            status=status,
-            action_status="pending",
-            checked_at=ensure_utc(common.get("checked_at")),
-            tps_anomaly_count=int(record.get("_tps_anomaly_count") or 0),
-        )
-        if self.account_service is None:
-            return verification
-        try:
-            action = await self.account_service.apply_tps_only_deprioritization(
-                account_id,
-                source="request_audit",
-                note="TPS 多次异常后降低优先级，建议更换出口节点",
-                detail={
-                    "auditId": audit_id,
-                    "riskRuleId": str(record.get("_risk_rule_id") or "fast_risk"),
-                    "riskRuleCount": int(
-                        record.get("_risk_rule_count")
-                        or record.get("_tps_anomaly_count")
-                        or 0
-                    ),
-                    "auditCreatedAt": _iso(created_at),
-                    "auditTps": round(float(record.get("tps") or 0), 2),
-                    "tpsAnomalyCount": int(record.get("_tps_anomaly_count") or 0),
-                    "maxTps": round(
-                        float(record.get("_tps_max") or record.get("tps") or 0),
-                        2,
-                    ),
-                    "ssoVerdict": verdict,
-                    "proxyUsed": proxy_used,
-                },
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error(
-                "request audit TPS-only deprioritization failed account=%s audit=%s",
-                account_id,
-                audit_id,
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
-            return self.repository.update_verification(
-                audit_id,
-                {
-                    **common,
-                    "status": status,
-                    "action_status": "deprioritize_failed",
-                    "action_error": str(exc)[:1000],
-                    "egress_recommendation": recommendation,
-                },
-            ) or verification
-        action_status = str(action.get("actionStatus") or "deprioritize_failed")
-        return self.repository.update_verification(
-            audit_id,
-            {
-                **common,
-                "status": status,
-                "action_status": action_status,
-                "action_error": str(action.get("actionError") or "")[:1000],
-                "egress_recommendation": {
-                    **(recommendation or {}),
-                    "priorityAction": action_status,
-                    "priority": action.get("priority"),
-                },
-                "previous_priority": action.get("previousPriority"),
-                "applied_priority": action.get("priority"),
-            },
-        ) or verification
-
-    @staticmethod
-    def _current_audit_window() -> tuple[datetime, datetime]:
-        start, end = _day_bounds(current_day_key())
-        return start, end
 
     async def _apply_flagged_quarantine(
         self,
@@ -1367,26 +1224,48 @@ class RequestAuditService:
                     "action_error": "自动停用服务尚未接入",
                 },
             ) or verification
+        action_mode = str(record.get("_action_mode") or "quarantine")
+        note = (
+            "请求审计 TPS 多次异常已达处置阈值后自动停用"
+            if action_mode == "tps_only"
+            else "请求审计高风险已达处置阈值后自动停用"
+        )
+        detail = {
+            "auditId": audit_id,
+            "riskRuleId": str(record.get("_risk_rule_id") or ""),
+            "riskRuleCount": int(record.get("_risk_rule_count") or 1),
+            "auditCreatedAt": _iso(created_at),
+            "auditTps": round(float(record.get("tps") or 0), 2),
+            "reasoningTokens": int(record.get("reasoning_tokens") or 0),
+            "riskReasons": risk_reasons,
+            "ssoVerdict": verdict,
+            "botFlag": bot_flag,
+            "proxyUsed": proxy_used,
+        }
+        if action_mode == "tps_only":
+            detail.update(
+                {
+                    "tpsAnomalyCount": int(
+                        record.get("_tps_anomaly_count")
+                        or record.get("_risk_rule_count")
+                        or 0
+                    ),
+                    "maxTps": round(
+                        float(record.get("_tps_max") or record.get("tps") or 0),
+                        2,
+                    ),
+                    "recommendation": "change_egress",
+                }
+            )
         try:
             action = await self.account_service.apply_auto_quarantine(
                 account_id,
                 source="request_audit",
-                note="请求审计高风险已达处置阈值后自动停用",
+                note=note,
                 risk_score=max(float(self.settings.risk_high_floor), 85.0),
                 force=True,
                 permanent=True,
-                detail={
-                    "auditId": audit_id,
-                    "riskRuleId": str(record.get("_risk_rule_id") or ""),
-                    "riskRuleCount": int(record.get("_risk_rule_count") or 1),
-                    "auditCreatedAt": _iso(created_at),
-                    "auditTps": round(float(record.get("tps") or 0), 2),
-                    "reasoningTokens": int(record.get("reasoning_tokens") or 0),
-                    "riskReasons": risk_reasons,
-                    "ssoVerdict": verdict,
-                    "botFlag": bot_flag,
-                    "proxyUsed": proxy_used,
-                },
+                detail=detail,
             )
         except asyncio.CancelledError:
             raise
@@ -1421,41 +1300,6 @@ class RequestAuditService:
                 "action_error": "",
             },
         ) or verification
-
-    @staticmethod
-    def _egress_recommendation(
-        record: dict[str, Any],
-        *,
-        status: str,
-        action_status: str,
-        checked_at: datetime | None,
-        tps_anomaly_count: int,
-    ) -> dict[str, Any] | None:
-        min_count = int(record.get("_tps_min_count") or 2)
-        if (
-            status not in {"clean", "session_confirmed", "sso_skipped"}
-            or tps_anomaly_count < min_count
-        ):
-            return None
-        skipped = status == "sso_skipped"
-        return {
-            "type": "change_egress",
-            "label": "建议更换出口节点",
-            "reason": "TPS 多次异常，建议更换出口节点",
-            "highRiskCount": int(tps_anomaly_count),
-            "maxTps": round(float(record.get("_tps_max") or record.get("tps") or 0), 2),
-            "ssoVerdict": "skipped" if skipped else "clean",
-            "checkedAt": _iso(checked_at),
-            "priorityAction": action_status,
-            "egressNodeIds": sorted(
-                int(value)
-                for value in (
-                    record.get("_tps_egress_node_ids")
-                    or [record.get("egress_node_id")]
-                )
-                if _positive_int(value) is not None
-            ),
-        }
 
     @staticmethod
     def _window_payload(window: dict[str, Any]) -> dict[str, Any]:
@@ -2762,8 +2606,8 @@ class RequestAuditService:
                         f"{streak} 次，达到 {policy.min_count} 次阈值"
                     )
                     # Keep an independently strong primary rule such as
-                    # fast_risk. TPS-only still deprioritizes, while reasoning
-                    # remains visible in rule_ids and reasons.
+                    # fast_risk. Reasoning remains visible in rule_ids and
+                    # reasons even when TPS is the action rule.
                     preserve_primary = bool(
                         classification.hard
                         and classification.rule_id

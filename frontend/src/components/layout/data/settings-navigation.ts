@@ -60,7 +60,7 @@ export const settingsSections = [
     value: 'risk',
     href: '/settings/risk',
     title: '风险与隔离',
-    description: '探针判定、审计规则和账号隔离处置。',
+    description: '探针判定、请求审计规则，以及隔离区和到期停用。',
     icon: BrainCircuit,
   },
   {

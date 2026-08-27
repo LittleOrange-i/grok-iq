@@ -29,6 +29,9 @@ RETRYABLE_VERIFICATION_ACTIONS = frozenset(
         "task_protected",
         "auto_quarantine_disabled",
         "deprioritize_failed",
+        "deprioritize_disabled",
+        "deprioritized",
+        "already_deprioritized",
         "already_quarantined",
     }
 )

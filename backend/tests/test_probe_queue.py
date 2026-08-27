@@ -1092,6 +1092,56 @@ async def test_auto_quarantine_records_selected_recovery_policy(
         assert accounts.due_quarantines() == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "min_status", "expected"),
+    [
+        ("suspect", "high_risk", False),
+        ("high_risk", "high_risk", True),
+        ("suspect", "suspect", True),
+        ("watch", "suspect", False),
+        ("watch", "watch", True),
+    ],
+)
+async def test_auto_isolation_respects_configured_min_status(
+    tmp_path: Path,
+    status: str,
+    min_status: str,
+    expected: bool,
+):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    accounts = AccountRepository(database)
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            auto_isolation_enabled=True,
+            auto_isolation_min_status=min_status,  # type: ignore[arg-type]
+            auto_quarantine=True,
+            auto_quarantine_recovery_enabled=True,
+            quarantine_minutes=30,
+        ),
+        repository=ProbeRepository(database),
+        accounts=accounts,
+        client=FakeGrokClient(),  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+
+    result = await manager._apply_auto_quarantine(42, {  # noqa: SLF001
+        "monitor_status": status,
+        "risk_score": 88,
+    })
+
+    if expected:
+        assert result["monitor_status"] == "quarantined"
+        assert result["quarantine_until"] is None
+        assert result["disabled_by_monitor"] is True
+        assert accounts.due_quarantines() == []
+    else:
+        assert result.get("monitor_status") != "quarantined"
+        assert accounts.get_assessment(42) is None
+
+
 def test_worker_activity_stats_use_rolling_process_window(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
@@ -1588,7 +1638,7 @@ async def test_worker_persists_result_and_restores_upstream(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_chat_probe_marks_actual_egress_mismatch_as_error_with_evidence(tmp_path: Path):
+async def test_chat_probe_keeps_metrics_when_actual_egress_differs(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
@@ -1616,15 +1666,15 @@ async def test_chat_probe_marks_actual_egress_mismatch_as_error_with_evidence(tm
         )
         detail = await wait_for_terminal_run(probe_repository, run_id)
         sample = detail["samples"][0]
-        assert detail["run"]["status"] == "completed_with_errors"
-        assert sample["status"] == "error"
+        assert detail["run"]["status"] == "completed"
+        assert sample["status"] == "done"
         assert sample["egress_node_id"] == 7
         assert sample["verified_egress_node_id"] == 3
         assert sample["tps"] == 100
         assert sample["request_id"] == "request-1"
         assert sample["audit_id"] == 1
         assert sample["response_text"] == "探针校验通过"
-        assert "指定诊断出口应为节点 7" in sample["error"]
+        assert not sample["error"]
     finally:
         await manager.stop()
 
@@ -1708,7 +1758,7 @@ async def test_current_egress_probe_rejects_unbound_or_disabled_account(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path: Path):
+async def test_current_egress_probe_keeps_metrics_when_audited_node_differs(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
@@ -1739,22 +1789,23 @@ async def test_current_egress_probe_records_audited_node_drift_as_error(tmp_path
         )
         detail = await wait_for_terminal_run(probe_repository, run_id)
         sample = detail["samples"][0]
-        assert detail["run"]["status"] == "completed_with_errors"
-        assert sample["status"] == "error"
+        assert detail["run"]["status"] == "completed"
+        assert sample["status"] == "done"
         assert sample["egress_node_id"] == 7
         assert sample["verified_egress_node_id"] == 3
         assert sample["request_id"] == "request-1"
         assert sample["audit_id"] == 1
         assert sample["output_tokens"] == 100
+        assert sample["tps"] == 100
         assert sample["response_text"] == "探针校验通过"
-        assert "账号当前出口应为节点 7" in sample["error"]
+        assert not sample["error"]
         assert client.bindings == []
         assert client.restored is False
         assessment = AccountRepository(database).get_assessment(10)
         assert assessment is not None
-        assert assessment["sample_count"] == 0
-        assert assessment["latest_tps"] == 0
-        assert assessment["latest_classification"] == "error"
+        assert assessment["sample_count"] == 1
+        assert assessment["latest_tps"] == 100
+        assert assessment["latest_classification"] != "error"
     finally:
         await manager.stop()
 

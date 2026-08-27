@@ -197,13 +197,17 @@ const requestAuditPageHelp = (
       仅辅助调整代理池。
     </p>
     <p>
-      页面上的「高风险」只表示命中已启用规则，不等于已经停用。隔离就是停用
-      grok2api 账号；请求审计自动停用是永久的，需要人工恢复。
+      页面「高风险」只表示当前窗口里有 high 请求，一条高速 TPS
+      就会显示，不等于已经停用。隔离就是停用 grok2api
+      账号；请求审计自动停用是永久的，会进入隔离区，需要人工恢复。
     </p>
     <p>
-      思考输出为 0 等停用规则达到次数后才会自动停用；TPS-only
-      只降低优先级并建议换出口。请求审计按规则直接处置，不再做停用前
-      SSO 复检。探针「自动停用高风险账号」是另一条链路，不会处理请求审计高风险。
+      单条 high：高速 TPS（达到强异常阈值）直接高风险；思考连续为 0
+      达到模型策略次数后升为高风险。普通 TPS 和 Media Input 只观察。
+    </p>
+    <p>
+      自动停用看累计次数，不是看这一条：高速 TPS
+      默认 2 次，思考为 0 按策略连续次数。探针监控判定是另一套累计规则，不会处理这里的高风险。
     </p>
   </div>
 )
@@ -211,20 +215,39 @@ const requestAuditPageHelp = (
 const requestAuditAutoDisableHelp = (
   <div className='space-y-2'>
     <p>
-      高风险账号进入自动停用前，要同时满足：规则动作为停用、达到次数，且「请求审计账号处置」已开启。
+      自动停用要同时满足：命中停用规则、达到次数，且「请求审计账号处置」已开启。
     </p>
     <p>
-      达到阈值后按规则直接停用或降低优先级，不再用 SSO
-      复检确认 bot 标记。TPS-only 只降优先级。这里的隔离按钮和自动隔离都是停用账号。
+      页面高风险本身不会停用。高速 TPS 累计达到次数，或思考为 0
+      连续达到策略次数后，会永久停用并移入隔离区。
+    </p>
+    <p>
+      不再做停用前 SSO 复检，也不再把 TPS-only 只当观察。探针「自动停用高风险账号」不会处理请求审计高风险。
     </p>
   </div>
 )
 
-const requestAuditRiskEvidenceHelp =
-  '表格里只看当前判定和处置结果。思考 0、Media Input 用短标签表示命中规则；完整原因、次数和处置详情点「证据」查看。高风险本身不会停用账号。'
+const requestAuditRiskEvidenceHelp = (
+  <div className='space-y-2'>
+    <p>
+      账号高风险 = 窗口内任意一条 high，不是探针那种累计判定。一条高速 TPS
+      就会标高风险，但要达到次数才自动停用。
+    </p>
+    <p>
+      思考 0、Media Input 用短标签表示命中规则；完整原因、次数和处置详情点「证据」。
+    </p>
+  </div>
+)
 
-const requestAuditRecordRiskHelp =
-  '单条请求的风险等级。连续命中停用规则才会进入自动停用；TPS-only 只降低优先级。'
+const requestAuditRecordRiskHelp = (
+  <div className='space-y-2'>
+    <p>单条请求的风险等级，不等于账号已经被停用。</p>
+    <p>
+      高速 TPS 直接高风险；思考为 0 先观察，连续达到策略次数后升为高风险。普通
+      TPS 和 Media Input 保持观察。自动停用看累计次数。
+    </p>
+  </div>
+)
 
 const windowOptions: Array<{
   value: RequestAuditWindowPreset
@@ -452,7 +475,7 @@ function PreDisableCheckBadge({
       title={
         check
           ? `${label}${check.proxyUsed ? ' · 已通过 SSO 代理' : ''}${check.checkError ? ` · ${check.checkError}` : ''}`
-          : '高风险请求达到处置阈值后会按规则自动停用或降低优先级。'
+          : '高风险请求达到处置阈值后会按规则自动停用并隔离。'
       }
     >
       {label}
@@ -783,7 +806,7 @@ function MetricCard({
                 label={label}
                 content={hint}
                 className='size-4'
-                contentClassName='max-w-80'
+                contentClassName='max-w-[28rem]'
               />
             ) : null}
           </div>
@@ -1890,7 +1913,7 @@ export function RequestAuditsPage() {
         title='请求审计风险'
         description={requestAuditPageHelp}
         descriptionAsHint
-        hintContentClassName='max-w-96'
+        hintContentClassName='max-w-[28rem]'
         actions={
           <>
             <Button variant='outline' onClick={refreshLocal}>
@@ -2386,7 +2409,7 @@ export function RequestAuditsPage() {
                 <InfoTooltip
                   label='风险定位工作台'
                   content={requestAuditAutoDisableHelp}
-                  contentClassName='max-w-80'
+                  contentClassName='max-w-[28rem]'
                 />
               </CardTitle>
               <CardDescription>
@@ -2714,7 +2737,7 @@ export function RequestAuditsPage() {
                               <InfoTooltip
                                 label='风险'
                                 content={requestAuditRiskEvidenceHelp}
-                                contentClassName='max-w-80'
+                                contentClassName='max-w-[28rem]'
                               />
                             </span>
                           </TableHead>
@@ -3231,7 +3254,7 @@ export function RequestAuditsPage() {
                           <InfoTooltip
                             label='请求风险'
                             content={requestAuditRecordRiskHelp}
-                            contentClassName='max-w-80'
+                            contentClassName='max-w-[28rem]'
                           />
                         </span>
                       </TableHead>
@@ -3782,7 +3805,7 @@ function AuditRecordDetailDialog({
                   <InfoTooltip
                     label='自动处置'
                     content={requestAuditAutoDisableHelp}
-                    contentClassName='max-w-80'
+                    contentClassName='max-w-[28rem]'
                   />
                 </div>
                 <PreDisableCheckBadge check={record.preDisableCheck} compact />
@@ -3829,7 +3852,7 @@ function AuditRecordDetailDialog({
                 </div>
               ) : (
                 <p className='mt-2 text-xs leading-5 text-muted-foreground'>
-                  该请求尚未产生处置记录；只有达到规则阈值的高风险请求才会进入停用或降优先级流程。
+                  该请求尚未产生处置记录；只有达到规则阈值的高风险请求才会进入自动停用流程。
                 </p>
               )}
               {record.preDisableCheck?.botFlag.details && (

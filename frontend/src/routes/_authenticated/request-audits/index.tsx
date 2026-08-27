@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { RequestAuditsPage } from '@/features/monitor/pages/request-audits'
+import { WorkspaceRoutePlaceholder } from '@/components/layout/workspace-route-placeholder'
 
 export const Route = createFileRoute('/_authenticated/request-audits/')({
-  component: RequestAuditsPage,
+  component: WorkspaceRoutePlaceholder,
 })

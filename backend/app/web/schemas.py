@@ -94,7 +94,7 @@ class AccountBatchUpdateInput(BaseModel):
 
 class AccountBatchActionInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=1000)
-    action: Literal["quarantine"]
+    action: Literal["quarantine", "isolate", "restore"]
     note: str = Field(default="", max_length=2000)
     propagate: bool = True
     quarantine_minutes: int | None = Field(default=None, ge=1, le=10080)
@@ -518,6 +518,12 @@ class RuntimeSettingsInput(BaseModel):
     auto_quarantine: bool | None = Field(default=None, alias="autoQuarantine")
     auto_quarantine_recovery_enabled: bool | None = Field(
         default=None, alias="autoQuarantineRecoveryEnabled"
+    )
+    auto_isolation_enabled: bool | None = Field(
+        default=None, alias="autoIsolationEnabled"
+    )
+    auto_isolation_min_status: Literal["watch", "suspect", "high_risk"] | None = Field(
+        default=None, alias="autoIsolationMinStatus"
     )
     quarantine_minutes: int | None = Field(default=None, alias="quarantineMinutes", ge=1, le=7 * 24 * 60)
     clear_secrets: list[SecretSettingName] = Field(default_factory=list, alias="clearSecrets")

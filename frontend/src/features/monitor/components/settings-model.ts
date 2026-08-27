@@ -1,4 +1,5 @@
 import type {
+  AutoIsolationMinStatus,
   EditableRuntimeSettings,
   ExecutionMode,
   ProxyTarget,
@@ -83,7 +84,40 @@ export type SettingsForm = {
   minimumOutputTokens: number
   autoQuarantine: boolean
   autoQuarantineRecoveryEnabled: boolean
+  autoIsolationEnabled: boolean
+  autoIsolationMinStatus: AutoIsolationMinStatus
   quarantineMinutes: number
+}
+
+export const AUTO_ISOLATION_MIN_STATUS_OPTIONS: {
+  value: AutoIsolationMinStatus
+  label: string
+  hint: string
+}[] = [
+  {
+    value: 'watch',
+    label: '观察',
+    hint: '观察、疑似降智和高风险都会移入',
+  },
+  {
+    value: 'suspect',
+    label: '疑似降智',
+    hint: '疑似降智和高风险都会移入',
+  },
+  {
+    value: 'high_risk',
+    label: '高风险',
+    hint: '仅高风险会移入',
+  },
+]
+
+export function autoIsolationMinStatusLabel(
+  status: AutoIsolationMinStatus
+): string {
+  return (
+    AUTO_ISOLATION_MIN_STATUS_OPTIONS.find((item) => item.value === status)
+      ?.label ?? '高风险'
+  )
 }
 
 export type SettingsSetter = <K extends keyof SettingsForm>(
@@ -291,6 +325,8 @@ export function toSettingsForm(
     autoQuarantine: settings.autoQuarantine,
     autoQuarantineRecoveryEnabled:
       settings.autoQuarantineRecoveryEnabled ?? true,
+    autoIsolationEnabled: settings.autoIsolationEnabled ?? false,
+    autoIsolationMinStatus: settings.autoIsolationMinStatus ?? 'high_risk',
     quarantineMinutes: settings.quarantineMinutes,
   }
 }
@@ -380,6 +416,8 @@ export function buildSettingsPayload(
     minimumOutputTokens: form.minimumOutputTokens,
     autoQuarantine: form.autoQuarantine,
     autoQuarantineRecoveryEnabled: form.autoQuarantineRecoveryEnabled,
+    autoIsolationEnabled: form.autoIsolationEnabled,
+    autoIsolationMinStatus: form.autoIsolationMinStatus,
     quarantineMinutes: form.quarantineMinutes,
     clearSecrets,
   }

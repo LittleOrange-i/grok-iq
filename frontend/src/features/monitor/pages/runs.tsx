@@ -2520,7 +2520,7 @@ function SampleCard({
           }
         />
       </div>
-      <div className='p-4'>
+      <div className='space-y-3 p-4'>
         {sample.error ? (
           <div className='space-y-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive'>
             <div>{sample.error}</div>
@@ -2536,9 +2536,8 @@ function SampleCard({
               </div>
             )}
           </div>
-        ) : (
-          <>
-            {executionMode === 'quality_test' && !sample.response_text ? (
+        ) : null}
+        {executionMode === 'quality_test' && !sample.response_text ? (
               <div className='rounded-lg border border-sky-500/20 bg-sky-500/5 p-4'>
                 <div className='text-sm font-medium'>上游仅返回哈希和指标</div>
                 <p className='mt-1 text-xs leading-5 text-muted-foreground'>
@@ -2630,8 +2629,6 @@ function SampleCard({
                   )}
                 </div>
               </>
-            )}
-          </>
         )}
       </div>
     </div>

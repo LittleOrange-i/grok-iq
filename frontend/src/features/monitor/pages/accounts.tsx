@@ -22,6 +22,7 @@ import {
   ScanSearch,
   Search,
   ShieldAlert,
+  ShieldBan,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
@@ -32,6 +33,7 @@ import { toast } from 'sonner'
 import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import {
   api,
+  type AccountActionName,
   type AccountDetailResponse,
   type ProbeSample,
   type UpstreamAccount,
@@ -204,6 +206,8 @@ export function AccountsPage() {
   const [egressBindingOpen, setEgressBindingOpen] = useState(false)
   const [egressBindingTarget, setEgressBindingTarget] = useState<string>()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [isolateConfirmOpen, setIsolateConfirmOpen] = useState(false)
+  const [detailIsolateOpen, setDetailIsolateOpen] = useState(false)
   const [ssoConfirmOpen, setSsoConfirmOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -335,8 +339,13 @@ export function AccountsPage() {
   }, [])
 
   const actionMutation = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: string }) =>
-      api.accountAction(id, { action, propagate: true }),
+    mutationFn: ({
+      id,
+      action,
+    }: {
+      id: number
+      action: AccountActionName
+    }) => api.accountAction(id, { action, propagate: true }),
     onSuccess: () => {
       toast.success('账号状态已更新')
       void client.invalidateQueries({ queryKey: ['accounts'] })
@@ -482,6 +491,71 @@ export function AccountsPage() {
     },
   })
 
+  const isolateBatchMutation = useMutation({
+    mutationFn: (accountIds: number[]) =>
+      api.accountBatchAction({
+        account_ids: accountIds,
+        action: 'isolate',
+        note: '账号探针人工移入隔离区',
+        propagate: true,
+      }),
+    onSuccess: (result) => {
+      const skippedAccountIds = result.skippedAccountIds ?? []
+      const failedAccountIds = result.failedAccountIds ?? []
+      const alreadyIsolatedIds = result.alreadyIsolatedAccountIds ?? []
+      const retainedAccountIds = Array.from(
+        new Set([...skippedAccountIds, ...failedAccountIds])
+      )
+      setIsolateConfirmOpen(false)
+      setSelected(retainedAccountIds)
+      setSelectedDisabled(
+        selectedDisabledIds.filter((id) => retainedAccountIds.includes(id))
+      )
+      setAllFilteredSelected(false)
+      if (
+        failedAccountIds.length > 0 ||
+        skippedAccountIds.length > 0 ||
+        alreadyIsolatedIds.length > 0
+      ) {
+        const details = [`已移入隔离区 ${result.updated} 个账号`]
+        if (failedAccountIds.length) {
+          details.push(`${failedAccountIds.length} 个操作失败并保留选择`)
+        }
+        if (skippedAccountIds.length) {
+          details.push(`${skippedAccountIds.length} 个设置受任务保护并跳过`)
+        }
+        if (alreadyIsolatedIds.length) {
+          details.push(`${alreadyIsolatedIds.length} 个原本已在隔离区`)
+        }
+        toast.warning(details.join('；'))
+      } else {
+        toast.success(`已移入隔离区 ${result.updated} 个账号`)
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+
+  const isolateAccountMutation = useMutation({
+    mutationFn: (id: number) =>
+      api.accountAction(id, {
+        action: 'isolate',
+        note: '账号探针人工移入隔离区',
+        propagate: true,
+      }),
+    onSuccess: () => {
+      setDetailIsolateOpen(false)
+      toast.success('已移入隔离区')
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['account', detailId] })
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  })
+
   const egressBindingMutation = useMutation({
     mutationFn: ({
       accountIds,
@@ -536,11 +610,13 @@ export function AccountsPage() {
   const batchActionPending = batchAccountMutation.isPending
   const egressBindingPending = egressBindingMutation.isPending
   const deletePending = deleteAccountsMutation.isPending
+  const isolatePending = isolateBatchMutation.isPending
   const ssoReportPending = accountSsoReportMutation.isPending
   const selectionActionPending =
     batchActionPending ||
     egressBindingPending ||
     deletePending ||
+    isolatePending ||
     ssoReportPending
   const bindableEgress = (egress.data?.items ?? []).filter(
     (node) => node.enabled && node.proxyConfigured
@@ -628,7 +704,19 @@ export function AccountsPage() {
     <Page>
       <PageHeader
         title='账号探针'
-        description='账号列表实时来自 grok2api；本地叠加风险判定，并保存注册机联动提供的 SSO 用于检测。'
+        description={
+          <div className='space-y-2'>
+            <p>
+              账号列表实时来自 grok2api；监控判定来自探针样本累计，并保存注册机联动提供的
+              SSO 用于检测。
+            </p>
+            <p>
+              这里的观察 / 疑似降智 / 高风险，和请求审计页面的「高风险」不是同一套规则。请求审计看当前窗口请求，一条高速
+              TPS 就会显示高风险；探针高风险要重复异常且强信号达到次数。
+            </p>
+          </div>
+        }
+        hintContentClassName='max-w-[28rem]'
         descriptionAsHint
         actions={
           <>
@@ -739,6 +827,14 @@ export function AccountsPage() {
                 onClick={() => setBatchAction('disable')}
               >
                 <PowerOff />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`将已选 ${selected.length} 个账号移入隔离区`}
+                pending={isolatePending}
+                disabled={selectionActionPending || selected.length === 0}
+                onClick={() => setIsolateConfirmOpen(true)}
+              >
+                <ShieldBan />
               </ToolbarAction>
               <ToolbarAction
                 label={`批量删除 ${selected.length} 个已选账号`}
@@ -1151,6 +1247,41 @@ export function AccountsPage() {
         disabled={selected.length === 0}
         handleConfirm={() => deleteAccountsMutation.mutate(selected)}
       />
+      <ConfirmDialog
+        open={isolateConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isolatePending) setIsolateConfirmOpen(false)
+        }}
+        title={`将 ${selected.length} 个账号移入隔离区？`}
+        desc={
+          <div className='space-y-2'>
+            <p>将停用上游并把账号移入隔离区，不会删除账号。</p>
+            <p className='font-medium text-foreground'>
+              隔离区是长期隔离（不自动到期恢复）并停用上游；暂时停用仍走原来的停用时长逻辑。
+            </p>
+            <p className='text-muted-foreground'>
+              正在执行探针或等待账号设置恢复的账号会被跳过并保留选择。
+            </p>
+          </div>
+        }
+        cancelBtnText='取消'
+        confirmText={
+          isolatePending ? (
+            <>
+              <Loader2 className='animate-spin' />
+              移入中…
+            </>
+          ) : (
+            <>
+              <ShieldBan />
+              确认移入隔离区
+            </>
+          )
+        }
+        isLoading={isolatePending}
+        disabled={selected.length === 0}
+        handleConfirm={() => isolateBatchMutation.mutate(selected)}
+      />
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent size='wide' className='overflow-hidden'>
           <DialogHeader className='shrink-0'>
@@ -1193,12 +1324,14 @@ export function AccountsPage() {
           </div>
           <div className='shrink-0 border-t pt-3'>
             <p className='text-xs leading-5 text-muted-foreground'>
-              “暂时停用”使用系统设置中的停用时长；到期后系统自动启用账号、降至最低优先级，并标记为“恢复保护”。
+              “暂时停用”使用系统设置中的停用时长，到期后可自动恢复；“移入隔离区”是长期隔离并停用上游，不会自动到期恢复，也不删除 grok2api 账号。
             </p>
             <DialogFooter className='mt-3'>
               <Button
                 variant='outline'
-                disabled={actionMutation.isPending}
+                disabled={
+                  actionMutation.isPending || isolateAccountMutation.isPending
+                }
                 onClick={() =>
                   detailId &&
                   actionMutation.mutate({ id: detailId, action: 'restore' })
@@ -1209,7 +1342,9 @@ export function AccountsPage() {
               </Button>
               <Button
                 variant='destructive'
-                disabled={actionMutation.isPending}
+                disabled={
+                  actionMutation.isPending || isolateAccountMutation.isPending
+                }
                 onClick={() =>
                   detailId &&
                   actionMutation.mutate({ id: detailId, action: 'quarantine' })
@@ -1218,10 +1353,60 @@ export function AccountsPage() {
                 <ShieldAlert />
                 暂时停用
               </Button>
+              <Button
+                variant='outline'
+                disabled={
+                  actionMutation.isPending ||
+                  isolateAccountMutation.isPending ||
+                  (detail.data?.account.assessment.monitor_status ===
+                    'quarantined' &&
+                    !detail.data?.account.assessment.quarantine_until)
+                }
+                onClick={() => setDetailIsolateOpen(true)}
+              >
+                <ShieldBan />
+                移入隔离区
+              </Button>
             </DialogFooter>
           </div>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={detailIsolateOpen}
+        onOpenChange={(open) => {
+          if (!open && !isolateAccountMutation.isPending) {
+            setDetailIsolateOpen(false)
+          }
+        }}
+        title='将账号移入隔离区？'
+        desc={
+          <div className='space-y-2'>
+            <p>将停用上游并把账号移入隔离区，不会删除账号。</p>
+            <p className='font-medium text-foreground'>
+              隔离区是长期隔离（不自动到期恢复）并停用上游；暂时停用仍走原来的停用时长逻辑。
+            </p>
+          </div>
+        }
+        cancelBtnText='取消'
+        confirmText={
+          isolateAccountMutation.isPending ? (
+            <>
+              <Loader2 className='animate-spin' />
+              移入中…
+            </>
+          ) : (
+            <>
+              <ShieldBan />
+              确认移入隔离区
+            </>
+          )
+        }
+        isLoading={isolateAccountMutation.isPending}
+        disabled={detailId == null}
+        handleConfirm={() => {
+          if (detailId != null) isolateAccountMutation.mutate(detailId)
+        }}
+      />
       <ConfirmDialog
         open={sampleToDelete != null}
         onOpenChange={(open) => {
