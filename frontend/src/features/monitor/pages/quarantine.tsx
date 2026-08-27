@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
+  ChevronDown,
   Copy,
   Eye,
   Loader2,
@@ -20,10 +21,15 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatAccountSecondaryLabel } from '@/lib/account-label'
-import { api, type OperatorNote, type ProbeSample, type UpstreamAccount } from '@/lib/api'
+import {
+  api,
+  type OperatorNote,
+  type ProbeSample,
+  type UpstreamAccount,
+} from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import { StatusBadge } from '@/lib/status'
-import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
@@ -33,6 +39,11 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -40,8 +51,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -57,6 +71,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Tooltip,
   TooltipContent,
@@ -195,6 +210,103 @@ function flattenUpstreamFields(
     }
     return [{ path, value: formatUpstreamValue(item) }]
   })
+}
+
+function isHighlightUpstreamPath(path: string): boolean {
+  return (
+    path === 'enabled' ||
+    path === 'createdAt' ||
+    path === 'quota' ||
+    path.startsWith('quota.')
+  )
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function formatQuotaAmount(value: unknown, unit: unknown): string {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return formatUpstreamValue(value)
+  const normalizedUnit = String(unit || '')
+  const digits = normalizedUnit === 'credits' ? 2 : 0
+  const suffix =
+    normalizedUnit === 'credits'
+      ? ' credits'
+      : normalizedUnit === 'tokens'
+        ? ' Token'
+        : ''
+  return `${formatNumber(amount, digits)}${suffix}`
+}
+
+function remainingQuotaDisplay(quota: Record<string, unknown> | null): {
+  percent: number | null
+  label: string
+  detail: string
+} {
+  if (!quota || quota.type === 'unknown') {
+    return {
+      percent: null,
+      label: '待同步',
+      detail: 'grok2api 尚未提供可用的额度数据',
+    }
+  }
+  const usage = Number(quota.usagePercent)
+  const usagePercent = Number.isFinite(usage)
+    ? Math.min(100, Math.max(0, usage))
+    : null
+  const limit = Number(quota.limit)
+  const unit = String(quota.unit || '')
+  const status = String(quota.status || '')
+  const hasQuotaRange =
+    quota.limitKnown === true ||
+    (Number.isFinite(limit) && limit > 0) ||
+    unit === 'percent' ||
+    status !== 'active'
+
+  if (status === 'waitingReset') {
+    const recoveryAt = quota.nextProbeAt || quota.periodEnd
+    const recovery =
+      typeof recoveryAt === 'string' && recoveryAt
+        ? `，预计恢复 ${formatDate(recoveryAt)}`
+        : ''
+    return {
+      percent: 0,
+      label: '0%',
+      detail: `额度已用尽，等待重置${recovery}`,
+    }
+  }
+
+  if (!hasQuotaRange || usagePercent == null) {
+    const used =
+      quota.used == null
+        ? ''
+        : `已观测使用 ${formatQuotaAmount(quota.used, quota.unit)}，`
+    return {
+      percent: null,
+      label: '未估算',
+      detail: `${used}上游未提供额度总量`,
+    }
+  }
+
+  const percent = Math.max(0, 100 - usagePercent)
+  const approximate = quota.limitKnown === false && quota.type === 'free'
+  const label = `${approximate ? '≈' : ''}${formatNumber(percent, 0)}%`
+  const typeLabel =
+    quota.type === 'paid' ? '付费' : quota.type === 'free' ? '免费' : ''
+  const details: string[] = []
+  if (Number.isFinite(limit) && limit > 0 && unit !== 'percent') {
+    details.push(
+      `${approximate ? '估算剩余' : '剩余'} ${formatQuotaAmount(quota.remaining, quota.unit)} / 总量 ${formatQuotaAmount(quota.limit, quota.unit)}`
+    )
+  }
+  details.push(`已使用 ${formatNumber(usagePercent, 0)}%`)
+  if (typeLabel) details.push(typeLabel)
+  if (quota.confirmed) details.push('上游确认')
+  else if (quota.observed) details.push('本地观测')
+  else if (approximate) details.push('估算')
+  return { percent, label, detail: details.join(' · ') }
 }
 
 function upstreamFieldLabel(path: string): string {
@@ -431,7 +543,7 @@ function OperatorNoteCell({
                 disabled={busy}
               />
               <div className='flex items-center justify-between gap-3'>
-                <span className='text-[11px] tabular-nums text-muted-foreground'>
+                <span className='text-[11px] text-muted-foreground tabular-nums'>
                   {draft.length}/2000
                 </span>
                 <div className='flex gap-2'>
@@ -537,7 +649,7 @@ function OperatorNoteCell({
                           disabled={busy}
                         />
                         <div className='flex items-center justify-between gap-3'>
-                          <span className='text-[11px] tabular-nums text-muted-foreground'>
+                          <span className='text-[11px] text-muted-foreground tabular-nums'>
                             {draft.length}/2000
                           </span>
                           <div className='flex gap-2'>
@@ -773,16 +885,13 @@ export function QuarantinePage() {
     },
     [accounts]
   )
-  const toggleAccountSelection = useCallback(
-    (id: number, checked: boolean) => {
-      setSelected((current) =>
-        checked
-          ? [...new Set([...current, id])]
-          : current.filter((item) => item !== id)
-      )
-    },
-    []
-  )
+  const toggleAccountSelection = useCallback((id: number, checked: boolean) => {
+    setSelected((current) =>
+      checked
+        ? [...new Set([...current, id])]
+        : current.filter((item) => item !== id)
+    )
+  }, [])
 
   const restoreMutation = useMutation({
     mutationFn: (accountIds: number[]) =>
@@ -880,8 +989,8 @@ export function QuarantinePage() {
   const egressFilterLabel =
     egressNodeId === 'unbound'
       ? '未绑定'
-      : getEgressNodeName(egressNodeNames, egressNodeId) ??
-        `节点 #${egressNodeId}`
+      : (getEgressNodeName(egressNodeNames, egressNodeId) ??
+        `节点 #${egressNodeId}`)
   const hasActiveFilters = activeFilterCount > 0 || Boolean(search.trim())
 
   return (
@@ -1122,9 +1231,7 @@ export function QuarantinePage() {
                 {egressNodeId !== 'all' && (
                   <FilterChip
                     label={`出口：${egressFilterLabel}`}
-                    onClear={() =>
-                      updateView({ egressNodeId: 'all', page: 1 })
-                    }
+                    onClear={() => updateView({ egressNodeId: 'all', page: 1 })}
                   />
                 )}
               </div>
@@ -1191,7 +1298,9 @@ export function QuarantinePage() {
             <div className='relative min-h-48' aria-busy={showTableLoading}>
               <EmptyState
                 icon={ShieldBan}
-                title={hasActiveFilters ? '没有匹配的隔离账号' : '当前没有隔离账号'}
+                title={
+                  hasActiveFilters ? '没有匹配的隔离账号' : '当前没有隔离账号'
+                }
                 description={
                   hasActiveFilters
                     ? '没有匹配当前筛选的隔离账号，请调整条件后重试。'
@@ -1322,9 +1431,7 @@ export function QuarantinePage() {
                 compact
               />
             ) : (
-              <QuarantineUpstreamDetail
-                account={upstreamQuery.data.account}
-              />
+              <QuarantineUpstreamDetail account={upstreamQuery.data.account} />
             )}
           </div>
         </DialogContent>
@@ -1619,48 +1726,186 @@ function QuarantineUpstreamDetail({
 }: {
   account: Record<string, unknown>
 }) {
-  const fields = flattenUpstreamFields(account)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const extraFields = flattenUpstreamFields(account).filter(
+    (field) => !isHighlightUpstreamPath(field.path)
+  )
   const rawJson = JSON.stringify(account, null, 2)
+  const remaining = remainingQuotaDisplay(asRecord(account.quota))
+  const enabled = account.enabled === true
+  const enabledUnknown = typeof account.enabled !== 'boolean'
+  const remainingTone =
+    remaining.percent == null
+      ? 'border-muted bg-muted/15'
+      : remaining.percent <= 0
+        ? 'border-destructive/30 bg-destructive/8'
+        : remaining.percent <= 25
+          ? 'border-amber-500/30 bg-amber-500/8'
+          : remaining.percent <= 60
+            ? 'border-sky-500/30 bg-sky-500/8'
+            : 'border-emerald-500/30 bg-emerald-500/8'
+  const remainingText =
+    remaining.percent == null
+      ? 'text-muted-foreground'
+      : remaining.percent <= 0
+        ? 'text-destructive'
+        : remaining.percent <= 25
+          ? 'text-amber-700 dark:text-amber-300'
+          : remaining.percent <= 60
+            ? 'text-sky-700 dark:text-sky-300'
+            : 'text-emerald-700 dark:text-emerald-300'
+  const remainingBar =
+    remaining.percent == null
+      ? 'bg-muted-foreground/30'
+      : remaining.percent <= 0
+        ? 'bg-destructive'
+        : remaining.percent <= 25
+          ? 'bg-amber-500'
+          : remaining.percent <= 60
+            ? 'bg-sky-500'
+            : 'bg-emerald-500'
+  const copyUpstreamJson = () => {
+    void copyText(rawJson)
+      .then(() => toast.success('已复制上游 JSON'))
+      .catch((error) => toast.error(getErrorMessage(error)))
+  }
   return (
     <div className='space-y-4'>
-      <div className='flex items-center justify-between gap-3'>
-        <div className='text-sm font-medium'>上游字段</div>
-        <Button
-          type='button'
-          size='sm'
-          variant='outline'
-          onClick={() =>
-            void copyText(rawJson)
-              .then(() => toast.success('已复制上游 JSON'))
-              .catch((error) => toast.error(getErrorMessage(error)))
-          }
-        >
-          <Copy />
-          复制 JSON
-        </Button>
-      </div>
-      {fields.length ? (
-        <dl className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
-          {fields.map((field) => (
-            <div key={field.path} className='rounded-lg border bg-muted/15 p-3'>
-              <dt className='text-[11px] text-muted-foreground'>
-                {upstreamFieldLabel(field.path)}
-              </dt>
-              <dd
-                className='mt-1 text-sm leading-5 break-all'
-                title={field.path}
-              >
-                {field.value}
-              </dd>
+      <div className='grid gap-3 sm:grid-cols-3'>
+        <div className={cn('rounded-lg border p-4', remainingTone)}>
+          <div className='text-[11px] text-muted-foreground'>剩余额度占比</div>
+          <div
+            className={cn(
+              'mt-1 text-2xl font-semibold tabular-nums',
+              remainingText
+            )}
+          >
+            {remaining.label}
+          </div>
+          {remaining.percent != null ? (
+            <div className='mt-3 h-1.5 overflow-hidden rounded-full bg-background/80'>
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width]',
+                  remainingBar
+                )}
+                style={{ width: `${remaining.percent}%` }}
+              />
             </div>
-          ))}
-        </dl>
-      ) : (
-        <p className='text-sm text-muted-foreground'>上游没有返回字段</p>
-      )}
-      <pre className='overflow-x-auto rounded-lg border bg-background p-3 font-mono text-xs leading-6 whitespace-pre-wrap'>
-        {rawJson}
-      </pre>
+          ) : null}
+          <div className='mt-2 text-xs leading-5 text-muted-foreground'>
+            {remaining.detail}
+          </div>
+        </div>
+        <div
+          className={cn(
+            'rounded-lg border p-4',
+            enabledUnknown
+              ? 'border-muted bg-muted/15'
+              : enabled
+                ? 'border-emerald-500/30 bg-emerald-500/8'
+                : 'border-zinc-400/40 bg-zinc-500/10'
+          )}
+        >
+          <div className='text-[11px] text-muted-foreground'>是否启用</div>
+          <div
+            className={cn(
+              'mt-1 flex items-center gap-2 text-2xl font-semibold',
+              enabledUnknown
+                ? 'text-muted-foreground'
+                : enabled
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : 'text-zinc-700 dark:text-zinc-200'
+            )}
+          >
+            <span
+              className={cn(
+                'size-2.5 rounded-full',
+                enabledUnknown
+                  ? 'bg-muted-foreground/50'
+                  : enabled
+                    ? 'bg-emerald-500'
+                    : 'bg-zinc-400'
+              )}
+            />
+            {enabledUnknown ? '未知' : enabled ? '启用' : '停用'}
+          </div>
+          <div className='mt-2 text-xs leading-5 text-muted-foreground'>
+            grok2api 当前调度状态
+          </div>
+        </div>
+        <div className='rounded-lg border bg-muted/15 p-4'>
+          <div className='text-[11px] text-muted-foreground'>创建时间</div>
+          <div className='mt-1 text-lg font-semibold tabular-nums'>
+            {formatUpstreamValue(account.createdAt)}
+          </div>
+          <div className='mt-2 text-xs leading-5 text-muted-foreground'>
+            上游账号创建时间
+          </div>
+        </div>
+      </div>
+      <Collapsible open={moreOpen} onOpenChange={setMoreOpen}>
+        <div className='overflow-hidden rounded-lg border'>
+          <div className='flex items-center gap-2 px-2 py-1.5'>
+            <CollapsibleTrigger asChild>
+              <button
+                type='button'
+                className='flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md px-2 py-2 text-left text-sm font-medium hover:bg-muted/40'
+              >
+                <span>其他字段</span>
+                <span className='flex items-center gap-2 text-xs font-normal text-muted-foreground'>
+                  {extraFields.length} 项
+                  <ChevronDown
+                    className={cn(
+                      'size-4 transition-transform',
+                      moreOpen && 'rotate-180'
+                    )}
+                  />
+                </span>
+              </button>
+            </CollapsibleTrigger>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              className='shrink-0'
+              onClick={copyUpstreamJson}
+            >
+              <Copy />
+              复制 JSON
+            </Button>
+          </div>
+          <CollapsibleContent>
+            <div className='space-y-4 border-t p-4'>
+              {extraFields.length ? (
+                <dl className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
+                  {extraFields.map((field) => (
+                    <div
+                      key={field.path}
+                      className='rounded-lg border bg-muted/15 p-3'
+                    >
+                      <dt className='text-[11px] text-muted-foreground'>
+                        {upstreamFieldLabel(field.path)}
+                      </dt>
+                      <dd
+                        className='mt-1 text-sm leading-5 break-all'
+                        title={field.path}
+                      >
+                        {field.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className='text-sm text-muted-foreground'>没有更多字段</p>
+              )}
+              <pre className='overflow-x-auto rounded-lg border bg-background p-3 font-mono text-xs leading-6 whitespace-pre-wrap'>
+                {rawJson}
+              </pre>
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
     </div>
   )
 }
