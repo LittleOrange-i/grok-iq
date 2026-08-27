@@ -506,6 +506,18 @@ class ProbeRunReader:
                 ).label("anomalies"),
                 func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0).label("avg_tps"),
                 func.max(ProbeSample.tps).label("max_tps"),
+                func.avg(
+                    case(
+                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                        else_=ProbeSample.tps,
+                    )
+                ).label("avg_upstream_tps"),
+                func.max(
+                    case(
+                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                        else_=ProbeSample.tps,
+                    )
+                ).label("max_upstream_tps"),
             )
             .where(ProbeSample.account_id == account_id)
             .group_by(

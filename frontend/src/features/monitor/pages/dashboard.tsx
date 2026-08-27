@@ -67,9 +67,9 @@ export function DashboardPage() {
       tone: 'text-violet-600 bg-violet-500/10',
     },
     {
-      label: '最高输出 TPS',
+      label: '最高判定 TPS',
       value: formatNumber(samples.maxTps ?? 0),
-      detail: `平均 ${formatNumber(samples.avgTps ?? 0)} TPS`,
+      detail: `平均 ${formatNumber(samples.avgTps ?? 0)}；上游最高 ${formatNumber(samples.maxUpstreamTps ?? 0)}`,
       icon: Zap,
       tone: 'text-amber-600 bg-amber-500/10',
     },
@@ -128,9 +128,9 @@ export function DashboardPage() {
           <CardHeader>
             <CardTitle className='flex items-center gap-1.5'>
               <Gauge className='size-4 text-primary' />
-              TPS 趋势
+              判定 TPS 趋势
               <InfoTooltip
-                label='TPS 趋势'
+                label='判定 TPS 趋势'
                 content='最近七天实际探针流的平均与最高输出速度。'
               />
             </CardTitle>
@@ -182,7 +182,7 @@ export function DashboardPage() {
                 <Area
                   type='monotone'
                   dataKey='max_tps'
-                  name='最高 TPS'
+                  name='最高判定 TPS'
                   stroke='var(--chart-5)'
                   fill='transparent'
                   strokeWidth={1.5}
@@ -190,7 +190,7 @@ export function DashboardPage() {
                 <Area
                   type='monotone'
                   dataKey='avg_tps'
-                  name='平均 TPS'
+                  name='平均判定 TPS'
                   stroke='var(--chart-1)'
                   fill='url(#avgFill)'
                   strokeWidth={2}

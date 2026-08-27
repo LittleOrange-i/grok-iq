@@ -1631,11 +1631,12 @@ const AccountRow = memo(function AccountRow({
         </span>
       </TableCell>
       <TableCell>
-        <div className='tabular-nums'>
-          {formatNumber(assessment.latest_tps)}
+        <div className='tabular-nums'>判定 {formatNumber(assessment.latest_tps)}</div>
+        <div className='text-xs text-muted-foreground'>
+          上游 {formatNumber(assessment.latest_upstream_tps ?? assessment.latest_tps)}
         </div>
         <div className='text-xs text-muted-foreground'>
-          max {formatNumber(assessment.max_tps)}
+          峰值 {formatNumber(assessment.max_tps)} · 上游 {formatNumber(assessment.max_upstream_tps ?? assessment.max_tps)}
         </div>
       </TableCell>
       <TableCell>
@@ -1857,12 +1858,12 @@ function AccountDetail({
                       : item.egress_name}
                 </span>
                 <span className='whitespace-nowrap tabular-nums sm:text-right'>
-                  {formatNumber(item.max_tps)} TPS max
+                判定 {formatNumber(item.max_tps)} TPS max · 上游 {formatNumber(item.max_upstream_tps ?? item.max_tps)}
                 </span>
               </div>
               <div className='mt-1 text-xs text-muted-foreground'>
                 {item.samples} 个样本 · {item.anomalies ?? 0} 个降智信号 · 平均{' '}
-                {formatNumber(item.avg_tps)} TPS
+                平均判定 {formatNumber(item.avg_tps)} · 上游 {formatNumber(item.avg_upstream_tps ?? item.avg_tps)} TPS
               </div>
             </div>
           ))}

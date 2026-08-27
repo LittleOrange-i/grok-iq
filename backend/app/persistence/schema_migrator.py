@@ -27,6 +27,18 @@ COMPATIBILITY_COLUMNS = {
             "disposition",
             "ALTER TABLE account_assessments ADD COLUMN disposition JSON NOT NULL DEFAULT '{}'",
         ),
+        (
+            "avg_upstream_tps",
+            "ALTER TABLE account_assessments ADD COLUMN avg_upstream_tps FLOAT NOT NULL DEFAULT 0",
+        ),
+        (
+            "max_upstream_tps",
+            "ALTER TABLE account_assessments ADD COLUMN max_upstream_tps FLOAT NOT NULL DEFAULT 0",
+        ),
+        (
+            "latest_upstream_tps",
+            "ALTER TABLE account_assessments ADD COLUMN latest_upstream_tps FLOAT NOT NULL DEFAULT 0",
+        ),
     ],
     "probe_profiles": [
         (

@@ -1806,7 +1806,7 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
         {stats.warnings > 0 ? `，${stats.warnings} 个样本不足` : ''} /{' '}
         {stats.samples} 个样本
         {stats.maxTps != null
-          ? `，最高 ${formatNumber(stats.maxTps)} TPS，平均 ${formatNumber(stats.avgTps)}`
+          ? `，判定最高 ${formatNumber(stats.maxTps)} TPS、平均 ${formatNumber(stats.avgTps)}；上游最高 ${formatNumber(stats.maxUpstreamTps)}、平均 ${formatNumber(stats.avgUpstreamTps)}`
           : ''}
         。样本不足会在任务中心标记异常提示，不能视为探针通过
         {run.trigger === 'register' ? '，注册联动也不会恢复优先级' : ''}
@@ -1890,6 +1890,8 @@ function getRunProbeStats(run: ProbeRun) {
     warnings: toFiniteNumber(summary.warning_count) ?? classificationWarnings,
     maxTps: toFiniteNumber(summary.max_tps),
     avgTps: toFiniteNumber(summary.avg_tps),
+    maxUpstreamTps: toFiniteNumber(summary.max_upstream_tps),
+    avgUpstreamTps: toFiniteNumber(summary.avg_upstream_tps),
   }
 }
 

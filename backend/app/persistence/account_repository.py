@@ -549,6 +549,11 @@ class AccountRepository:
                 )
             latest = rows[-1] if rows else None
             latest_measurable = measurable[-1] if measurable else None
+            upstream_values = [
+                float(row.upstream_tps if row.upstream_tps is not None else row.tps)
+                for row in measurable
+                if (row.upstream_tps if row.upstream_tps is not None else row.tps) > 0
+            ]
             assessment.monitor_status = status
             assessment.risk_score = score
             assessment.sample_count = len(measurable)
@@ -562,6 +567,19 @@ class AccountRepository:
             assessment.avg_tps = sum(row.tps for row in measurable) / len(measurable) if measurable else 0.0
             assessment.max_tps = max((row.tps for row in measurable), default=0.0)
             assessment.latest_tps = latest_measurable.tps if latest_measurable else 0.0
+            assessment.avg_upstream_tps = (
+                sum(upstream_values) / len(upstream_values) if upstream_values else 0.0
+            )
+            assessment.max_upstream_tps = max(upstream_values, default=0.0)
+            assessment.latest_upstream_tps = (
+                float(
+                    latest_measurable.upstream_tps
+                    if latest_measurable and latest_measurable.upstream_tps is not None
+                    else latest_measurable.tps
+                )
+                if latest_measurable
+                else 0.0
+            )
             assessment.latest_classification = latest.classification if latest else ""
             assessment.latest_sample_at = latest.created_at if latest else None
             assessment.last_anomaly_at = anomalies[-1].created_at if anomalies else None
@@ -871,6 +889,18 @@ class AccountRepository:
                     ),
                     func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0),
                     func.max(ProbeSample.tps),
+                    func.avg(
+                        case(
+                            (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                            else_=ProbeSample.tps,
+                        )
+                    ),
+                    func.max(
+                        case(
+                            (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                            else_=ProbeSample.tps,
+                        )
+                    ),
                 ).where(ProbeSample.created_at >= cutoff)
             ).one()
             status_counts = dict(
@@ -887,14 +917,28 @@ class AccountRepository:
                     "samples": row.samples,
                     "avg_tps": round(row.avg_tps or 0, 1),
                     "max_tps": round(row.max_tps or 0, 1),
+                    "avg_upstream_tps": round(row.avg_upstream_tps or 0, 1),
+                    "max_upstream_tps": round(row.max_upstream_tps or 0, 1),
                     "hard": row.hard or 0,
                 }
                 for row in session.execute(
                     select(
                         func.date(ProbeSample.created_at).label("day"),
                         func.count(ProbeSample.id).label("samples"),
-                        func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0).label("avg_tps"),
-                        func.max(ProbeSample.tps).label("max_tps"),
+                func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0).label("avg_tps"),
+                func.max(ProbeSample.tps).label("max_tps"),
+                func.avg(
+                    case(
+                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                        else_=ProbeSample.tps,
+                    )
+                ).label("avg_upstream_tps"),
+                func.max(
+                    case(
+                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
+                        else_=ProbeSample.tps,
+                    )
+                ).label("max_upstream_tps"),
                         func.sum(
                             case(
                                 (
@@ -932,6 +976,8 @@ class AccountRepository:
                 "anomalies": sample_rows[1] or 0,
                 "avgTps": round(sample_rows[2] or 0, 1),
                 "maxTps": round(sample_rows[3] or 0, 1),
+                "avgUpstreamTps": round(sample_rows[4] or 0, 1),
+                "maxUpstreamTps": round(sample_rows[5] or 0, 1),
             },
             "statusCounts": status_counts,
             "trend": trend,

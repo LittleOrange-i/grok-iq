@@ -303,6 +303,9 @@ type Assessment = {
   avg_tps?: number
   max_tps?: number
   latest_tps?: number
+  avg_upstream_tps?: number
+  max_upstream_tps?: number
+  latest_upstream_tps?: number
   latest_classification?: string
   latest_sample_at?: string | null
   risk_reasons: string[]
@@ -411,6 +414,8 @@ type AccountTargetSummary = {
   anomalies?: number | null
   avg_tps?: number | null
   max_tps?: number | null
+  avg_upstream_tps?: number | null
+  max_upstream_tps?: number | null
 }
 
 export type AccountDetailResponse = {
@@ -1822,6 +1827,8 @@ export type DashboardResponse = {
     anomalies?: number
     maxTps?: number
     avgTps?: number
+    maxUpstreamTps?: number
+    avgUpstreamTps?: number
   }
   queue?: { queued?: number; running?: number }
   trend?: Record<string, string | number | null>[]

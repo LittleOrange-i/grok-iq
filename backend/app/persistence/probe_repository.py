@@ -981,13 +981,21 @@ class ProbeRepository:
             if classification:
                 counts[classification] = int(counts.get(classification, 0)) + 1
             tps = _finite_float(values.get("tps"))
+            upstream_tps = _finite_float(values.get("upstream_tps"))
             tps_sum = _finite_float(summary.get("tps_sum")) or 0.0
             tps_count = int(summary.get("tps_count") or 0)
             max_tps = _finite_float(summary.get("max_tps"))
+            upstream_tps_sum = _finite_float(summary.get("upstream_tps_sum")) or 0.0
+            upstream_tps_count = int(summary.get("upstream_tps_count") or 0)
+            max_upstream_tps = _finite_float(summary.get("max_upstream_tps"))
             if tps is not None and tps > 0:
                 tps_sum += tps
                 tps_count += 1
                 max_tps = max(max_tps or 0.0, tps)
+            if upstream_tps is not None and upstream_tps > 0:
+                upstream_tps_sum += upstream_tps
+                upstream_tps_count += 1
+                max_upstream_tps = max(max_upstream_tps or 0.0, upstream_tps)
             summary.update(
                 {
                     "total": run.total_steps,
@@ -1006,6 +1014,14 @@ class ProbeRepository:
                     "avg_tps": (tps_sum / tps_count) if tps_count else None,
                     "tps_sum": tps_sum,
                     "tps_count": tps_count,
+                    "max_upstream_tps": max_upstream_tps,
+                    "avg_upstream_tps": (
+                        upstream_tps_sum / upstream_tps_count
+                        if upstream_tps_count
+                        else None
+                    ),
+                    "upstream_tps_sum": upstream_tps_sum,
+                    "upstream_tps_count": upstream_tps_count,
                 }
             )
             run.summary = summary
@@ -1015,13 +1031,19 @@ class ProbeRepository:
     def _build_run_summary(run: ProbeRun, sample_values: list[Any]) -> dict[str, Any]:
         counts: dict[str, int] = {}
         tps_values: list[float] = []
-        for classification, raw_tps in sample_values:
+        upstream_tps_values: list[float] = []
+        for classification, raw_tps, raw_upstream_tps in sample_values:
             name = str(classification or "").strip()
             if name:
                 counts[name] = counts.get(name, 0) + 1
             tps = _finite_float(raw_tps)
             if tps is not None and tps > 0:
                 tps_values.append(tps)
+            upstream_tps = _finite_float(raw_upstream_tps)
+            if upstream_tps is None:
+                upstream_tps = tps
+            if upstream_tps is not None and upstream_tps > 0:
+                upstream_tps_values.append(upstream_tps)
         return {
             "total": run.total_steps,
             # Execution progress is intentionally retained after an operator
@@ -1041,11 +1063,25 @@ class ProbeRepository:
             "avg_tps": (sum(tps_values) / len(tps_values)) if tps_values else None,
             "tps_sum": sum(tps_values),
             "tps_count": len(tps_values),
+            "max_upstream_tps": (
+                max(upstream_tps_values) if upstream_tps_values else None
+            ),
+            "avg_upstream_tps": (
+                sum(upstream_tps_values) / len(upstream_tps_values)
+                if upstream_tps_values
+                else None
+            ),
+            "upstream_tps_sum": sum(upstream_tps_values),
+            "upstream_tps_count": len(upstream_tps_values),
         }
 
     def _refresh_run_summary(self, session: Session, run: ProbeRun) -> None:
         sample_values = session.execute(
-            select(ProbeSample.classification, ProbeSample.tps).where(
+            select(
+                ProbeSample.classification,
+                ProbeSample.tps,
+                ProbeSample.upstream_tps,
+            ).where(
                 ProbeSample.run_id == run.id
             )
         ).all()
