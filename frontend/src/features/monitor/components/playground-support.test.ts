@@ -26,6 +26,14 @@ describe('parseCompletionStreamEvent', () => {
       )
     ).toEqual({ done: false, delta: { content: '', reasoning: 'think' } })
   })
+
+  it('parses reasoning summary text deltas', () => {
+    expect(
+      parseCompletionStreamEvent(
+        'data: {"type":"response.reasoning_summary_text.delta","delta":"think"}'
+      )
+    ).toEqual({ done: false, delta: { content: '', reasoning: 'think' } })
+  })
 })
 
 describe('chatCompletionUrl', () => {

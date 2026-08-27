@@ -847,7 +847,6 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             reasoning_tokens=sample.reasoning_tokens,
             first_token_ms=sample.first_token_ms,
             generation_ms=generation_ms,
-            duration_ms=sample.duration_ms,
             upstream_tps=upstream_tps,
             thresholds=thresholds,
         )
@@ -906,17 +905,17 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             first_token_share=first_token_share,
             buffered=buffered,
         )
-    return _with_flush_tps_reason(
+    return _with_override_tps_reason(
         classification,
         upstream_tps=upstream_tps,
-        duration_ms=sample.duration_ms,
+        generation_ms=generation_ms,
     )
 
 
-def duration_window_tps(output_tokens: int, duration_ms: int) -> float:
-    if output_tokens <= 0 or duration_ms <= 0:
+def generation_window_tps(output_tokens: int, generation_ms: int) -> float:
+    if output_tokens <= 0 or generation_ms <= 0:
         return 0.0
-    return output_tokens * 1000.0 / duration_ms
+    return output_tokens * 1000.0 / generation_ms
 
 
 def effective_probe_tps(
@@ -925,16 +924,14 @@ def effective_probe_tps(
     reasoning_tokens: int,
     first_token_ms: int | None,
     generation_ms: int,
-    duration_ms: int,
     upstream_tps: float,
     thresholds: Thresholds,
 ) -> float:
-    """Return TPS after grok2api-style reasoning-flush correction.
+    """Return TPS used for probe/audit risk.
 
-    grok2api uses output tokens / generation window, except when reasoning
-    tokens appear to flush in a short tail. In that case the denominator
-    becomes the full request duration, which *deflates* a false-high rate.
-    grok-iq keeps the same direction and makes the 1000ms cliff configurable.
+    grok2api deflates flush rows to output / duration when the generation
+    tail is under 1000ms. That hides the burst the operator actually sees.
+    When the override matches, grok-iq restores output / generation window.
     """
     if not should_override_probe_tps(
         output_tokens=output_tokens,
@@ -944,7 +941,7 @@ def effective_probe_tps(
         thresholds=thresholds,
     ):
         return upstream_tps
-    return duration_window_tps(output_tokens, duration_ms)
+    return generation_window_tps(output_tokens, generation_ms)
 
 
 def should_override_probe_tps(
@@ -955,42 +952,48 @@ def should_override_probe_tps(
     generation_ms: int,
     thresholds: Thresholds,
 ) -> bool:
-    return bool(
+    if not (
         thresholds.probe_tps_override_enabled
         and output_tokens > 0
         and reasoning_tokens > 0
         and first_token_ms is not None
         and first_token_ms >= thresholds.probe_tps_override_min_first_token_ms
         and generation_ms > 0
-        and generation_ms < first_token_ms
-        and generation_ms <= thresholds.probe_tps_override_max_generation_ms
+    ):
+        return False
+    if generation_ms <= thresholds.probe_tps_override_max_generation_ms:
+        return True
+    generation_tps = generation_window_tps(output_tokens, generation_ms)
+    return bool(
+        generation_ms < first_token_ms
+        and generation_tps >= thresholds.strong_degradation_tps
     )
 
 
-def _flush_tps_reason(
+def _override_tps_reason(
     *,
     upstream_tps: float,
-    duration_ms: int,
+    generation_ms: int,
     tps: float,
 ) -> str | None:
     if abs(upstream_tps - tps) <= 0.01:
         return None
     return (
-        "推理 flush 校正："
-        f"上游 {upstream_tps:.1f} 按生成窗口虚高，改用全程 {duration_ms}ms "
-        f"校正为 {tps:.1f}"
+        "推理突发 TPS 覆盖："
+        f"上游 {upstream_tps:.1f} 被压成全程均速，按 {generation_ms}ms "
+        f"生成窗口重算为 {tps:.1f}"
     )
 
 
-def _with_flush_tps_reason(
+def _with_override_tps_reason(
     classification: Classification,
     *,
     upstream_tps: float,
-    duration_ms: int,
+    generation_ms: int,
 ) -> Classification:
-    reason = _flush_tps_reason(
+    reason = _override_tps_reason(
         upstream_tps=upstream_tps,
-        duration_ms=duration_ms,
+        generation_ms=generation_ms,
         tps=classification.tps,
     )
     if reason is None:
@@ -1039,7 +1042,6 @@ def classify_audit_sample(
         reasoning_tokens=max(0, int(reasoning_tokens or 0)),
         first_token_ms=first_token_ms,
         generation_ms=generation_ms,
-        duration_ms=safe_duration_ms,
         upstream_tps=measured_tps,
         thresholds=thresholds,
     )
@@ -1111,10 +1113,10 @@ def classify_audit_sample(
                     first_token_share=first_token_share,
                     buffered=buffered,
                 )
-    return _with_flush_tps_reason(
+    return _with_override_tps_reason(
         classification,
         upstream_tps=measured_tps,
-        duration_ms=safe_duration_ms,
+        generation_ms=generation_ms,
     )
 
 

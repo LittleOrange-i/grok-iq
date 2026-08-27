@@ -1815,7 +1815,7 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
         {stats.maxTps != null
           ? `。TPS 显示本任务最高值 ${formatDualTps(stats.maxTps, stats.maxUpstreamTps)}，平均 ${formatDualTps(stats.avgTps, stats.avgUpstreamTps)}${
               tpsOverridden(stats.maxTps, stats.maxUpstreamTps)
-                ? '；紫色为按全程耗时校正，灰色为上游原值'
+                ? '；紫色为按生成窗口重算，灰色为上游被压低的原值'
                 : ''
             }`
           : ''}
@@ -2524,7 +2524,7 @@ function SampleCard({
               tps={sample.tps}
               upstreamTps={sample.upstream_tps}
               outputTokens={sample.output_tokens}
-              durationMs={sample.duration_ms}
+              generationMs={sample.generation_ms}
             />
           }
         />
@@ -2596,6 +2596,7 @@ function SampleCard({
               <>
                 <ReasoningPanel
                   content={sample.reasoning_text || ''}
+                  tokenCount={sample.reasoning_tokens}
                   defaultOpen
                 />
                 {responseExpanded ? (

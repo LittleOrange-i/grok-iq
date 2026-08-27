@@ -11,17 +11,20 @@ export function ReasoningPanel({
   content,
   streaming = false,
   defaultOpen,
+  tokenCount,
   className,
 }: {
   content: string
   streaming?: boolean
   defaultOpen?: boolean
+  tokenCount?: number | null
   className?: string
 }) {
   const text = content.trim()
   const [open, setOpen] = useState(defaultOpen ?? streaming)
+  const missing = !text && !streaming && (tokenCount ?? 0) > 0
 
-  if (!text && !streaming) return null
+  if (!text && !streaming && !missing) return null
 
   return (
     <Collapsible
@@ -64,6 +67,11 @@ export function ReasoningPanel({
                   />
                 )}
               </div>
+            ) : missing ? (
+              <span className='text-muted-foreground'>
+                上游上报了 {tokenCount} 个推理 Token，但流里没有
+                response.reasoning_summary_text.delta 思考正文。这本身也是降智常见特征。
+              </span>
             ) : (
               <span className='text-muted-foreground'>正在等待思考片段…</span>
             )}

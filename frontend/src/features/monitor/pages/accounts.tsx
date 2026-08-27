@@ -1580,7 +1580,7 @@ function AccountPeriodStats({
         {hasTps
           ? ` TPS 显示最新一条可计量样本${
               overridden
-                ? '：紫色为按全程耗时校正，灰色为上游原值'
+                ? '：紫色为按生成窗口重算，灰色为上游被压低的原值'
                 : ''
             }。周期最高 ${formatDualTps(
               assessment.max_tps,

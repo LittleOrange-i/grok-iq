@@ -278,12 +278,12 @@ function ProbeSamplesPanel({
         </RiskFieldGroup>
 
         <RiskFieldGroup
-          title='推理 flush TPS 校正（对齐 grok2api）'
-          hint='推理 Token 在末尾集中 flush 时，上游会按生成窗口把速度算虚高。命中后改用输出 Token ÷ 总耗时压低 TPS，用来补 1000ms 跳变漏网，不是把速度算得更高。'
+          title='推理突发 TPS 覆盖'
+          hint='grok2api 在生成窗口 < 1000ms 时会改用总耗时，把 1400+ Token/s 压成 60。命中后按生成窗口把速度拉回来，才能检出这类账号。'
         >
           <SettingListItem
-            label='启用推理 flush 校正'
-            description='有推理 Token、首 Token 达到阈值、生成窗口短于首 Token 且不超过最大生成窗口时，使用输出 Token ÷ 总耗时。无推理的短窗口仍走上游口径，避免漏掉真实缓冲爆发。'
+            label='启用推理突发覆盖'
+            description='有推理 Token、首 Token 达到阈值时，短生成窗口按 输出 Token ÷ 生成窗口 重算。窗口略超过上限，但生成窗口 TPS 已达强异常时同样覆盖。'
             checked={form.probeTpsOverrideEnabled}
             onCheckedChange={(value) => set('probeTpsOverrideEnabled', value)}
           />
@@ -292,7 +292,7 @@ function ProbeSamplesPanel({
               <div className='grid gap-4 sm:grid-cols-2'>
                 <NumberField
                   label='首 Token 最低延迟（ms）'
-                  hint='例如 5000 表示首字至少等待 5 秒。比 grok2api 多一道保守门槛。'
+                  hint='例如 5000 表示首字至少等待 5 秒。'
                   value={form.probeTpsOverrideMinFirstTokenMs}
                   min={0}
                   max={600000}
@@ -302,7 +302,7 @@ function ProbeSamplesPanel({
                 />
                 <NumberField
                   label='最大生成窗口（ms）'
-                  hint='grok2api 硬编码 1000ms。像 1178ms 这种漏网请调到 1500–2000。'
+                  hint='grok2api 在 1000ms 内会压速。当前 800 会漏掉 877ms；可调到 2000，或靠强异常 TPS 兜底。'
                   value={form.probeTpsOverrideMaxGenerationMs}
                   min={1}
                   max={60000}
@@ -313,10 +313,11 @@ function ProbeSamplesPanel({
               </div>
               <p className='rounded-lg bg-muted/35 px-3 py-2 text-xs leading-5 text-muted-foreground'>
                 判定关系：推理 Token &gt; 0 且首 Token ≥{' '}
-                {form.probeTpsOverrideMinFirstTokenMs}ms 且生成窗口 &lt; 首
-                Token 且生成窗口 ≤ {form.probeTpsOverrideMaxGenerationMs}
-                ms。命中后按 输出 Token ÷ 总耗时校正；任一条件不满足时继续使用上游
-                TPS。
+                {form.probeTpsOverrideMinFirstTokenMs}ms，并且生成窗口 ≤{' '}
+                {form.probeTpsOverrideMaxGenerationMs}ms，或生成窗口短于首
+                Token 且生成窗口 TPS ≥ {form.strongDegradationTps}
+                。命中后按 输出 Token ÷ 生成窗口重算；这是为了抵消 grok2api
+                的全程均速，不是把速度压得更低。
               </p>
             </div>
           )}

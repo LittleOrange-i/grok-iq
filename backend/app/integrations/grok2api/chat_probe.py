@@ -218,6 +218,31 @@ class ChatProbeRunner:
         if usage is not None:
             state.usage = usage
         event_type = str(payload.get("type") or "")
+        content, reasoning = self._delta_from_payload(payload, event_type)
+        if not reasoning:
+            reasoning = self._reasoning_from_envelope(payload)
+        if reasoning:
+            if event_type in {
+                "response.reasoning_summary_text.done",
+                "response.reasoning_text.done",
+            }:
+                state.reasoning_parts = [reasoning]
+            elif event_type in {
+                "response.completed",
+                "response.failed",
+                "response.incomplete",
+                "response.done",
+                "response.output_item.done",
+            }:
+                if not "".join(state.reasoning_parts or []).strip():
+                    state.reasoning_parts.append(reasoning)
+            else:
+                state.reasoning_parts.append(reasoning)
+        if (content or reasoning) and state.first_generated_at is None:
+            state.first_generated_at = time.perf_counter()
+        if content:
+            state.visible_parts.append(content)
+            state.chunk_count += 1
         if event_type in {
             "response.completed",
             "response.failed",
@@ -225,15 +250,6 @@ class ChatProbeRunner:
             "response.done",
         }:
             state.terminal = True
-            return
-        content, reasoning = self._delta_from_payload(payload, event_type)
-        if (content or reasoning) and state.first_generated_at is None:
-            state.first_generated_at = time.perf_counter()
-        if content:
-            state.visible_parts.append(content)
-            state.chunk_count += 1
-        if reasoning:
-            state.reasoning_parts.append(reasoning)
 
     @staticmethod
     def _usage_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -253,8 +269,15 @@ class ChatProbeRunner:
             "response.reasoning_text.delta",
         }:
             return "", cls._delta_text(payload.get("delta"))
+        if event_type in {
+            "response.reasoning_summary_text.done",
+            "response.reasoning_text.done",
+        }:
+            return "", cls._delta_text(payload.get("text") or payload.get("delta"))
         if event_type == "response.output_text.delta":
             return cls._delta_text(payload.get("delta")), ""
+        if event_type == "response.output_item.done":
+            return "", cls._reasoning_from_item(payload.get("item"))
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         for choice in payload.get("choices", []):
@@ -279,7 +302,41 @@ class ChatProbeRunner:
             return value
         if isinstance(value, dict):
             return str(value.get("text") or value.get("content") or "")
+        if isinstance(value, list):
+            return "".join(ChatProbeRunner._delta_text(part) for part in value)
         return ""
+
+    @classmethod
+    def _reasoning_from_item(cls, item: Any) -> str:
+        if not isinstance(item, dict) or str(item.get("type") or "") != "reasoning":
+            return ""
+        parts: list[str] = []
+        for value in (item.get("summary") or [], item.get("content") or []):
+            if isinstance(value, str):
+                parts.append(value)
+                continue
+            if not isinstance(value, list):
+                continue
+            for part in value:
+                if isinstance(part, str):
+                    parts.append(part)
+                    continue
+                if not isinstance(part, dict):
+                    continue
+                parts.append(cls._delta_text(part.get("text") or part.get("content") or part))
+        return "".join(parts).strip()
+
+    @classmethod
+    def _reasoning_from_envelope(cls, payload: dict[str, Any]) -> str:
+        response = payload.get("response")
+        if not isinstance(response, dict):
+            return cls._reasoning_from_item(payload.get("item"))
+        parts = [
+            cls._reasoning_from_item(item)
+            for item in (response.get("output") or [])
+            if isinstance(item, dict)
+        ]
+        return "\n".join(part for part in parts if part).strip()
 
     def _raise_payload_error(
         self, payload: dict[str, Any], status_code: int, request_id: str

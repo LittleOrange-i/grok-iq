@@ -42,6 +42,53 @@ class ReasoningStreamResponse(StubStreamResponse):
         )
 
 
+class ReasoningCompletedStreamResponse(StubStreamResponse):
+    async def aiter_content(self, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        yield b'data: {"type":"response.output_text.delta","delta":"OK"}\n\n'
+        payload = {
+            "type": "response.completed",
+            "response": {
+                "usage": {
+                    "output_tokens": 8,
+                    "output_tokens_details": {"reasoning_tokens": 5},
+                },
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "summary": [{"type": "summary_text", "text": "先分析题目"}],
+                    }
+                ],
+            },
+        }
+        yield f"data: {__import__('json').dumps(payload, ensure_ascii=False)}\n\n".encode()
+
+
+class ReasoningSummaryDeltaStreamResponse(StubStreamResponse):
+    async def aiter_content(self, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        yield (
+            'data: {"type":"response.reasoning_summary_text.delta",'
+            '"delta":"先分析题目"}\n\n'
+        ).encode()
+        yield b'data: {"type":"response.output_text.delta","delta":"OK"}\n\n'
+        yield (
+            b'data: {"type":"response.completed","response":{"usage":{"output_tokens":8,'
+            b'"output_tokens_details":{"reasoning_tokens":5}}}}\n\n'
+        )
+
+
+class ReasoningSummaryDoneStreamResponse(StubStreamResponse):
+    async def aiter_content(self, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        yield (
+            'data: {"type":"response.reasoning_summary_text.done",'
+            '"text":"先分析题目"}\n\n'
+        ).encode()
+        yield b'data: {"type":"response.output_text.delta","delta":"OK"}\n\n'
+        yield (
+            b'data: {"type":"response.completed","response":{"usage":{"output_tokens":8,'
+            b'"output_tokens_details":{"reasoning_tokens":5}}}}\n\n'
+        )
+
+
 class HangingAfterCompleteResponse:
     status_code = 200
     headers: dict[str, str] = {}
@@ -302,6 +349,63 @@ async def test_chat_probe_keeps_reasoning_text_with_response(
     assert result.response_text == "OK"
     assert result.reasoning_text == "先分析题目"
     assert result.reasoning_tokens == 5
+
+
+async def _run_chat_probe(monkeypatch: pytest.MonkeyPatch, response_cls: type) -> Any:
+    request_body: dict[str, Any] = {}
+
+    class Session(StubStreamSession):
+        async def post(self, url: str, *, json: dict[str, Any], **kwargs: Any):
+            await super().post(url, json=json, **kwargs)
+            return response_cls()
+
+    client = Grok2APIClient(Settings())
+    monkeypatch.setattr(client, "_session", lambda: Session(request_body))
+
+    async def find_audit(_: str) -> dict[str, Any]:
+        return {"id": "1", "accountId": "7", "egressNodeId": "2"}
+
+    monkeypatch.setattr(client, "find_audit", find_audit)
+    return await client.chat_probe(
+        api_key="key",
+        public_model="model",
+        account_id=7,
+        system_prompt="",
+        prompt="prompt",
+        expected="OK",
+        max_output_tokens=0,
+        temperature=None,
+        extra_body={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_probe_keeps_reasoning_from_completed_output(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    result = await _run_chat_probe(monkeypatch, ReasoningCompletedStreamResponse)
+    assert result.response_text == "OK"
+    assert result.reasoning_text == "先分析题目"
+
+
+@pytest.mark.asyncio
+async def test_chat_probe_keeps_reasoning_from_summary_done(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    result = await _run_chat_probe(monkeypatch, ReasoningSummaryDoneStreamResponse)
+    assert result.response_text == "OK"
+    assert result.reasoning_text == "先分析题目"
+
+
+@pytest.mark.asyncio
+async def test_chat_probe_keeps_reasoning_summary_text_delta(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    result = await _run_chat_probe(
+        monkeypatch, ReasoningSummaryDeltaStreamResponse
+    )
+    assert result.response_text == "OK"
+    assert result.reasoning_text == "先分析题目"
 
 
 @pytest.mark.asyncio

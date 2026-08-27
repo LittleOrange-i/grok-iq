@@ -138,71 +138,52 @@ def _flush_thresholds(**overrides):
     values = dict(
         probe_tps_override_enabled=True,
         probe_tps_override_min_first_token_ms=5000,
-        probe_tps_override_max_generation_ms=2000,
+        probe_tps_override_max_generation_ms=800,
+        strong_degradation_tps=240,
     )
     values.update(overrides)
     return Thresholds(**values)
 
 
-def test_reasoning_flush_keeps_duration_tps_when_grok2api_already_corrected():
+def test_reasoning_burst_override_restores_generation_window_tps():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
-            output_tokens=915,
-            reasoning_tokens=890,
-            first_token_ms=11_495,
-            duration_ms=11_716,
-            egress_key="node:38",
-            measured_tps=78.0983,
-        ),
-        _flush_thresholds(probe_tps_override_max_generation_ms=500),
-    )
-
-    assert result.tps == 915 * 1000 / 11_716
-    assert result.name == "normal"
-    assert result.reasons == ()
-
-
-def test_reasoning_flush_deflates_false_high_generation_window_tps():
-    result = classify_sample(
-        SampleMetrics(
-            status_code=200,
-            output_tokens=1085,
-            reasoning_tokens=1013,
-            first_token_ms=14_655,
-            duration_ms=15_833,
+            output_tokens=1433,
+            reasoning_tokens=1400,
+            first_token_ms=23_309,
+            duration_ms=23_809,
             egress_key="node:34",
-            measured_tps=1085 * 1000 / 1178,
+            measured_tps=60.1873,
         ),
         _flush_thresholds(),
     )
 
-    assert result.tps == 1085 * 1000 / 15_833
-    assert result.name == "normal"
-    assert any("推理 flush 校正" in reason for reason in result.reasons)
+    assert result.tps == 1433 * 1000 / 500
+    assert result.name == "buffered_hard"
+    assert any("推理突发 TPS 覆盖" in reason for reason in result.reasons)
 
 
-def test_reasoning_flush_leaves_already_duration_based_tps_unchanged():
-    measured = 1834 * 1000 / 25_307
+def test_reasoning_burst_override_catches_window_between_max_and_grok2api_cliff():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
-            output_tokens=1834,
-            reasoning_tokens=1782,
-            first_token_ms=24_540,
-            duration_ms=25_307,
+            output_tokens=1234,
+            reasoning_tokens=1176,
+            first_token_ms=20_294,
+            duration_ms=21_171,
             egress_key="node:34",
-            measured_tps=measured,
+            measured_tps=58.2873,
         ),
         _flush_thresholds(),
     )
 
-    assert result.tps == measured
-    assert result.name == "normal"
-    assert result.reasons == ()
+    assert result.tps == 1234 * 1000 / 877
+    assert result.name == "buffered_hard"
+    assert any("推理突发 TPS 覆盖" in reason for reason in result.reasons)
 
 
-def test_reasoning_flush_does_not_inflate_missed_cliff_when_window_exceeds_max():
+def test_reasoning_burst_override_keeps_already_high_generation_window_tps():
     measured = 1085 * 1000 / 1178
     result = classify_sample(
         SampleMetrics(
@@ -221,17 +202,17 @@ def test_reasoning_flush_does_not_inflate_missed_cliff_when_window_exceeds_max()
     assert result.name == "buffered_hard"
 
 
-def test_reasoning_flush_override_requires_reasoning_and_short_window():
-    thresholds = _flush_thresholds(probe_tps_override_max_generation_ms=500)
+def test_reasoning_burst_override_requires_reasoning():
+    thresholds = _flush_thresholds()
     no_reasoning = classify_sample(
         SampleMetrics(
             status_code=200,
-            output_tokens=1085,
+            output_tokens=1234,
             reasoning_tokens=0,
-            first_token_ms=14_655,
-            duration_ms=15_833,
+            first_token_ms=20_294,
+            duration_ms=21_171,
             egress_key="node:34",
-            measured_tps=1085 * 1000 / 1178,
+            measured_tps=58.2873,
         ),
         thresholds,
     )
@@ -241,18 +222,18 @@ def test_reasoning_flush_override_requires_reasoning_and_short_window():
             output_tokens=915,
             reasoning_tokens=890,
             first_token_ms=11_495,
-            duration_ms=12_495,
+            duration_ms=20_000,
             egress_key="node:38",
             measured_tps=78.0983,
         ),
         thresholds,
     )
 
-    assert no_reasoning.tps == 1085 * 1000 / 1178
+    assert no_reasoning.tps == 58.2873
     assert long_generation.tps == 78.0983
 
 
-def test_reasoning_flush_does_not_rewrite_real_generation_longer_than_first_token():
+def test_reasoning_burst_does_not_rewrite_real_generation_longer_than_first_token():
     result = classify_sample(
         SampleMetrics(
             status_code=200,
@@ -270,54 +251,19 @@ def test_reasoning_flush_does_not_rewrite_real_generation_longer_than_first_toke
     assert result.name == "fast_risk"
 
 
-def test_reasoning_flush_with_override_on_does_not_flag_flush_as_buffered_hard():
-    result = classify_sample(
-        SampleMetrics(
-            status_code=200,
-            output_tokens=1000,
-            reasoning_tokens=200,
-            first_token_ms=49_000,
-            duration_ms=49_050,
-            egress_key="node:3",
-        ),
-        _flush_thresholds(probe_tps_override_max_generation_ms=500),
-    )
-
-    assert result.tps == 1000 * 1000 / 49_050
-    assert result.buffered is True
-    assert result.name == "normal"
-
-
-def test_no_reasoning_burst_stays_on_generation_window_when_override_enabled():
-    result = classify_sample(
-        SampleMetrics(
-            status_code=200,
-            output_tokens=1000,
-            reasoning_tokens=0,
-            first_token_ms=49_000,
-            duration_ms=49_050,
-            egress_key="node:3",
-        ),
-        _flush_thresholds(probe_tps_override_max_generation_ms=500),
-    )
-
-    assert result.tps == 20_000
-    assert result.name == "buffered_hard"
-
-
-def test_audit_reasoning_flush_avoids_false_high_risk():
+def test_audit_reasoning_burst_override_flags_deflated_upstream_tps():
     result = classify_audit_sample(
         status_code=200,
-        output_tokens=1085,
-        reasoning_tokens=1013,
-        first_token_ms=14_655,
-        duration_ms=15_833,
-        tps=1085 * 1000 / 1178,
+        output_tokens=1834,
+        reasoning_tokens=1782,
+        first_token_ms=24_540,
+        duration_ms=25_307,
+        tps=72.47,
         thresholds=_flush_thresholds(),
     )
 
-    assert result.tps == 1085 * 1000 / 15_833
-    assert result.name == "normal"
+    assert result.tps == 1834 * 1000 / 767
+    assert result.name == "high"
 
 
 def test_classifies_delayed_burst_as_buffered_hard():

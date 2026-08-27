@@ -24,17 +24,17 @@ export function formatDualTps(
 }
 
 
-export function durationWindowTps(
+export function generationWindowTps(
   outputTokens?: number | null,
-  durationMs?: number | null
+  generationMs?: number | null
 ) {
   if (
     outputTokens == null ||
-    durationMs == null ||
+    generationMs == null ||
     outputTokens <= 0 ||
-    durationMs <= 0
+    generationMs <= 0
   ) {
     return null
   }
-  return (outputTokens * 1000) / durationMs
+  return (outputTokens * 1000) / generationMs
 }
