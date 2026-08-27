@@ -329,6 +329,24 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.6.0 (2026-08-27)
+
+### Feat
+
+- add isolation zone for degraded and high-risk accounts with auto-move rules
+- add isolation notes, dock tab, and upstream account viewer
+- store isolation remarks as timestamped history
+- highlight remaining quota in isolation upstream viewer
+- record isolation source and disable reason from audit or probes
+- set grok2api priority when restoring isolated accounts
+- split bootstrap settings and per-profile register probe rounds
+
+### Fix
+
+- stop grok2api SSE after completed and skip API gzip
+- keep register priority hold on insufficient samples
+- keep isolation restore compatible with ES2020 and ruff
+
 ## v0.5.0 (2026-08-26)
 
 ### Feat
