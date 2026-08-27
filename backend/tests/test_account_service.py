@@ -686,6 +686,115 @@ async def test_isolation_zone_lists_only_permanent_isolations(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_isolation_zone_operator_note_roundtrip(tmp_path: Path):
+    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="permanent",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+    )
+
+    result = await service.set_operator_note(1, "  出口异常，先隔离观察  ")
+    assert result["operatorNote"] == "出口异常，先隔离观察"
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["operator_note"] == "出口异常，先隔离观察"
+    assert stored["manual_note"] == "permanent"
+
+    page = await service.list_isolation_zone(page=1, page_size=50)
+    item = next(value for value in page["items"] if int(value["id"]) == 1)
+    assert item["assessment"]["operator_note"] == "出口异常，先隔离观察"
+
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="re-isolated",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+    )
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["manual_note"] == "re-isolated"
+    assert stored["operator_note"] == "出口异常，先隔离观察"
+
+    cleared = await service.set_operator_note(1, "   ")
+    assert cleared["operatorNote"] == ""
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["operator_note"] == ""
+
+    with pytest.raises(ValueError, match="2000"):
+        await service.set_operator_note(1, "x" * 2001)
+
+    with pytest.raises(ValueError, match="隔离区"):
+        await service.set_operator_note(2, "not isolated")
+
+
+@pytest.mark.asyncio
+async def test_isolation_zone_note_does_not_reorder(tmp_path: Path):
+    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="first",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+    )
+    accounts.set_manual_status(
+        account_id=99,
+        status="quarantined",
+        note="second",
+        quarantine_until=None,
+        previous_upstream_enabled=False,
+        disabled_by_monitor=False,
+        recovery_guarded=False,
+    )
+
+    before = [
+        int(item["id"])
+        for item in (await service.list_isolation_zone(page=1, page_size=50))["items"]
+    ]
+    assert before == [99, 1]
+
+    await service.set_operator_note(1, "不会因为备注改排序")
+    after = [
+        int(item["id"])
+        for item in (await service.list_isolation_zone(page=1, page_size=50))["items"]
+    ]
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_get_upstream_account_returns_live_payload(tmp_path: Path):
+    _database, _accounts, _probes, client, service = _isolation_service(tmp_path)
+    client.accounts[1]["priority"] = 12
+    client.accounts[1]["maxConcurrent"] = 3
+
+    found = await service.get_upstream_account(1)
+    assert found["accountId"] == 1
+    assert found["missingUpstream"] is False
+    assert found["account"]["name"] == "Alpha"
+    assert found["account"]["priority"] == 12
+    assert found["account"]["maxConcurrent"] == 3
+    assert "assessment" not in found["account"]
+
+    missing = await service.get_upstream_account(99)
+    assert missing == {
+        "accountId": 99,
+        "missingUpstream": True,
+        "account": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_isolation_zone_filters_match_account_probe_filters(tmp_path: Path):
     _database, accounts, _probes, client, service = _isolation_service(tmp_path)
     client.accounts[1]["enabled"] = False

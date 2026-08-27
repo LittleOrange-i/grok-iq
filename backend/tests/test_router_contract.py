@@ -29,6 +29,8 @@ EXPECTED_ROUTES = {
     ("DELETE", "/api/accounts/quarantine/local"),
     ("GET", "/api/accounts/{account_id}"),
     ("GET", "/api/accounts/{account_id}/samples"),
+    ("GET", "/api/accounts/{account_id}/upstream"),
+    ("PATCH", "/api/accounts/{account_id}/operator-note"),
     ("POST", "/api/accounts/{account_id}/action"),
     ("DELETE", "/api/accounts/{account_id}"),
     ("GET", "/api/egress-nodes"),

@@ -25,6 +25,7 @@ export type Assessment = {
   risk_reasons: string[]
   quarantine_until?: string | null
   recovery_guarded?: boolean
+  operator_note?: string
 }
 
 export type UpstreamAccount = {

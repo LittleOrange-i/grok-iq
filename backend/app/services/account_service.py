@@ -7,7 +7,7 @@ from typing import Any
 
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
-from app.integrations.grok2api.client import Grok2APIClient
+from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
@@ -133,6 +133,32 @@ class AccountService:
                 verification=verification,
             ),
             "history": self.probes.account_history(account_id, limit),
+        }
+
+    async def get_upstream_account(self, account_id: int) -> dict[str, Any]:
+        """Return the live grok2api account payload without local overlays."""
+
+        normalized_account_id = int(account_id)
+        try:
+            account = await self.client.get_account(normalized_account_id)
+        except IntegrationError as exc:
+            if exc.status_code == 404:
+                return {
+                    "accountId": normalized_account_id,
+                    "missingUpstream": True,
+                    "account": None,
+                }
+            raise
+        except KeyError:
+            return {
+                "accountId": normalized_account_id,
+                "missingUpstream": True,
+                "account": None,
+            }
+        return {
+            "accountId": normalized_account_id,
+            "missingUpstream": False,
+            "account": account,
         }
 
     def samples(
@@ -943,6 +969,30 @@ class AccountService:
                 int(node.get("id") or 0),
             ),
         )
+
+    async def set_operator_note(
+        self,
+        account_id: int,
+        note: str,
+    ) -> dict[str, Any]:
+        """Save an operator remark on an isolated account."""
+
+        normalized_account_id = int(account_id)
+        normalized_note = str(note or "").strip()
+        if len(normalized_note) > 2000:
+            raise ValueError("备注不能超过 2000 个字符")
+        assessment = self.accounts.get_assessment(normalized_account_id)
+        if not self._is_isolation_zone(assessment):
+            raise ValueError("只有隔离区账号可以填写备注")
+        updated = self.accounts.set_operator_note(
+            normalized_account_id,
+            normalized_note,
+        )
+        return {
+            "accountId": normalized_account_id,
+            "operatorNote": str(updated.get("operator_note") or ""),
+            "assessment": updated,
+        }
 
     async def list_isolation_zone(
         self,

@@ -1,6 +1,13 @@
 import { lazy, Suspense, useLayoutEffect, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from '@tanstack/react-router'
-import { Activity, Loader2, ShieldAlert, UsersRound, X } from 'lucide-react'
+import {
+  Activity,
+  Loader2,
+  ShieldAlert,
+  ShieldBan,
+  UsersRound,
+  X,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useWorkspaceTabsStore } from '@/stores/workspace-tabs-store'
 import {
@@ -23,6 +30,11 @@ const workspacePages = {
       default: mod.AccountsPage,
     }))
   ),
+  quarantine: lazy(() =>
+    import('@/features/monitor/pages/quarantine').then((mod) => ({
+      default: mod.QuarantinePage,
+    }))
+  ),
   runs: lazy(() =>
     import('@/features/monitor/pages/runs').then((mod) => ({
       default: mod.RunsPage,
@@ -37,12 +49,14 @@ const workspacePages = {
 
 const workspaceIcons = {
   accounts: UsersRound,
+  quarantine: ShieldBan,
   runs: Activity,
   'request-audits': ShieldAlert,
 } as const
 
 const workspaceAccents: Record<WorkspaceTabId, string> = {
   accounts: 'text-sky-600 dark:text-sky-400',
+  quarantine: 'text-rose-600 dark:text-rose-400',
   runs: 'text-violet-600 dark:text-violet-400',
   'request-audits': 'text-amber-600 dark:text-amber-400',
 }

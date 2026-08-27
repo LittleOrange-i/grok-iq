@@ -109,6 +109,10 @@ class AccountBatchDeleteInput(BaseModel):
     account_ids: list[int] = Field(min_length=1, max_length=100_000)
 
 
+class AccountOperatorNoteInput(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+
 class EgressNodeBatchUpdateInput(BaseModel):
     node_ids: list[int] = Field(min_length=1, max_length=5000)
     enabled: bool

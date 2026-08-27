@@ -15,6 +15,10 @@ COMPATIBILITY_COLUMNS = {
             "reasoning_zero_count",
             "ALTER TABLE account_assessments ADD COLUMN reasoning_zero_count INTEGER NOT NULL DEFAULT 0",
         ),
+        (
+            "operator_note",
+            "ALTER TABLE account_assessments ADD COLUMN operator_note TEXT NOT NULL DEFAULT ''",
+        ),
     ],
     "probe_profiles": [
         (

@@ -2,20 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
+  Copy,
   Eye,
   Loader2,
   Network,
   RefreshCw,
   Search,
+  Server,
   ShieldAlert,
   ShieldBan,
   SlidersHorizontal,
+  StickyNote,
   Trash2,
   Undo2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import { api, type ProbeSample, type UpstreamAccount } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import { StatusBadge } from '@/lib/status'
 import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -35,6 +39,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -117,6 +122,90 @@ const ssoRiskLabels: Record<SsoRiskFilter, string> = {
   change_egress: '建议更换出口',
 }
 
+const UPSTREAM_FIELD_LABELS: Record<string, string> = {
+  id: '账号 ID',
+  name: '名称',
+  email: '邮箱',
+  provider: '提供商',
+  enabled: '启用状态',
+  authStatus: '鉴权状态',
+  priority: '优先级',
+  maxConcurrent: '最大并发',
+  failureCount: '失败次数',
+  lastUsedAt: '最近使用',
+  createdAt: '创建时间',
+  updatedAt: '更新时间',
+  egressNodeId: '出口节点 ID',
+  egressAssignmentMode: '出口绑定模式',
+  buildBotFlagged: 'Build Bot 标记',
+  quota: '配额',
+  type: '类型',
+  source: '来源',
+  confidence: '置信度',
+  status: '状态',
+  unit: '单位',
+  used: '已用',
+  limit: '总量',
+  remaining: '剩余',
+  usagePercent: '使用占比',
+  limitKnown: '已知总量',
+  windowHours: '窗口小时',
+  observed: '已观测',
+  confirmed: '已确认',
+  periodStart: '周期开始',
+  periodEnd: '周期结束',
+  exhaustedAt: '耗尽时间',
+  nextProbeAt: '下次探测',
+  lastConfirmedAt: '最近确认',
+}
+
+function formatUpstreamValue(value: unknown): string {
+  if (value == null || value === '') return '—'
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  if (typeof value === 'number') {
+    return formatNumber(value, Number.isInteger(value) ? 0 : 1)
+  }
+  if (typeof value === 'string') {
+    return /^\d{4}-\d{2}-\d{2}T/.test(value) ? formatDate(value) : value
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function flattenUpstreamFields(
+  value: unknown,
+  prefix = ''
+): { path: string; value: string }[] {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return prefix ? [{ path: prefix, value: formatUpstreamValue(value) }] : []
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0) {
+    return prefix ? [{ path: prefix, value: '{}' }] : []
+  }
+  return entries.flatMap(([key, item]) => {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (item != null && typeof item === 'object' && !Array.isArray(item)) {
+      return flattenUpstreamFields(item, path)
+    }
+    return [{ path, value: formatUpstreamValue(item) }]
+  })
+}
+
+function upstreamFieldLabel(path: string): string {
+  if (UPSTREAM_FIELD_LABELS[path]) return UPSTREAM_FIELD_LABELS[path]
+  const last = path.split('.').at(-1) || path
+  const mapped = UPSTREAM_FIELD_LABELS[last]
+  if (!mapped) return path
+  if (!path.includes('.')) return mapped
+  const parent = path.slice(0, path.lastIndexOf('.'))
+  const parentLabel = UPSTREAM_FIELD_LABELS[parent] || parent
+  return `${parentLabel} · ${mapped}`
+}
+
 function RiskReasonCell({ account }: { account: UpstreamAccount }) {
   const assessment = account.assessment
   const reasons = assessment?.risk_reasons ?? []
@@ -179,6 +268,126 @@ function RiskReasonCell({ account }: { account: UpstreamAccount }) {
   )
 }
 
+function OperatorNoteCell({
+  account,
+  open,
+  onOpenChange,
+}: {
+  account: UpstreamAccount
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const client = useQueryClient()
+  const savedNote = String(account.assessment?.operator_note ?? '')
+  const [draft, setDraft] = useState(savedNote)
+  const mutation = useMutation({
+    mutationFn: (note: string) =>
+      api.updateAccountOperatorNote(Number(account.id), note),
+    onSuccess: (result) => {
+      setDraft(result.operatorNote)
+      onOpenChange(false)
+      toast.success(result.operatorNote ? '备注已保存' : '备注已清空')
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({
+        queryKey: ['account', Number(account.id)],
+      })
+    },
+  })
+  const trimmedDraft = draft.trim()
+  const trimmedSaved = savedNote.trim()
+  const dirty = trimmedDraft !== trimmedSaved
+  const accountLabel = account.name || account.email || account.id
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (mutation.isPending) return
+        if (next) setDraft(savedNote)
+        onOpenChange(next)
+      }}
+    >
+      <PopoverTrigger asChild>
+        {trimmedSaved ? (
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='h-8 max-w-52 gap-1.5 px-2.5 text-xs font-normal'
+            aria-label={`编辑 ${accountLabel} 的隔离备注`}
+          >
+            <span className='truncate' title={trimmedSaved}>
+              {trimmedSaved}
+            </span>
+            <span className='shrink-0 text-muted-foreground'>1 项</span>
+          </Button>
+        ) : (
+          <button
+            type='button'
+            className='inline-flex h-8 items-center text-muted-foreground'
+            aria-label={`为 ${accountLabel} 添加隔离备注`}
+          >
+            —
+          </button>
+        )}
+      </PopoverTrigger>
+      <PopoverContent
+        align='start'
+        className='w-80 p-0'
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className='border-b px-3 py-2.5'>
+          <div className='text-sm font-medium'>隔离备注</div>
+          <div className='mt-1 text-[11px] leading-5 text-muted-foreground'>
+            只保存在本系统，方便以后回忆为什么隔离
+          </div>
+        </div>
+        {trimmedSaved ? (
+          <ul className='max-h-40 space-y-0.5 overflow-y-auto p-2'>
+            <li className='rounded-md bg-muted/40 px-2.5 py-1.5 text-xs leading-5 whitespace-pre-wrap'>
+              {trimmedSaved}
+            </li>
+          </ul>
+        ) : (
+          <p className='px-3 py-2.5 text-xs text-muted-foreground'>暂无备注</p>
+        )}
+        <div className='space-y-3 border-t p-3'>
+          <Textarea
+            value={draft}
+            maxLength={2000}
+            rows={4}
+            placeholder='例如：出口异常、人工确认降智、先观察几天'
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={mutation.isPending}
+          />
+          <div className='flex items-center justify-between gap-3'>
+            <span className='text-[11px] tabular-nums text-muted-foreground'>
+              {draft.length}/2000
+            </span>
+            <Button
+              type='button'
+              size='sm'
+              disabled={mutation.isPending || !dirty}
+              onClick={() => mutation.mutate(draft)}
+            >
+              {mutation.isPending ? (
+                <>
+                  <Loader2 className='animate-spin' />
+                  保存中…
+                </>
+              ) : (
+                '保存'
+              )}
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function QuarantinePage() {
   const client = useQueryClient()
   const view = usePersistedViewState(
@@ -213,6 +422,9 @@ export function QuarantinePage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
+  const [noteEditorId, setNoteEditorId] = useState<number | null>(null)
+  const [upstreamOpen, setUpstreamOpen] = useState(false)
+  const [upstreamId, setUpstreamId] = useState<number | null>(null)
   const tableQueryPending =
     tableQuery.page !== committedQuery.page ||
     tableQuery.pageSize !== committedQuery.pageSize ||
@@ -297,10 +509,27 @@ export function QuarantinePage() {
     null
   const samples: ProbeSample[] =
     samplesQuery.data?.items ?? detail.data?.history.samples ?? []
+  const upstreamQuery = useQuery({
+    queryKey: ['account-upstream', upstreamId],
+    queryFn: () => api.accountUpstream(upstreamId!),
+    enabled: upstreamOpen && upstreamId != null,
+  })
+  const upstreamListAccount =
+    accounts.find((item) => Number(item.id) === upstreamId) ?? null
 
   const openAccountSamples = useCallback((id: number) => {
     setDetailId(id)
     setDetailOpen(true)
+  }, [])
+  const openAccountUpstream = useCallback((id: number) => {
+    setUpstreamId(id)
+    setUpstreamOpen(true)
+  }, [])
+  const setNoteEditorOpen = useCallback((id: number, open: boolean) => {
+    setNoteEditorId((current) => {
+      if (open) return id
+      return current === id ? null : current
+    })
   }, [])
 
   const allChecked =
@@ -700,8 +929,11 @@ export function QuarantinePage() {
                   accounts={accounts}
                   selected={selected}
                   allChecked={allChecked}
+                  noteEditorId={noteEditorId}
                   onToggleCurrentPage={toggleCurrentPageSelection}
                   onToggleAccount={toggleAccountSelection}
+                  onNoteEditorOpenChange={setNoteEditorOpen}
+                  onOpenUpstream={openAccountUpstream}
                   onOpenSamples={openAccountSamples}
                 />
                 {showTableLoading && (
@@ -822,6 +1054,55 @@ export function QuarantinePage() {
         disabled={selected.length === 0}
         handleConfirm={() => deleteMutation.mutate(selected)}
       />
+      <Dialog open={upstreamOpen} onOpenChange={setUpstreamOpen}>
+        <DialogContent size='wide' className='overflow-hidden'>
+          <DialogHeader className='shrink-0'>
+            <DialogTitle className='flex items-center gap-2'>
+              <Server className='size-5 text-primary' />
+              {upstreamListAccount?.name ||
+                upstreamListAccount?.email ||
+                `账号 ${upstreamId}`}
+            </DialogTitle>
+            <DialogDescription>
+              {upstreamListAccount
+                ? formatAccountSecondaryLabel({
+                    id: upstreamListAccount.id,
+                    email: upstreamListAccount.email,
+                    createdAt: upstreamListAccount.createdAt,
+                    accountLabel:
+                      upstreamListAccount.name ||
+                      upstreamListAccount.email ||
+                      `账号 ${upstreamId}`,
+                  })
+                : '查看 grok2api 上游账号的全部字段'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain pe-1'>
+            {upstreamQuery.isLoading && !upstreamQuery.data ? (
+              <LoadingState />
+            ) : upstreamQuery.isError ? (
+              <EmptyState
+                icon={Server}
+                title='无法加载上游账号'
+                description={getErrorMessage(upstreamQuery.error)}
+                compact
+              />
+            ) : upstreamQuery.data?.missingUpstream ||
+              upstreamQuery.data?.account == null ? (
+              <EmptyState
+                icon={Server}
+                title='上游账号不存在'
+                description='grok2api 里已经找不到这个账号，只剩本系统隔离记录。'
+                compact
+              />
+            ) : (
+              <QuarantineUpstreamDetail
+                account={upstreamQuery.data.account}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent size='wide' className='overflow-hidden'>
           <DialogHeader className='shrink-0'>
@@ -866,15 +1147,21 @@ function QuarantineTable({
   accounts,
   selected,
   allChecked,
+  noteEditorId,
   onToggleCurrentPage,
   onToggleAccount,
+  onNoteEditorOpenChange,
+  onOpenUpstream,
   onOpenSamples,
 }: {
   accounts: UpstreamAccount[]
   selected: number[]
   allChecked: boolean
+  noteEditorId: number | null
   onToggleCurrentPage: (checked: boolean) => void
   onToggleAccount: (id: number, checked: boolean) => void
+  onNoteEditorOpenChange: (id: number, open: boolean) => void
+  onOpenUpstream: (id: number) => void
   onOpenSamples: (id: number) => void
 }) {
   const selectedIdSet = useMemo(() => new Set(selected), [selected])
@@ -895,6 +1182,7 @@ function QuarantineTable({
           <TableHead>样本数</TableHead>
           <TableHead>最近样本时间</TableHead>
           <TableHead>风险原因</TableHead>
+          <TableHead>备注</TableHead>
           <TableHead className='text-right'>操作</TableHead>
         </TableRow>
       </TableHeader>
@@ -906,7 +1194,10 @@ function QuarantineTable({
               key={account.id}
               account={account}
               selected={selectedIdSet.has(id)}
+              noteOpen={noteEditorId === id}
               onSelectedChange={(checked) => onToggleAccount(id, checked)}
+              onNoteOpenChange={(open) => onNoteEditorOpenChange(id, open)}
+              onOpenUpstream={() => onOpenUpstream(id)}
               onOpenSamples={() => onOpenSamples(id)}
             />
           )
@@ -919,12 +1210,18 @@ function QuarantineTable({
 function QuarantineRow({
   account,
   selected,
+  noteOpen,
   onSelectedChange,
+  onNoteOpenChange,
+  onOpenUpstream,
   onOpenSamples,
 }: {
   account: UpstreamAccount
   selected: boolean
+  noteOpen: boolean
   onSelectedChange: (checked: boolean) => void
+  onNoteOpenChange: (open: boolean) => void
+  onOpenUpstream: () => void
   onOpenSamples: () => void
 }) {
   const id = Number(account.id)
@@ -978,20 +1275,42 @@ function QuarantineRow({
       <TableCell>
         <RiskReasonCell account={account} />
       </TableCell>
+      <TableCell>
+        <OperatorNoteCell
+          account={account}
+          open={noteOpen}
+          onOpenChange={onNoteOpenChange}
+        />
+      </TableCell>
       <TableCell className='text-right'>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              size='icon'
-              variant='ghost'
-              onClick={onOpenSamples}
-              aria-label={`查看 ${accountLabel} 的样本`}
-            >
-              <Eye />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>查看样本</TooltipContent>
-        </Tooltip>
+        <div className='inline-flex items-center justify-end'>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size='icon'
+                variant='ghost'
+                onClick={onOpenUpstream}
+                aria-label={`查看 ${accountLabel} 的上游信息`}
+              >
+                <Server />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>查看上游信息</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size='icon'
+                variant='ghost'
+                onClick={onOpenSamples}
+                aria-label={`查看 ${accountLabel} 的样本`}
+              >
+                <Eye />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>查看样本</TooltipContent>
+          </Tooltip>
+        </div>
       </TableCell>
     </TableRow>
   )
@@ -1007,6 +1326,7 @@ function QuarantineSampleDetail({
   egressNodeNames: EgressNodeNameMap
 }) {
   const reasons = account?.assessment?.risk_reasons ?? []
+  const operatorNote = String(account?.assessment?.operator_note ?? '').trim()
   return (
     <div className='space-y-4'>
       {account && (
@@ -1024,6 +1344,17 @@ function QuarantineSampleDetail({
           </span>
         </div>
       )}
+      {operatorNote ? (
+        <div className='rounded-lg border bg-muted/30 p-3'>
+          <div className='flex items-center gap-2 text-sm font-medium'>
+            <StickyNote className='size-4 text-muted-foreground' />
+            隔离备注
+          </div>
+          <p className='mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground'>
+            {operatorNote}
+          </p>
+        </div>
+      ) : null}
       {reasons.length > 0 && (
         <div className='rounded-lg border border-amber-500/25 bg-amber-500/5 p-3'>
           <div className='text-sm font-medium text-amber-700 dark:text-amber-300'>
@@ -1041,6 +1372,57 @@ function QuarantineSampleDetail({
         samples={samples}
         egressNodeNames={egressNodeNames}
       />
+    </div>
+  )
+}
+
+function QuarantineUpstreamDetail({
+  account,
+}: {
+  account: Record<string, unknown>
+}) {
+  const fields = flattenUpstreamFields(account)
+  const rawJson = JSON.stringify(account, null, 2)
+  return (
+    <div className='space-y-4'>
+      <div className='flex items-center justify-between gap-3'>
+        <div className='text-sm font-medium'>上游字段</div>
+        <Button
+          type='button'
+          size='sm'
+          variant='outline'
+          onClick={() =>
+            void copyText(rawJson)
+              .then(() => toast.success('已复制上游 JSON'))
+              .catch((error) => toast.error(getErrorMessage(error)))
+          }
+        >
+          <Copy />
+          复制 JSON
+        </Button>
+      </div>
+      {fields.length ? (
+        <dl className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
+          {fields.map((field) => (
+            <div key={field.path} className='rounded-lg border bg-muted/15 p-3'>
+              <dt className='text-[11px] text-muted-foreground'>
+                {upstreamFieldLabel(field.path)}
+              </dt>
+              <dd
+                className='mt-1 text-sm leading-5 break-all'
+                title={field.path}
+              >
+                {field.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className='text-sm text-muted-foreground'>上游没有返回字段</p>
+      )}
+      <pre className='overflow-x-auto rounded-lg border bg-background p-3 font-mono text-xs leading-6 whitespace-pre-wrap'>
+        {rawJson}
+      </pre>
     </div>
   )
 }

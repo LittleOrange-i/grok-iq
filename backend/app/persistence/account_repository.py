@@ -82,7 +82,7 @@ class AccountRepository:
                     AccountAssessment.monitor_status == "quarantined",
                     AccountAssessment.quarantine_until.is_(None),
                 )
-                .order_by(AccountAssessment.updated_at.desc())
+                .order_by(AccountAssessment.account_id.desc())
             ).all()
             return [model_dict(value) for value in values]
 
@@ -503,6 +503,17 @@ class AccountRepository:
             if recovery_guarded is not None:
                 assessment.recovery_guarded = recovery_guarded
             assessment.updated_at = utc_now()
+            session.flush()
+            result = model_dict(assessment)
+        return result
+
+    def set_operator_note(self, account_id: int, note: str) -> dict[str, Any]:
+        with self.database.transaction() as session:
+            assessment = session.get(AccountAssessment, account_id)
+            if assessment is None:
+                assessment = AccountAssessment(account_id=account_id)
+                session.add(assessment)
+            assessment.operator_note = note
             session.flush()
             result = model_dict(assessment)
         return result

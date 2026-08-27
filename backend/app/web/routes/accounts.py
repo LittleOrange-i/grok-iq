@@ -11,6 +11,7 @@ from app.web.schemas import (
     AccountBatchDeleteInput,
     AccountBatchEgressInput,
     AccountBatchUpdateInput,
+    AccountOperatorNoteInput,
 )
 
 
@@ -154,6 +155,10 @@ def build_accounts_router(service: AccountService) -> APIRouter:
     ) -> dict[str, Any]:
         return await service.detail(account_id, limit)
 
+    @router.get("/accounts/{account_id}/upstream")
+    async def account_upstream(account_id: int) -> dict[str, Any]:
+        return await service.get_upstream_account(account_id)
+
     @router.get("/accounts/{account_id}/samples")
     def account_samples(
         account_id: int,
@@ -164,6 +169,16 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             account_id,
             page=page,
             page_size=page_size,
+        )
+
+    @router.patch("/accounts/{account_id}/operator-note")
+    async def update_operator_note(
+        account_id: int,
+        payload: AccountOperatorNoteInput,
+    ) -> dict[str, Any]:
+        return await service.set_operator_note(
+            account_id=account_id,
+            note=payload.note,
         )
 
     @router.post("/accounts/{account_id}/action")

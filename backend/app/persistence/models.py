@@ -90,6 +90,7 @@ class AccountAssessment(Base):
         Boolean, default=False, nullable=False, index=True
     )
     manual_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    operator_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(AppDateTime(), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False

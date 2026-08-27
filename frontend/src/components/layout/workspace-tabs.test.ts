@@ -12,8 +12,9 @@ describe('workspace tabs', () => {
     expect(normalizePathname('')).toBe('/')
   })
 
-  it('matches the three workspace pages', () => {
+  it('matches the workspace pages', () => {
     expect(matchWorkspaceTabId('/accounts')).toBe('accounts')
+    expect(matchWorkspaceTabId('/quarantine/')).toBe('quarantine')
     expect(matchWorkspaceTabId('/runs/')).toBe('runs')
     expect(matchWorkspaceTabId('/request-audits/')).toBe('request-audits')
     expect(matchWorkspaceTabId('/settings/risk')).toBeNull()
@@ -21,6 +22,7 @@ describe('workspace tabs', () => {
 
   it('detects workspace paths', () => {
     expect(isWorkspaceTabPath('/runs')).toBe(true)
+    expect(isWorkspaceTabPath('/quarantine')).toBe(true)
     expect(isWorkspaceTabPath('/playground')).toBe(false)
   })
 })

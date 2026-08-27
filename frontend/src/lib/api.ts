@@ -291,6 +291,7 @@ type Assessment = {
   risk_reasons: string[]
   quarantine_until?: string | null
   recovery_guarded?: boolean
+  operator_note?: string
 }
 
 export type UpstreamQuota = {
@@ -2449,6 +2450,21 @@ export const api = {
     id: number,
     params: { page?: number; pageSize?: number } = {}
   ) => request<Page<ProbeSample>>(`/accounts/${id}/samples${query(params)}`),
+  accountUpstream: (id: number) =>
+    request<{
+      accountId: number
+      missingUpstream: boolean
+      account: Record<string, unknown> | null
+    }>(`/accounts/${id}/upstream`),
+  updateAccountOperatorNote: (id: number, note: string) =>
+    request<{
+      accountId: number
+      operatorNote: string
+      assessment: Assessment
+    }>(`/accounts/${id}/operator-note`, {
+      method: 'PATCH',
+      body: JSON.stringify({ note }),
+    }),
   accountAction: (
     id: number,
     body: {
