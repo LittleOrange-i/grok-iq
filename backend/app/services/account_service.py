@@ -362,6 +362,7 @@ class AccountService:
         note: str,
         propagate: bool,
         quarantine_minutes: int | None,
+        priority: int | None = None,
     ) -> dict[str, Any]:
         allowed = {
             "healthy",
@@ -424,9 +425,17 @@ class AccountService:
             status = "healthy"
             assessment = self.accounts.get_assessment(account_id) or {}
             should_enable = bool(assessment.get("previous_upstream_enabled"))
-            if propagate and should_enable:
+            if propagate and should_enable and priority is not None:
+                await self.client.recover_account_at_priority(
+                    account_id,
+                    priority=int(priority),
+                )
+                propagated = True
+            elif propagate and should_enable:
                 await self.client.set_account_enabled(account_id, True)
                 propagated = True
+            elif priority is not None:
+                await self.client.set_account_priority(account_id, int(priority))
             disabled_by_monitor = False
             previous_enabled = None
 
@@ -444,7 +453,7 @@ class AccountService:
             kind="manual_action",
             severity="warning" if status != "healthy" else "info",
             title=f"账号状态调整为 {status}",
-            detail={"note": note, "propagated": propagated},
+            detail={"note": note, "propagated": propagated, "priority": priority},
         )
         return {
             "accountId": account_id,
@@ -462,6 +471,7 @@ class AccountService:
         note: str,
         propagate: bool,
         quarantine_minutes: int | None,
+        priority: int | None = None,
     ) -> dict[str, Any]:
         """Apply one account-level risk action with bounded concurrency."""
 
@@ -516,6 +526,7 @@ class AccountService:
                         note=note,
                         propagate=propagate,
                         quarantine_minutes=quarantine_minutes,
+                        priority=priority,
                     )
                 except Exception as exc:
                     return account_id, str(exc)

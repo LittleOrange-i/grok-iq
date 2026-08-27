@@ -497,6 +497,7 @@ class IsolationClient:
             int(item["id"]): dict(item) for item in (accounts or [])
         }
         self.enabled_calls: list[tuple[int, bool]] = []
+        self.priority_calls: list[tuple[int, int]] = []
         self.delete_calls: list[int] = []
 
     async def get_account(self, account_id: int) -> dict[str, Any]:
@@ -514,6 +515,21 @@ class IsolationClient:
         account = self.accounts[account_id]
         account["enabled"] = enabled
         return dict(account)
+
+    async def set_account_priority(self, account_id: int, priority: int) -> dict[str, Any]:
+        self.priority_calls.append((account_id, priority))
+        account = self.accounts[account_id]
+        account["priority"] = priority
+        return dict(account)
+
+    async def recover_account_at_priority(
+        self,
+        account_id: int,
+        *,
+        priority: int,
+    ) -> dict[str, Any]:
+        await self.set_account_priority(account_id, priority)
+        return await self.set_account_enabled(account_id, True)
 
     async def delete_account(self, account_id: int) -> None:
         self.delete_calls.append(account_id)
@@ -1005,6 +1021,33 @@ async def test_restore_reenables_when_previous_upstream_enabled(tmp_path: Path):
     assert stored is not None
     assert stored["monitor_status"] == "healthy"
     assert stored["disabled_by_monitor"] is False
+
+
+@pytest.mark.asyncio
+async def test_restore_sets_upstream_priority(tmp_path: Path):
+    _database, accounts, _probes, client, service = _isolation_service(tmp_path)
+
+    await service.action(
+        account_id=1,
+        action="isolate",
+        note="manual isolate",
+        propagate=True,
+        quarantine_minutes=None,
+    )
+    result = await service.action(
+        account_id=1,
+        action="restore",
+        note="manual restore",
+        propagate=True,
+        quarantine_minutes=None,
+        priority=0,
+    )
+
+    assert result["status"] == "healthy"
+    assert result["propagated"] is True
+    assert client.enabled_calls == [(1, False), (1, True)]
+    assert client.priority_calls == [(1, 0)]
+    assert client.accounts[1]["priority"] == 0
 
 
 @pytest.mark.asyncio

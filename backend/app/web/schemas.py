@@ -85,6 +85,7 @@ class AccountActionInput(BaseModel):
     note: str = ""
     propagate: bool = False
     quarantine_minutes: int | None = Field(default=None, ge=1, le=10080)
+    priority: int | None = Field(default=None, ge=-2_000_000_000, le=2_000_000_000)
 
 
 class AccountBatchUpdateInput(BaseModel):
@@ -98,6 +99,7 @@ class AccountBatchActionInput(BaseModel):
     note: str = Field(default="", max_length=2000)
     propagate: bool = True
     quarantine_minutes: int | None = Field(default=None, ge=1, le=10080)
+    priority: int | None = Field(default=None, ge=-2_000_000_000, le=2_000_000_000)
 
 
 class AccountBatchEgressInput(BaseModel):

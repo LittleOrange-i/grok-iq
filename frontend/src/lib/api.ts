@@ -2092,6 +2092,7 @@ async function accountBatchAction(body: {
   note?: string
   propagate?: boolean
   quarantine_minutes?: number
+  priority?: number | null
 }): Promise<AccountBatchActionResult> {
   const uniqueIds = Array.from(
     new Set(
@@ -2142,6 +2143,7 @@ async function accountBatchAction(body: {
               ...(body.quarantine_minutes != null
                 ? { quarantine_minutes: body.quarantine_minutes }
                 : {}),
+              ...(body.priority != null ? { priority: body.priority } : {}),
             }),
           }
         )
@@ -2512,6 +2514,7 @@ export const api = {
       note?: string
       propagate?: boolean
       quarantine_minutes?: number
+      priority?: number | null
     }
   ) =>
     request<Record<string, unknown>>(`/accounts/${id}/action`, {

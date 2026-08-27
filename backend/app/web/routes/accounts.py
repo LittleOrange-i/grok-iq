@@ -103,6 +103,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             note=payload.note,
             propagate=payload.propagate,
             quarantine_minutes=payload.quarantine_minutes,
+            priority=payload.priority,
         )
 
     @router.delete("/accounts/batch")
@@ -214,6 +215,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             note=payload.note,
             propagate=payload.propagate,
             quarantine_minutes=payload.quarantine_minutes,
+            priority=payload.priority,
         )
 
     @router.delete("/accounts/{account_id}")

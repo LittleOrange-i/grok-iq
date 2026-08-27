@@ -51,6 +51,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Popover,
   PopoverContent,
@@ -113,6 +114,29 @@ type SsoRiskFilter =
   | 'change_egress'
 
 type IsolationUpstreamStatusFilter = UpstreamStatusFilter | 'missing'
+
+const RESTORE_PRIORITY_MIN = -2_000_000_000
+const RESTORE_PRIORITY_MAX = 2_000_000_000
+
+function parseRestorePriority(value: string): {
+  priority?: number
+  error?: string
+} {
+  const text = value.trim()
+  if (!text) return {}
+  if (!/^-?\d+$/.test(text)) {
+    return { error: '请输入整数优先级' }
+  }
+  const priority = Number(text)
+  if (
+    !Number.isSafeInteger(priority) ||
+    priority < RESTORE_PRIORITY_MIN ||
+    priority > RESTORE_PRIORITY_MAX
+  ) {
+    return { error: '优先级超出可设置范围' }
+  }
+  return { priority }
+}
 
 const QUARANTINE_VIEW_STORAGE_KEY = 'grokiq.monitor.quarantine-view.v1'
 const defaultQuarantineView = {
@@ -713,6 +737,7 @@ export function QuarantinePage() {
   const tableQuery = usePaintDeferredValue(committedQuery)
   const [selected, setSelected] = useState<number[]>([])
   const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restorePriority, setRestorePriority] = useState('')
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -849,13 +874,21 @@ export function QuarantinePage() {
     )
   }, [])
 
+  const restorePriorityParsed = parseRestorePriority(restorePriority)
   const restoreMutation = useMutation({
-    mutationFn: (accountIds: number[]) =>
+    mutationFn: ({
+      accountIds,
+      priority,
+    }: {
+      accountIds: number[]
+      priority?: number
+    }) =>
       api.accountBatchAction({
         account_ids: accountIds,
         action: 'restore',
         note: '隔离区恢复上游',
         propagate: true,
+        ...(priority != null ? { priority } : {}),
       }),
     onSuccess: (result) => {
       const skippedAccountIds = result.skippedAccountIds ?? []
@@ -990,7 +1023,10 @@ export function QuarantinePage() {
                 label={`恢复已选 ${selected.length} 个账号的上游`}
                 pending={restorePending}
                 disabled={selectionActionPending || selected.length === 0}
-                onClick={() => setRestoreOpen(true)}
+                onClick={() => {
+                  setRestorePriority('')
+                  setRestoreOpen(true)
+                }}
               >
                 <Undo2 />
               </ToolbarAction>
@@ -1306,9 +1342,38 @@ export function QuarantinePage() {
           )
         }
         isLoading={restorePending}
-        disabled={selected.length === 0}
-        handleConfirm={() => restoreMutation.mutate(selected)}
-      />
+        disabled={selected.length === 0 || Boolean(restorePriorityParsed.error)}
+        handleConfirm={() => {
+          if (restorePriorityParsed.error) return
+          restoreMutation.mutate({
+            accountIds: selected,
+            priority: restorePriorityParsed.priority,
+          })
+        }}
+      >
+        <div className='space-y-2'>
+          <Label htmlFor='quarantine-restore-priority'>上游优先级</Label>
+          <Input
+            id='quarantine-restore-priority'
+            inputMode='numeric'
+            value={restorePriority}
+            onChange={(event) => setRestorePriority(event.target.value)}
+            placeholder='留空则保持当前优先级'
+            disabled={restorePending}
+          />
+          <p
+            className={cn(
+              'text-xs leading-5',
+              restorePriorityParsed.error
+                ? 'text-destructive'
+                : 'text-muted-foreground'
+            )}
+          >
+            {restorePriorityParsed.error ||
+              '可选。恢复后写入 grok2api，数字越大越优先调度。'}
+          </p>
+        </div>
+      </ConfirmDialog>
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={(open) => {
