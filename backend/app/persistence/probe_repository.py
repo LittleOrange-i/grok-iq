@@ -716,7 +716,11 @@ class ProbeRepository:
                         select(restore_blocked_accounts.c.account_id)
                     ),
                 )
-                .order_by(ProbeRun.priority.asc(), ProbeRun.queued_at.asc())
+                .order_by(
+                    ProbeRun.priority.asc(),
+                    ProbeRun.queued_at.asc(),
+                    ProbeRun.created_at.asc(),
+                )
                 .limit(1)
             )
             if chosen is None:

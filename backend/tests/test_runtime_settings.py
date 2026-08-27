@@ -584,6 +584,41 @@ def test_registration_strategy_persists_per_profile_rounds(tmp_path: Path):
     }
 
 
+def test_registration_strategy_preserves_profile_order(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+    service.load()
+
+    service.update(
+        {
+            "register_probe_profile_ids": ["profile-b", "profile-a"],
+            "register_probe_profile_rounds": {
+                "profile-a": 2,
+                "profile-b": 5,
+            },
+        }
+    )
+
+    assert settings.register_probe_profile_ids == ["profile-b", "profile-a"]
+    assert list(settings.register_probe_rounds_by_profile()) == [
+        "profile-b",
+        "profile-a",
+    ]
+    assert service.public_view()["registerProbeProfileIds"] == [
+        "profile-b",
+        "profile-a",
+    ]
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(_database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_probe_profile_ids == [
+        "profile-b",
+        "profile-a",
+    ]
+
+
 def test_registration_strategy_rejects_invalid_profile_rounds(tmp_path: Path):
     _database, _settings, service = build_service(tmp_path)
     service.load()

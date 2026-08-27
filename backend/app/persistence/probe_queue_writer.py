@@ -357,8 +357,9 @@ class ProbeQueueWriter:
         rows: list[ProbeRun] = []
         for account_id in account_ids:
             account = accounts[account_id]
-            for profile_id in profile_ids:
+            for profile_index, profile_id in enumerate(profile_ids):
                 profile_rounds = ProbeQueueWriter._rounds_for_profile(rounds, profile_id)
+                queued_at = now + timedelta(milliseconds=profile_index)
                 rows.append(
                     ProbeRun(
                         id=uuid.uuid4().hex,
@@ -378,7 +379,7 @@ class ProbeQueueWriter:
                         proxy_targets=proxy_targets,
                         total_steps=profile_rounds * len(proxy_targets),
                         created_at=now,
-                        queued_at=now,
+                        queued_at=queued_at,
                     )
                 )
         return rows

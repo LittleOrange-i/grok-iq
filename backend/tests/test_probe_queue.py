@@ -94,6 +94,44 @@ def test_register_runs_use_per_profile_rounds(repository: ProbeRepository):
     }
 
 
+def test_register_runs_are_claimed_in_profile_order(repository: ProbeRepository):
+    result = repository.create_register_runs(
+        source_event_id="registration-order",
+        account={
+            "id": 10,
+            "name": "new-account",
+            "email": "new@example.test",
+        },
+        profile_ids=["reasoning-check", "quality-marker"],
+        rounds={"reasoning-check": 1, "quality-marker": 1},
+        proxy_targets=[{"kind": "current", "id": None}],
+        execution_mode="chat",
+        priority=150,
+        queue_limit=20,
+    )
+
+    assert result["created"] == 2
+    assert result["profileIds"] == ["reasoning-check", "quality-marker"]
+    runs_by_id = {
+        run["id"]: run
+        for run in repository.list_runs(page=1, page_size=20)["items"]
+    }
+    assert [runs_by_id[run_id]["profile_id"] for run_id in result["runIds"]] == [
+        "reasoning-check",
+        "quality-marker",
+    ]
+
+    first = repository.claim_next("worker-1")
+    assert first is not None
+    assert first.run["profile_id"] == "reasoning-check"
+    assert repository.claim_next("worker-2") is None
+
+    repository.finish_run(first.run["id"])
+    second = repository.claim_next("worker-2")
+    assert second is not None
+    assert second.run["profile_id"] == "quality-marker"
+
+
 def test_worker_queue_stats_include_oldest_wait(repository: ProbeRepository):
     run_id = create_run(repository)
     with repository.database.transaction() as session:

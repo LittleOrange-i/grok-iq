@@ -16,6 +16,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { mergeEnabledProfileIds } from './settings-model'
 
 type ProfileMultiSelectProps = {
   profiles: ProbeProfile[]
@@ -109,7 +110,9 @@ export function ProfileMultiSelect({
                   variant='ghost'
                   className='h-7 px-2 text-xs'
                   disabled={!enabledIds.length}
-                  onClick={() => onChange(enabledIds)}
+                  onClick={() =>
+                    onChange(mergeEnabledProfileIds(selectedIds, enabledIds))
+                  }
                 >
                   全选
                 </Button>
@@ -170,8 +173,9 @@ export function ProfileMultiSelect({
 
       {selectedProfiles.length > 1 && (
         <div className='flex flex-wrap gap-1.5'>
-          {selectedProfiles.slice(0, 4).map((profile) => (
+          {selectedProfiles.slice(0, 4).map((profile, index) => (
             <Badge key={profile.id} variant='outline' className='max-w-52'>
+              <span className='shrink-0 text-muted-foreground'>{index + 1}.</span>
               <span className='truncate'>{profile.name}</span>
             </Badge>
           ))}

@@ -194,6 +194,42 @@ export const REGISTER_PROBE_PROXY_TARGETS: ProxyTarget[] = [
   { kind: 'current', id: null },
 ]
 
+export function moveOrderedId(
+  ids: string[],
+  id: string,
+  offset: -1 | 1
+): string[] {
+  const next = Array.from(
+    new Set(ids.map((value) => value.trim()).filter(Boolean))
+  )
+  const index = next.indexOf(id)
+  const target = index + offset
+  if (index < 0 || target < 0 || target >= next.length) {
+    return next
+  }
+  const current = next[index]
+  const other = next[target]
+  if (current === undefined || other === undefined) {
+    return next
+  }
+  next[index] = other
+  next[target] = current
+  return next
+}
+
+export function mergeEnabledProfileIds(
+  selectedIds: string[],
+  enabledIds: string[]
+): string[] {
+  const selected = Array.from(
+    new Set(selectedIds.map((value) => value.trim()).filter(Boolean))
+  )
+  const enabledSet = new Set(enabledIds)
+  const kept = selected.filter((value) => enabledSet.has(value))
+  const keptSet = new Set(kept)
+  return [...kept, ...enabledIds.filter((value) => !keptSet.has(value))]
+}
+
 export function syncRegisterProbeProfileRounds(
   profileIds: string[],
   current: Record<string, number> | null | undefined,

@@ -1,4 +1,6 @@
 import {
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   KeyRound,
@@ -41,6 +43,7 @@ import {
 } from './settings-components'
 import {
   GROK_REGISTER_REPOSITORY_URL,
+  moveOrderedId,
   syncRegisterProbeProfileRounds,
   type SettingsForm,
   type SettingsSetter,
@@ -257,13 +260,13 @@ export function SettingsIntegrationTab({
       <SettingsCard
         icon={Layers3}
         title='首次探针策略'
-        description='选择新账号导入后使用的探针方案，并为每个方案单独设置执行轮次；执行方式和出口策略保持固定。'
+        description='选择新账号导入后使用的探针方案，并为每个方案单独设置执行轮次和顺序；同一账号会按此顺序串行执行。执行方式和出口策略保持固定。'
         className={cn(!automaticProbe && 'opacity-70')}
       >
         <div className='space-y-4'>
           <Field
             label='探针方案'
-            hint='可多选；每个方案分别生成一个持久任务，并可单独设置轮次'
+            hint='可多选；选择顺序即执行顺序，也可在下方列表调整。每个方案分别生成一个持久任务。'
           >
             <ProfileMultiSelect
               profiles={profiles}
@@ -286,24 +289,75 @@ export function SettingsIntegrationTab({
           </Field>
           <Field
             label='各方案执行轮数'
-            hint='每个选中方案单独设置 1–20 轮，互不影响。'
+            hint='每个选中方案单独设置 1–20 轮。使用上下箭头调整执行顺序，同一账号按此顺序串行执行。'
           >
             {form.registerProbeProfileIds.length ? (
               <div className='space-y-2'>
-                {form.registerProbeProfileIds.map((profileId) => {
+                {form.registerProbeProfileIds.map((profileId, index) => {
                   const profile = profiles.find((item) => item.id === profileId)
+                  const canMove = !profilesLoading && automaticProbe
                   return (
                     <div
                       key={profileId}
                       className='flex items-center justify-between gap-3 rounded-lg border bg-muted/15 px-3 py-2.5'
                     >
-                      <div className='min-w-0'>
-                        <div className='truncate text-sm font-medium'>
-                          {profile?.name || profileId}
+                      <div className='flex min-w-0 flex-1 items-center gap-3'>
+                        <div className='flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground'>
+                          {index + 1}
                         </div>
-                        <div className='truncate font-mono text-[11px] text-muted-foreground'>
-                          {profileId}
+                        <div className='min-w-0'>
+                          <div className='truncate text-sm font-medium'>
+                            {profile?.name || profileId}
+                          </div>
+                          <div className='truncate font-mono text-[11px] text-muted-foreground'>
+                            {profileId}
+                          </div>
                         </div>
+                      </div>
+                      <div className='flex shrink-0 items-center gap-1'>
+                        <Button
+                          type='button'
+                          size='icon'
+                          variant='ghost'
+                          className='size-7'
+                          disabled={!canMove || index === 0}
+                          aria-label={`将 ${profile?.name || profileId} 上移`}
+                          onClick={() =>
+                            set(
+                              'registerProbeProfileIds',
+                              moveOrderedId(
+                                form.registerProbeProfileIds,
+                                profileId,
+                                -1
+                              )
+                            )
+                          }
+                        >
+                          <ChevronUp className='size-3.5' />
+                        </Button>
+                        <Button
+                          type='button'
+                          size='icon'
+                          variant='ghost'
+                          className='size-7'
+                          disabled={
+                            !canMove ||
+                            index === form.registerProbeProfileIds.length - 1
+                          }
+                          aria-label={`将 ${profile?.name || profileId} 下移`}
+                          onClick={() =>
+                            set(
+                              'registerProbeProfileIds',
+                              moveOrderedId(
+                                form.registerProbeProfileIds,
+                                profileId,
+                                1
+                              )
+                            )
+                          }
+                        >
+                          <ChevronDown className='size-3.5' />
+                        </Button>
                       </div>
                       <div className='relative w-24 shrink-0'>
                         <Input
@@ -337,7 +391,7 @@ export function SettingsIntegrationTab({
               </div>
             ) : (
               <p className='text-sm text-muted-foreground'>
-                先选择探针方案，再为每个方案设置执行轮次。
+                先选择探针方案，再为每个方案设置执行轮次和顺序。
               </p>
             )}
           </Field>
