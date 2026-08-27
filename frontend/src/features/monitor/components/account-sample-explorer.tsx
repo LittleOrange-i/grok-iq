@@ -15,6 +15,8 @@ import {
   getEgressNodeName,
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
+import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
+import { DualTpsValue } from '@/features/monitor/components/tps-display'
 
 type AccountSampleExplorerProps = {
   samples: ProbeSample[]
@@ -88,8 +90,14 @@ export function AccountSampleExplorer({
                 </div>
                 <div className='mt-2 grid grid-cols-3 gap-2 text-xs tabular-nums'>
                   <SampleListMetric
-                    label='判定 TPS'
-                    value={formatNumber(sample.tps)}
+                    label='TPS'
+                    value={
+                      <DualTpsValue
+                        tps={sample.tps}
+                        upstreamTps={sample.upstream_tps}
+                        compact
+                      />
+                    }
                   />
                   <SampleListMetric
                     label='首 Token'
@@ -172,14 +180,12 @@ function SampleDetail({
       </div>
       <div className='space-y-4 p-4'>
         <div className='grid gap-2 sm:grid-cols-3 xl:grid-cols-6'>
-          <SampleFact label='判定 TPS' value={formatNumber(sample.tps)} />
-          {sample.upstream_tps != null &&
-            Math.abs(sample.upstream_tps - sample.tps) > 0.01 && (
-              <SampleFact
-                label='上游 TPS'
-                value={formatNumber(sample.upstream_tps)}
-              />
-            )}
+          <SampleFact
+            label='TPS'
+            value={
+              <DualTpsValue tps={sample.tps} upstreamTps={sample.upstream_tps} />
+            }
+          />
           <SampleFact label='首 Token' value={`${sample.first_token_ms} ms`} />
           <SampleFact label='总耗时' value={`${sample.duration_ms} ms`} />
           <SampleFact label='生成窗口' value={`${sample.generation_ms} ms`} />
@@ -235,6 +241,7 @@ function SampleDetail({
             {sample.error}
           </div>
         )}
+        <ReasoningPanel content={sample.reasoning_text || ''} defaultOpen />
         {responseText ? (
           <div className='flex items-center justify-between gap-3 rounded-lg border bg-muted/15 px-3 py-2.5'>
             <div className='min-w-0'>
@@ -260,13 +267,17 @@ function SampleDetail({
   )
 }
 
-function SampleListMetric({ label, value }: { label: string; value: string }) {
+function SampleListMetric({
+  label,
+  value,
+}: {
+  label: string
+  value: ReactNode
+}) {
   return (
     <div className='min-w-0'>
       <div className='truncate text-[10px] text-muted-foreground'>{label}</div>
-      <div className='truncate font-medium' title={value}>
-        {value}
-      </div>
+      <div className='truncate font-medium'>{value}</div>
     </div>
   )
 }

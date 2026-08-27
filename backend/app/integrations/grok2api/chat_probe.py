@@ -305,6 +305,7 @@ class ChatProbeRunner:
     ) -> Any:
         completed = time.perf_counter()
         response_text = "".join(state.visible_parts)
+        reasoning_text = "".join(state.reasoning_parts or []).strip()
         duration_ms = max(1, round((completed - state.started) * 1000))
         first_token_ms = (
             max(0, round((state.first_generated_at - state.started) * 1000))
@@ -334,6 +335,7 @@ class ChatProbeRunner:
             verified_egress_node_id=None,
             status_code=state.status_code,
             response_text=response_text,
+            reasoning_text=reasoning_text,
             response_sha256=hashlib.sha256(response_text.encode()).hexdigest(),
             output_tokens=output_tokens,
             reasoning_tokens=reasoning_tokens,

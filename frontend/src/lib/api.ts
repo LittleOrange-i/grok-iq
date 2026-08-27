@@ -1130,6 +1130,7 @@ export type ProbeSample = {
   expected_matched?: boolean | null
   response_sha256?: string
   response_text: string
+  reasoning_text?: string
   classification: string
   risk_rule_id?: string
   risk_rule_ids?: string[]

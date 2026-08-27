@@ -425,6 +425,7 @@ class ProbeRunExecutor:
                 "expected_matched": result.expected_matched,
                 "response_sha256": result.response_sha256,
                 "response_text": result.response_text,
+                "reasoning_text": result.reasoning_text,
                 "usage": result.usage,
                 "classification": classified.name,
                 "risk_rule_id": classified.rule_id,

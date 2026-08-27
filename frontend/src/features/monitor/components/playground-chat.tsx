@@ -1,9 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import {
   Bot,
   BrainCircuit,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -28,11 +27,6 @@ import { cn, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -46,6 +40,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { HtmlPreviewButton, MarkdownView } from '@/components/formatted-content'
 import { PlaygroundField } from './playground-field'
+import { ReasoningPanel } from './reasoning-panel'
 import {
   assistantVariants,
   chatCompletionUrl,
@@ -759,62 +754,6 @@ export function ChatBubble({
         </div>
       </div>
     </article>
-  )
-}
-
-function ReasoningPanel({
-  content,
-  streaming,
-}: {
-  content: string
-  streaming: boolean
-}) {
-  const [open, setOpen] = useState(streaming)
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setOpen(streaming)
-  }, [streaming])
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className='mb-3'>
-      <div className='overflow-hidden rounded-md bg-muted/35'>
-        <CollapsibleTrigger asChild>
-          <button
-            type='button'
-            className='flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground'
-          >
-            <BrainCircuit className='size-3.5 text-primary' />
-            <span>思考过程</span>
-            {streaming && (
-              <span className='ms-auto inline-flex items-center gap-1 text-primary'>
-                <Loader2 className='size-3 animate-spin' />
-                接收中
-              </span>
-            )}
-            <ChevronDown
-              className={cn(
-                'size-3.5 transition-transform',
-                open && 'rotate-180',
-                !streaming && 'ms-auto'
-              )}
-            />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className='max-h-80 overflow-y-auto overscroll-contain px-3 pb-2.5 text-xs leading-5'>
-            {content ? (
-              <div className='[overflow-wrap:anywhere] whitespace-pre-wrap text-muted-foreground'>
-                {content}
-                {streaming && <StreamingCursor />}
-              </div>
-            ) : (
-              <span className='text-muted-foreground'>正在等待思考片段…</span>
-            )}
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
   )
 }
 

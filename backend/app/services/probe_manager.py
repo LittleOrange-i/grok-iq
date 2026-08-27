@@ -1226,6 +1226,7 @@ class ProbeManager:
             "expected_matched": result.expected_matched if result is not None else None,
             "response_sha256": result.response_sha256 if result is not None else "",
             "response_text": result.response_text if result is not None else "",
+            "reasoning_text": result.reasoning_text if result is not None else "",
             "usage": usage,
             "classification": "error",
             "risk_rule_id": "http_error",

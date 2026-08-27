@@ -53,6 +53,7 @@ import {
 import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { formatDualTps, tpsOverridden } from '@/lib/tps'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
@@ -131,6 +132,8 @@ import {
 } from '@/features/monitor/components/egress-node-names'
 import { EgressNodeReference } from '@/features/monitor/components/egress-node-reference'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
+import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
+import { DualTpsValue } from '@/features/monitor/components/tps-display'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
 const terminal = new Set([
@@ -1797,6 +1800,11 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
             <span className='inline-flex items-center gap-1 text-muted-foreground'>
               <Gauge className='size-3.5' />
               {formatNumber(stats.maxTps)}
+              {tpsOverridden(stats.maxTps, stats.maxUpstreamTps) ? (
+                <span className='text-[11px] font-normal text-muted-foreground/80'>
+                  / {formatNumber(stats.maxUpstreamTps)}
+                </span>
+              ) : null}
             </span>
           )}
         </div>
@@ -1806,7 +1814,7 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
         {stats.warnings > 0 ? `，${stats.warnings} 个样本不足` : ''} /{' '}
         {stats.samples} 个样本
         {stats.maxTps != null
-          ? `，判定最高 ${formatNumber(stats.maxTps)} TPS、平均 ${formatNumber(stats.avgTps)}；上游最高 ${formatNumber(stats.maxUpstreamTps)}、平均 ${formatNumber(stats.avgUpstreamTps)}`
+          ? `，最高 ${formatDualTps(stats.maxTps, stats.maxUpstreamTps)} TPS，平均 ${formatDualTps(stats.avgTps, stats.avgUpstreamTps)}`
           : ''}
         。样本不足会在任务中心标记异常提示，不能视为探针通过
         {run.trigger === 'register' ? '，注册联动也不会恢复优先级' : ''}
@@ -2506,14 +2514,12 @@ function SampleCard({
         )}
       </div>
       <div className='grid gap-3 border-b bg-muted/15 p-4 sm:grid-cols-3 lg:grid-cols-6'>
-        <Metric label='判定 TPS' value={formatNumber(sample.tps)} />
-        {sample.upstream_tps != null &&
-          Math.abs(sample.upstream_tps - sample.tps) > 0.01 && (
-            <Metric
-              label='上游 TPS'
-              value={formatNumber(sample.upstream_tps)}
-            />
-          )}
+        <Metric
+          label='TPS'
+          value={
+            <DualTpsValue tps={sample.tps} upstreamTps={sample.upstream_tps} />
+          }
+        />
         <Metric label='首 Token' value={`${sample.first_token_ms} ms`} />
         <Metric label='总耗时' value={`${sample.duration_ms} ms`} />
         <Metric label='生成窗口' value={`${sample.generation_ms} ms`} />
@@ -2580,6 +2586,10 @@ function SampleCard({
               </div>
             ) : (
               <>
+                <ReasoningPanel
+                  content={sample.reasoning_text || ''}
+                  defaultOpen
+                />
                 {responseExpanded ? (
                   <div
                     ref={responseScrollRef}

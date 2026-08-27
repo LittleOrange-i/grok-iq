@@ -302,6 +302,7 @@ class ProbeSample(Base):
     expected_matched: Mapped[bool | None] = mapped_column(Boolean)
     response_sha256: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     response_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    reasoning_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     usage: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     classification: Mapped[str] = mapped_column(String(32), default="", nullable=False, index=True)
     risk_rule_id: Mapped[str] = mapped_column(

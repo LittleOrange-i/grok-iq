@@ -164,6 +164,10 @@ COMPATIBILITY_COLUMNS = {
             "upstream_tps",
             "ALTER TABLE probe_samples ADD COLUMN upstream_tps FLOAT",
         ),
+        (
+            "reasoning_text",
+            "ALTER TABLE probe_samples ADD COLUMN reasoning_text TEXT NOT NULL DEFAULT ''",
+        ),
     ],
     "sso_reports": [
         (

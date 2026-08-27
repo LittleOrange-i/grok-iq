@@ -224,9 +224,12 @@ class ProbeRunReader:
         for sample, run, profile, plan in rows:
             sample_value = model_dict(sample)
             response_text = str(sample_value.get("response_text") or "")
+            reasoning_text = str(sample_value.get("reasoning_text") or "")
             if not include_response:
                 sample_value.pop("response_text", None)
+                sample_value.pop("reasoning_text", None)
             sample_value["responseLength"] = len(response_text)
+            sample_value["reasoningLength"] = len(reasoning_text)
             sample_value["responsePreview"] = (
                 " ".join(response_text.split())[:320] if response_text else ""
             )

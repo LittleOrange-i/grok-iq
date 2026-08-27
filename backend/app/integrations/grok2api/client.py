@@ -160,6 +160,7 @@ class ChatProbeResult:
     verified_egress_node_id: int | None
     status_code: int
     response_text: str
+    reasoning_text: str
     response_sha256: str
     output_tokens: int
     reasoning_tokens: int
@@ -1022,6 +1023,7 @@ class Grok2APIClient:
             verified_egress_node_id=None,
             status_code=int(payload.get("statusCode") or 0),
             response_text="",
+            reasoning_text="",
             response_sha256=str(payload.get("responseSha256") or ""),
             output_tokens=output_tokens,
             reasoning_tokens=reasoning_tokens,
