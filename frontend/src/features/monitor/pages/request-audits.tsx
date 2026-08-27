@@ -421,9 +421,10 @@ function UpstreamAccountState({
 }
 
 function preDisableStatusLabel(check: RequestAuditPreDisableCheck | null) {
-  if (!check) return '待处置'
+  if (!check) return ''
   if (check.actionStatus === 'disabled') return '已自动停用'
   if (check.actionStatus === 'already_disabled') return '已记录停用'
+  if (check.actionStatus === 'already_quarantined') return '已隔离'
   if (check.actionStatus === 'task_protected') return '任务保护'
   if (check.actionStatus === 'auto_quarantine_disabled') return '自动停用未开启'
   if (check.actionStatus === 'deprioritized') return '已降低优先级'
@@ -453,8 +454,12 @@ function PreDisableCheckBadge({
   compact?: boolean
 }) {
   const label = preDisableStatusLabel(check)
+  if (!label) return null
   const tone =
-    check?.actionStatus === 'disabled' || check?.status === 'flagged'
+    check?.actionStatus === 'disabled' ||
+    check?.actionStatus === 'already_disabled' ||
+    check?.actionStatus === 'already_quarantined' ||
+    check?.status === 'flagged'
       ? 'destructive'
       : check?.actionStatus === 'deprioritized' ||
           check?.actionStatus === 'already_deprioritized'
@@ -4913,7 +4918,17 @@ function AuditRow({
               Media Input ×{row.mediaInputImages}
             </Badge>
           )}
-          <PreDisableCheckBadge check={row.preDisableCheck} compact />
+          {row.preDisableCheck ? (
+            <PreDisableCheckBadge check={row.preDisableCheck} compact />
+          ) : row.riskLevel === 'high' && row.upstreamEnabled === false ? (
+            <Badge
+              variant='destructive'
+              className='h-5 px-1.5 text-[10px]'
+              title='账号已隔离或停用。这条请求没有单独的处置记录，不等于还要再处理一次。'
+            >
+              已隔离
+            </Badge>
+          ) : null}
         </div>
       </TableCell>
       <TableCell className='text-right align-middle'>
