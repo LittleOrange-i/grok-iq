@@ -1043,6 +1043,7 @@ class ProbeManager:
                         "riskScore": float(assessment.get("risk_score") or 0),
                         "monitorStatus": status,
                         "minStatus": self.settings.auto_isolation_min_status,
+                        "riskReasons": list(assessment.get("risk_reasons") or []),
                     },
                 )
                 return result.get("assessment") or assessment
@@ -1077,6 +1078,8 @@ class ProbeManager:
             previous_upstream_enabled=was_enabled,
             disabled_by_monitor=was_enabled,
             recovery_guarded=False,
+            source="probe",
+            evidence=list(assessment.get("risk_reasons") or []),
         )
         self.accounts.create_alert(
             account_id=account_id,
@@ -1112,6 +1115,9 @@ class ProbeManager:
             previous_upstream_enabled=was_enabled,
             disabled_by_monitor=was_enabled,
             recovery_guarded=False,
+            source="probe",
+            disposition_action="isolate",
+            evidence=list(assessment.get("risk_reasons") or []),
         )
         self.accounts.create_alert(
             account_id=account_id,

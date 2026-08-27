@@ -32,6 +32,15 @@ export type Assessment = {
     created_at: string
     updated_at?: string | null
   }[]
+  disposition?: {
+    source: string
+    sourceLabel: string
+    action: string
+    actionLabel: string
+    reason: string
+    at?: string | null
+    evidence?: string[]
+  } | null
 }
 
 export type UpstreamAccount = {

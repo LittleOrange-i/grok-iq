@@ -20,6 +20,11 @@ from app.analyzer import (
     rule_metadata,
 )
 from app.core.clock import app_isoformat, ensure_utc, utc_now
+from app.core.disposition import (
+    build_disposition,
+    infer_disposition_source,
+    public_disposition,
+)
 from app.reasoning_policy import canonical_reasoning_model
 
 from .database import Database
@@ -108,11 +113,32 @@ def _persistable_operator_notes(notes: list[dict[str, Any]]) -> list[dict[str, A
     return _sort_operator_notes(persisted)
 
 
+def _hydrated_disposition(payload: dict[str, Any]) -> dict[str, Any]:
+    current = public_disposition(payload.get("disposition"))
+    if current:
+        return current
+    if str(payload.get("monitor_status") or "") != "quarantined":
+        return {}
+    note = str(payload.get("manual_note") or "").strip()
+    if not note:
+        return {}
+    return build_disposition(
+        source=infer_disposition_source(note),
+        action="isolate" if payload.get("quarantine_until") is None else "quarantine",
+        reason=note,
+        at=app_isoformat(payload.get("updated_at"))
+        if not isinstance(payload.get("updated_at"), str)
+        else str(payload.get("updated_at") or "") or None,
+        evidence=payload.get("risk_reasons") or [],
+    )
+
+
 def _assessment_dict(value: AccountAssessment) -> dict[str, Any]:
     payload = model_dict(value)
     notes = _normalized_operator_notes(payload)
     payload["operator_notes"] = notes
     payload["operator_note"] = str(notes[0]["content"]) if notes else ""
+    payload["disposition"] = _hydrated_disposition(payload)
     return payload
 
 
@@ -558,6 +584,9 @@ class AccountRepository:
         previous_upstream_enabled: bool | None = None,
         disabled_by_monitor: bool | None = None,
         recovery_guarded: bool | None = None,
+        source: str | None = None,
+        disposition_action: str | None = None,
+        evidence: list[str] | None = None,
     ) -> dict[str, Any]:
         with self.database.transaction() as session:
             assessment = session.get(AccountAssessment, account_id)
@@ -573,6 +602,29 @@ class AccountRepository:
                 assessment.disabled_by_monitor = disabled_by_monitor
             if recovery_guarded is not None:
                 assessment.recovery_guarded = recovery_guarded
+            if status == "quarantined":
+                stored_evidence = [
+                    str(item).strip()
+                    for item in (
+                        evidence
+                        if evidence is not None
+                        else (assessment.risk_reasons or [])
+                    )
+                    if str(item).strip()
+                ]
+                assessment.disposition = build_disposition(
+                    source=source or infer_disposition_source(note),
+                    action=disposition_action
+                    or (
+                        "isolate"
+                        if quarantine_until is None
+                        else "quarantine"
+                    ),
+                    reason=note,
+                    evidence=stored_evidence,
+                )
+            else:
+                assessment.disposition = {}
             assessment.updated_at = utc_now()
             session.flush()
             result = _assessment_dict(assessment)
@@ -720,6 +772,7 @@ class AccountRepository:
             assessment.disabled_by_monitor = False
             assessment.previous_upstream_enabled = None
             assessment.recovery_guarded = recovery_guarded
+            assessment.disposition = {}
             assessment.updated_at = utc_now()
 
     def delete_assessment(self, account_id: int) -> bool:

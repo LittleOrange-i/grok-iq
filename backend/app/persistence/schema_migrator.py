@@ -23,6 +23,10 @@ COMPATIBILITY_COLUMNS = {
             "operator_notes",
             "ALTER TABLE account_assessments ADD COLUMN operator_notes JSON NOT NULL DEFAULT '[]'",
         ),
+        (
+            "disposition",
+            "ALTER TABLE account_assessments ADD COLUMN disposition JSON NOT NULL DEFAULT '{}'",
+        ),
     ],
     "probe_profiles": [
         (

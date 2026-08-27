@@ -94,6 +94,9 @@ class AccountAssessment(Base):
     operator_notes: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, default=list, nullable=False
     )
+    disposition: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(AppDateTime(), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False

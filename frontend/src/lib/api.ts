@@ -282,6 +282,16 @@ export type OperatorNote = {
   updated_at?: string | null
 }
 
+export type AccountDisposition = {
+  source: string
+  sourceLabel: string
+  action: string
+  actionLabel: string
+  reason: string
+  at?: string | null
+  evidence?: string[]
+}
+
 type Assessment = {
   account_id: number
   monitor_status: string
@@ -300,6 +310,7 @@ type Assessment = {
   recovery_guarded?: boolean
   operator_note?: string
   operator_notes?: OperatorNote[]
+  disposition?: AccountDisposition | null
 }
 
 export type UpstreamQuota = {
@@ -635,6 +646,7 @@ export type RequestAuditAccountRisk = {
   monitorStatus: string
   quarantined: boolean
   quarantineUntil: string | null
+  disposition?: AccountDisposition | null
   probeSampleCount: number
   probeAnomalyCount: number
   latestProbeSampleAt: string | null

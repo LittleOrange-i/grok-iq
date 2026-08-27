@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
+from app.core.disposition import evidence_from
 from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
@@ -597,6 +598,9 @@ class AccountService:
             previous_upstream_enabled=bool(previous_enabled),
             disabled_by_monitor=disabled_by_monitor,
             recovery_guarded=False,
+            source=source or "manual",
+            disposition_action="isolate",
+            evidence=evidence_from(detail=detail, assessment=assessment),
         )
         action_status = "disabled" if was_enabled else "already_disabled"
         normalized_source = str(source or "manual").strip() or "manual"
@@ -704,6 +708,9 @@ class AccountService:
             previous_upstream_enabled=bool(previous_enabled),
             disabled_by_monitor=disabled_by_monitor,
             recovery_guarded=False,
+            source=source,
+            disposition_action="isolate" if until is None else "quarantine",
+            evidence=evidence_from(detail=detail, assessment=assessment),
         )
         action_status = (
             "disabled"

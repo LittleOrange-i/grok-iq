@@ -621,7 +621,8 @@ function accountHasRiskEvidence(account: RequestAuditAccountRisk) {
     account.reasoningZeroCount > 0 ||
     account.mediaInputCount > 0 ||
     account.preDisableCheck != null ||
-    account.egressRecommendation?.type === 'change_egress'
+    account.egressRecommendation?.type === 'change_egress' ||
+    Boolean(account.disposition?.source || account.disposition?.reason)
   )
 }
 
@@ -653,7 +654,15 @@ function AccountRiskEvidenceCell({
           account.preDisableCheck ? (
             <PreDisableCheckBadge check={account.preDisableCheck} compact />
           ) : (
-            <Badge variant='destructive' className='h-5 px-1.5 text-[10px]'>
+            <Badge
+              variant='destructive'
+              className='h-5 px-1.5 text-[10px]'
+              title={
+                account.disposition?.reason
+                  ? `${account.disposition.sourceLabel || account.disposition.source}：${account.disposition.reason}`
+                  : '已隔离'
+              }
+            >
               已隔离
             </Badge>
           )
@@ -688,6 +697,20 @@ function AccountRiskEvidenceCell({
                     : `观察 ${account.watchCount} 次 · 高风险 ${account.highRiskCount} 次`}
                 </div>
               </div>
+              {account.disposition?.reason ? (
+                <div className='space-y-1'>
+                  <div className='text-xs font-medium'>停用来源</div>
+                  <p className='text-[11px] leading-5'>
+                    {account.disposition.sourceLabel || account.disposition.source}
+                    {account.disposition.actionLabel
+                      ? ` · ${account.disposition.actionLabel}`
+                      : ''}
+                  </p>
+                  <p className='text-[11px] leading-5 text-muted-foreground'>
+                    {account.disposition.reason}
+                  </p>
+                </div>
+              ) : null}
               {account.riskReasons.length > 0 ? (
                 <ul className='space-y-1 text-[11px] leading-5 text-muted-foreground'>
                   {account.riskReasons.map((reason) => (
@@ -4498,7 +4521,11 @@ function NodePerspective({
                               )}
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent>点击恢复（启用）已隔离账号</TooltipContent>
+                          <TooltipContent>
+                            {account.disposition?.reason
+                              ? `${account.disposition.sourceLabel || account.disposition.source}：${account.disposition.reason}`
+                              : '点击恢复（启用）已隔离账号'}
+                          </TooltipContent>
                         </Tooltip>
                       ) : isolationEnabled && account.accountId ? (
                         <Tooltip>
@@ -4717,9 +4744,11 @@ function AccountRiskRow({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                {account.quarantineUntil
-                  ? `隔离至 ${formatDate(account.quarantineUntil)}，点击恢复（启用）账号`
-                  : '点击恢复（启用）已隔离账号'}
+                {account.disposition?.reason
+                  ? `${account.disposition.sourceLabel || account.disposition.source}：${account.disposition.reason}`
+                  : account.quarantineUntil
+                    ? `隔离至 ${formatDate(account.quarantineUntil)}，点击恢复（启用）账号`
+                    : '点击恢复（启用）已隔离账号'}
               </TooltipContent>
             </Tooltip>
           ) : isolationEnabled &&

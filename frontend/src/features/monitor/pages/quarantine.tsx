@@ -92,6 +92,10 @@ import {
   type UpstreamStatusFilter,
 } from '@/features/monitor/components/account-upstream-status'
 import {
+  DispositionBanner,
+  DispositionSummary,
+} from '@/features/monitor/components/disposition-summary'
+import {
   buildEgressNodeNameMap,
   getEgressNodeName,
   type EgressNodeNameMap,
@@ -322,63 +326,15 @@ function upstreamFieldLabel(path: string): string {
 
 function RiskReasonCell({ account }: { account: UpstreamAccount }) {
   const assessment = account.assessment
-  const reasons = assessment?.risk_reasons ?? []
-  const sampleCount = assessment?.sample_count ?? 0
-  const anomalyCount = assessment?.anomaly_count ?? 0
-  const hardCount = assessment?.hard_anomaly_count ?? 0
-  const score = assessment?.risk_score ?? 0
-  if (!reasons.length && anomalyCount === 0 && hardCount === 0) {
-    return <span className='text-muted-foreground'>—</span>
-  }
-  const summary =
-    hardCount > 0
-      ? `硬信号 ${hardCount}`
-      : anomalyCount > 0
-        ? `异常 ${anomalyCount}`
-        : `${reasons.length} 条原因`
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type='button'
-          variant='outline'
-          size='sm'
-          className='h-8 max-w-52 gap-1.5 px-2.5 text-xs font-normal'
-        >
-          <span className='truncate'>{summary}</span>
-          {reasons.length > 0 ? (
-            <span className='shrink-0 text-muted-foreground'>
-              {reasons.length} 项
-            </span>
-          ) : null}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align='start' className='w-80 p-0'>
-        <div className='border-b px-3 py-2.5'>
-          <div className='text-sm font-medium'>风险原因</div>
-          <div className='mt-1 text-[11px] leading-5 text-muted-foreground'>
-            样本 {sampleCount} · 异常 {anomalyCount} · 硬信号 {hardCount}
-            {score ? ` · ${formatNumber(score)} 分` : ''}
-          </div>
-        </div>
-        {reasons.length > 0 ? (
-          <ul className='max-h-72 space-y-0.5 overflow-y-auto p-2'>
-            {reasons.map((reason) => (
-              <li
-                key={reason}
-                className='rounded-md bg-muted/40 px-2.5 py-1.5 text-xs leading-5'
-              >
-                {reason}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className='px-3 py-2.5 text-xs text-muted-foreground'>
-            暂无规则说明
-          </p>
-        )}
-      </PopoverContent>
-    </Popover>
+    <DispositionSummary
+      disposition={assessment?.disposition}
+      sampleReasons={assessment?.risk_reasons ?? []}
+      sampleCount={assessment?.sample_count ?? 0}
+      anomalyCount={assessment?.anomaly_count ?? 0}
+      hardCount={assessment?.hard_anomaly_count ?? 0}
+      score={assessment?.risk_score ?? 0}
+    />
   )
 }
 
@@ -1514,7 +1470,7 @@ function QuarantineTable({
           <TableHead>上游启用状态</TableHead>
           <TableHead>样本数</TableHead>
           <TableHead>最近样本时间</TableHead>
-          <TableHead>风险原因</TableHead>
+          <TableHead>隔离原因</TableHead>
           <TableHead>备注</TableHead>
           <TableHead className='text-right'>操作</TableHead>
         </TableRow>
@@ -1660,6 +1616,7 @@ function QuarantineSampleDetail({
 }) {
   const reasons = account?.assessment?.risk_reasons ?? []
   const notes = account ? accountOperatorNotes(account) : []
+  const disposition = account?.assessment?.disposition
   return (
     <div className='space-y-4'>
       {account && (
@@ -1700,18 +1657,7 @@ function QuarantineSampleDetail({
           </ul>
         </div>
       ) : null}
-      {reasons.length > 0 && (
-        <div className='rounded-lg border border-amber-500/25 bg-amber-500/5 p-3'>
-          <div className='text-sm font-medium text-amber-700 dark:text-amber-300'>
-            风险原因
-          </div>
-          <ul className='mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground'>
-            {reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <DispositionBanner disposition={disposition} sampleReasons={reasons} />
       <AccountSampleExplorer
         key={account?.id ?? 'quarantine-samples'}
         samples={samples}

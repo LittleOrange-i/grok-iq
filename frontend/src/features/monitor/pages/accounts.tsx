@@ -105,6 +105,7 @@ import {
   getEgressNodeName,
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
+import { DispositionBanner } from '@/features/monitor/components/disposition-summary'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
@@ -1829,18 +1830,10 @@ function AccountDetail({
           </p>
         </div>
       )}
-      {reasons.length > 0 && (
-        <div className='rounded-lg border border-amber-500/25 bg-amber-500/5 p-3'>
-          <div className='text-sm font-medium text-amber-700 dark:text-amber-300'>
-            判定依据
-          </div>
-          <ul className='mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground'>
-            {reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <DispositionBanner
+        disposition={assessment.disposition}
+        sampleReasons={reasons}
+      />
       <div>
         <h3 className='mb-2 text-sm font-semibold'>出口对比</h3>
         <div className='grid gap-2 sm:grid-cols-2'>

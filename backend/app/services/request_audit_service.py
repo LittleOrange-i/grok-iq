@@ -21,6 +21,7 @@ from app.analyzer import (
 )
 from app.core.clock import APP_TIMEZONE, app_now, ensure_utc, to_app_timezone, utc_now
 from app.core.config import Settings
+from app.core.disposition import public_disposition
 from app.integrations.grok2api.client import Grok2APIClient
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
@@ -2256,6 +2257,7 @@ class RequestAuditService:
             "monitorStatus": monitor_status,
             "quarantined": monitor_status == "quarantined",
             "quarantineUntil": _iso(assessment.get("quarantine_until")),
+            "disposition": public_disposition(assessment.get("disposition")),
             "probeSampleCount": _int_or_zero(assessment.get("sample_count")),
             "probeAnomalyCount": _int_or_zero(assessment.get("anomaly_count")),
             "probeReasoningZeroCount": _int_or_zero(

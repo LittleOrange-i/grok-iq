@@ -634,6 +634,95 @@ async def test_isolate_disables_upstream_and_enters_permanent_zone(tmp_path: Pat
     assert stored["recovery_guarded"] is False
     alerts = accounts.list_alerts()
     assert alerts[0]["kind"] == "manual_isolate"
+    assert stored["disposition"]["source"] == "manual"
+    assert stored["disposition"]["sourceLabel"] == "手动操作"
+    assert stored["disposition"]["action"] == "isolate"
+    assert stored["disposition"]["reason"] == "manual isolate"
+
+
+@pytest.mark.asyncio
+async def test_isolate_records_request_audit_disposition(tmp_path: Path):
+    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+
+    result = await service.isolate_account(
+        1,
+        note="请求审计高风险已达处置阈值后自动停用",
+        source="request_audit",
+        detail={"riskReasons": ["高速 TPS 3 次"]},
+    )
+
+    stored = result["assessment"]
+    assert stored["disposition"]["source"] == "request_audit"
+    assert stored["disposition"]["sourceLabel"] == "请求审计"
+    assert stored["disposition"]["action"] == "isolate"
+    assert stored["disposition"]["reason"] == "请求审计高风险已达处置阈值后自动停用"
+    assert stored["disposition"]["evidence"] == ["高速 TPS 3 次"]
+
+
+@pytest.mark.asyncio
+async def test_isolation_disposition_survives_recalculate(tmp_path: Path):
+    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    await service.isolate_account(
+        1,
+        note="请求审计高风险已达处置阈值后自动停用",
+        source="request_audit",
+        detail={"riskReasons": ["高速 TPS 3 次"]},
+    )
+
+    accounts.recalculate(1, Thresholds(), 168)
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["risk_reasons"] == []
+    assert stored["disposition"]["source"] == "request_audit"
+    assert stored["disposition"]["reason"] == "请求审计高风险已达处置阈值后自动停用"
+    assert stored["disposition"]["evidence"] == ["高速 TPS 3 次"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_isolation_note_hydrates_disposition(tmp_path: Path):
+    database, accounts, _probes, _client, _service = _isolation_service(tmp_path)
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="请求审计高风险已达处置阈值后自动停用",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+    )
+    from app.persistence.models import AccountAssessment
+
+    with database.transaction() as session:
+        assessment = session.get(AccountAssessment, 1)
+        assert assessment is not None
+        assessment.disposition = {}
+
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["disposition"]["source"] == "request_audit"
+    assert stored["disposition"]["sourceLabel"] == "请求审计"
+    assert stored["disposition"]["reason"] == "请求审计高风险已达处置阈值后自动停用"
+
+
+@pytest.mark.asyncio
+async def test_restore_clears_isolation_disposition(tmp_path: Path):
+    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    await service.isolate_account(
+        1,
+        note="请求审计高风险已达处置阈值后自动停用",
+        source="request_audit",
+    )
+    await service.action(
+        account_id=1,
+        action="restore",
+        note="",
+        propagate=True,
+        quarantine_minutes=None,
+    )
+    stored = accounts.get_assessment(1)
+    assert stored is not None
+    assert stored["monitor_status"] == "healthy"
+    assert stored["disposition"] == {}
 
 
 @pytest.mark.asyncio
