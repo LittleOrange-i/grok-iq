@@ -9,6 +9,7 @@ import {
   Network,
   Pencil,
   Plus,
+  PowerOff,
   RefreshCw,
   Search,
   Server,
@@ -738,6 +739,7 @@ export function QuarantinePage() {
   const [selected, setSelected] = useState<number[]>([])
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restorePriority, setRestorePriority] = useState('')
+  const [disableOpen, setDisableOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
@@ -921,6 +923,41 @@ export function QuarantinePage() {
     },
   })
 
+  const disableMutation = useMutation({
+    mutationFn: (accountIds: number[]) =>
+      api.updateAccountsEnabled(accountIds, false),
+    onSuccess: (result) => {
+      const skippedAccountIds = result.skippedAccountIds ?? []
+      const failedAccountIds = result.failedAccountIds ?? []
+      const retainedAccountIds = Array.from(
+        new Set([...skippedAccountIds, ...failedAccountIds])
+      )
+      setDisableOpen(false)
+      setSelected(retainedAccountIds)
+      if (failedAccountIds.length > 0 || skippedAccountIds.length > 0) {
+        const details = [`已停用上游 ${result.updated} 个账号`]
+        if (failedAccountIds.length) {
+          details.push(`${failedAccountIds.length} 个停用失败并保留选择`)
+        }
+        if (skippedAccountIds.length) {
+          details.push(`${skippedAccountIds.length} 个设置受任务保护并跳过`)
+        }
+        toast.warning(details.join('；'))
+      } else if (result.updated !== result.eligible) {
+        toast.warning(
+          `批量停用完成：上游更新 ${result.updated} / ${result.eligible} 个账号`
+        )
+      } else {
+        toast.success(`已停用上游 ${result.updated} 个账号`)
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ['accounts'] })
+      void client.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (accountIds: number[]) => api.deleteQuarantineLocal(accountIds),
     onSuccess: (result) => {
@@ -955,8 +992,9 @@ export function QuarantinePage() {
   })
 
   const restorePending = restoreMutation.isPending
+  const disablePending = disableMutation.isPending
   const deletePending = deleteMutation.isPending
-  const selectionActionPending = restorePending || deletePending
+  const selectionActionPending = restorePending || disablePending || deletePending
   const upstreamStatusLabel =
     isolationUpstreamStatusOptions.find(
       (option) => option.value === upstreamStatus
@@ -1029,6 +1067,15 @@ export function QuarantinePage() {
                 }}
               >
                 <Undo2 />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`停用已选 ${selected.length} 个账号的上游`}
+                destructive
+                pending={disablePending}
+                disabled={selectionActionPending || selected.length === 0}
+                onClick={() => setDisableOpen(true)}
+              >
+                <PowerOff />
               </ToolbarAction>
               <ToolbarAction
                 label={`删除已选 ${selected.length} 个账号的本系统记录`}
@@ -1374,6 +1421,44 @@ export function QuarantinePage() {
           </p>
         </div>
       </ConfirmDialog>
+      <ConfirmDialog
+        open={disableOpen}
+        onOpenChange={(open) => {
+          if (!open && !disablePending) setDisableOpen(false)
+        }}
+        title={`停用 ${selected.length} 个账号的上游？`}
+        desc={
+          <div className='space-y-2'>
+            <p>
+              将通过 grok2api 把已选账号设为停用，账号仍留在隔离区，不会移出隔离区，也不会删除 grok2api 账号。
+            </p>
+            <p className='text-muted-foreground'>
+              已经停用的账号会再次写入停用状态。正在执行探针或等待账号设置恢复的账号会被跳过并保留选择。
+            </p>
+            <p className='font-medium text-foreground'>
+              这只改上游启用状态，不清除本系统评估、样本和隔离备注。
+            </p>
+          </div>
+        }
+        cancelBtnText='取消'
+        confirmText={
+          disablePending ? (
+            <>
+              <Loader2 className='animate-spin' />
+              停用中…
+            </>
+          ) : (
+            <>
+              <PowerOff />
+              确认停用上游
+            </>
+          )
+        }
+        destructive
+        isLoading={disablePending}
+        disabled={selected.length === 0}
+        handleConfirm={() => disableMutation.mutate(selected)}
+      />
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={(open) => {
