@@ -544,7 +544,13 @@ def _isolation_service(
     auto_isolation_min_status: str = "high_risk",
     auto_quarantine: bool = False,
     probes: ProbeRepository | LockedProbeSettings | None = None,
-) -> tuple[Database, AccountRepository, ProbeRepository | LockedProbeSettings, IsolationClient, AccountService]:
+) -> tuple[
+    Database,
+    AccountRepository,
+    ProbeRepository | LockedProbeSettings,
+    IsolationClient,
+    AccountService,
+]:
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
     accounts = AccountRepository(database)

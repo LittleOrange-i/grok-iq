@@ -339,7 +339,7 @@ function remainingQuotaDisplay(quota: Record<string, unknown> | null): {
 
 function upstreamFieldLabel(path: string): string {
   if (UPSTREAM_FIELD_LABELS[path]) return UPSTREAM_FIELD_LABELS[path]
-  const last = path.split('.').at(-1) || path
+  const last = path.split('.').pop() || path
   const mapped = UPSTREAM_FIELD_LABELS[last]
   if (!mapped) return path
   if (!path.includes('.')) return mapped
