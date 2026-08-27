@@ -8,6 +8,7 @@ from typing import Any
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
 from app.core.disposition import evidence_from
+from app.services.isolation_stats import compute_isolation_stats, resolve_stats_range
 from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
@@ -1069,6 +1070,20 @@ class AccountService:
             normalized_note_id,
         )
         return self._operator_note_payload(normalized_account_id, updated)
+
+    def isolation_stats(self, *, start: str = "", end: str = "") -> dict[str, Any]:
+        range_start, range_end = resolve_stats_range(start, end)
+        events = (
+            self.register_events.list_created_between(range_start, range_end)
+            if self.register_events is not None
+            else []
+        )
+        return compute_isolation_stats(
+            assessments=self.accounts.list_isolation_zone(),
+            register_events=events,
+            start=range_start,
+            end=range_end,
+        )
 
     async def list_isolation_zone(
         self,

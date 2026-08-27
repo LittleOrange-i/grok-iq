@@ -123,6 +123,13 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             egress_node_id=payload.egress_node_id,
         )
 
+    @router.get("/accounts/quarantine/stats")
+    def isolation_stats(
+        start: str = Query(default="", alias="from"),
+        end: str = Query(default="", alias="to"),
+    ) -> dict[str, Any]:
+        return service.isolation_stats(start=start, end=end)
+
     @router.get("/accounts/quarantine")
     async def isolation_zone(
         page: int = Query(default=1, ge=1),

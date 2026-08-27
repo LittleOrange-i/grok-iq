@@ -49,6 +49,19 @@ def app_now() -> datetime:
     return datetime.now(APP_TIMEZONE)
 
 
+def app_day_start(value: datetime | None = None) -> datetime:
+    """Return 00:00 Asia/Shanghai as UTC for the given instant."""
+
+    current = to_app_timezone(value) or app_now()
+    local_start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_start.astimezone(UTC)
+
+
+def app_day_key(value: datetime | None) -> str | None:
+    converted = to_app_timezone(value)
+    return converted.date().isoformat() if converted else None
+
+
 def app_isoformat(value: datetime | None) -> str | None:
     converted = to_app_timezone(value)
     return converted.isoformat() if converted else None

@@ -1232,3 +1232,67 @@ async def test_auto_isolation_switch_on_isolates_by_min_status(
         assert result.get("monitor_status") != "quarantined"
         assert client.enabled_calls == []
         assert accounts.get_assessment(1) is None
+
+
+def test_isolation_stats_uses_register_events_and_current_zone(tmp_path: Path):
+    database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    register_events = RegisterEventRepository(database)
+    service.register_events = register_events
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="风险周期达到自动隔离区阈值",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+        source="probe",
+    )
+    accounts.set_manual_status(
+        account_id=2,
+        status="quarantined",
+        note="请求审计发现异常后自动停用",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+        source="request_audit",
+    )
+    from app.core.clock import app_isoformat
+    from app.persistence.models import AccountAssessment
+
+    stale = utc_now() - timedelta(days=2)
+    with database.transaction() as session:
+        assessment = session.get(AccountAssessment, 2)
+        assert assessment is not None
+        payload = dict(assessment.disposition or {})
+        payload["at"] = app_isoformat(stale)
+        assessment.disposition = payload
+
+    register_events.receive(
+        {
+            "event_id": "reg-1",
+            "email": "alpha@example.test",
+            "grok2api_account_id": 1,
+        }
+    )
+    register_events.complete("reg-1", 1, ["run-1"])
+    register_events.receive(
+        {
+            "event_id": "reg-2",
+            "email": "bravo@example.test",
+            "grok2api_account_id": 2,
+        }
+    )
+    register_events.complete("reg-2", 2, ["run-2"])
+    register_events.receive({"event_id": "reg-3", "email": "charlie@example.test"})
+    register_events.fail("reg-3", "import failed")
+
+    stats = service.isolation_stats()
+    assert stats["zone"]["total"] == 2
+    assert stats["zone"]["isolatedInRange"] == 1
+    assert stats["registered"]["total"] == 3
+    assert stats["registered"]["completed"] == 2
+    assert stats["registered"]["failed"] == 1
+    assert stats["registered"]["isolated"] == 2
+    assert stats["registered"]["isolatedInRange"] == 1

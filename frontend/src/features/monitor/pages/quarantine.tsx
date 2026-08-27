@@ -30,7 +30,7 @@ import {
 } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import { StatusBadge } from '@/lib/status'
-import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { cn, formatDate, formatNumber, formatRelativeTime, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
@@ -103,6 +103,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
+import { QuarantineStatsBoard } from '@/features/monitor/components/quarantine-stats-board'
 
 type SsoRiskFilter =
   | 'all'
@@ -1090,6 +1091,7 @@ export function QuarantinePage() {
           </>
         }
       />
+      <QuarantineStatsBoard />
       <Card>
         <CardContent className='p-4'>
           <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
@@ -1582,6 +1584,23 @@ export function QuarantinePage() {
   )
 }
 
+function isolationTimestamp(account: UpstreamAccount) {
+  return account.assessment?.disposition?.at || account.assessment?.updated_at || null
+}
+
+function IsolationTimeCell({ account }: { account: UpstreamAccount }) {
+  const value = isolationTimestamp(account)
+  if (!value) {
+    return <span className='text-muted-foreground'>—</span>
+  }
+  return (
+    <div className='min-w-32'>
+      <div className='whitespace-nowrap tabular-nums'>{formatDate(value)}</div>
+      <div className='text-xs text-muted-foreground'>{formatRelativeTime(value)}</div>
+    </div>
+  )
+}
+
 function QuarantineTable({
   accounts,
   selected,
@@ -1620,6 +1639,7 @@ function QuarantineTable({
           <TableHead>上游启用状态</TableHead>
           <TableHead>样本数</TableHead>
           <TableHead>最近样本时间</TableHead>
+          <TableHead>隔离时间</TableHead>
           <TableHead>隔离原因</TableHead>
           <TableHead>备注</TableHead>
           <TableHead className='text-right'>操作</TableHead>
@@ -1710,6 +1730,9 @@ function QuarantineRow({
       </TableCell>
       <TableCell className='whitespace-nowrap tabular-nums'>
         {formatDate(assessment?.latest_sample_at)}
+      </TableCell>
+      <TableCell>
+        <IsolationTimeCell account={account} />
       </TableCell>
       <TableCell>
         <RiskReasonCell account={account} />

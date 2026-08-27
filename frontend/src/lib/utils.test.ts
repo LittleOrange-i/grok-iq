@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getPageNumbers } from './utils'
+import { formatRelativeTime, getPageNumbers } from './utils'
 
 describe('getPageNumbers', () => {
   it('returns all pages when total is at most 5', () => {
@@ -24,5 +24,17 @@ describe('getPageNumbers', () => {
   it('handles current page greater than total pages', () => {
     expect(getPageNumbers(6, 5)).toEqual([1, 2, 3, 4, 5])
     expect(getPageNumbers(11, 10)).toEqual([1, '...', 7, 8, 9, 10])
+  })
+})
+
+describe('formatRelativeTime', () => {
+  it('returns a dash for empty values', () => {
+    expect(formatRelativeTime()).toBe('—')
+    expect(formatRelativeTime('')).toBe('—')
+  })
+
+  it('describes a timestamp a few minutes ago', () => {
+    const value = new Date(Date.now() - 5 * 60_000).toISOString()
+    expect(formatRelativeTime(value)).toBe('5 分钟前')
   })
 })

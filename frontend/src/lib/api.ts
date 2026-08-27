@@ -292,6 +292,46 @@ export type AccountDisposition = {
   evidence?: string[]
 }
 
+export type IsolationStatsSourceCount = {
+  source: string
+  label: string
+  count: number
+}
+
+export type IsolationStatsResponse = {
+  range: { from?: string | null; to?: string | null }
+  zone: {
+    total: number
+    isolatedInRange: number
+    bySource: IsolationStatsSourceCount[]
+  }
+  registered: {
+    total: number
+    completed: number
+    failed: number
+    pending: number
+    isolated: number
+    isolatedInRange: number
+    isolationRate: number
+  }
+  timing: {
+    sampleCount: number
+    avgHours: number | null
+    medianHours: number | null
+  }
+  isolated: {
+    total: number
+    bySource: IsolationStatsSourceCount[]
+  }
+  trend: Array<{
+    day: string
+    registered: number
+    isolated: number
+    registeredIsolated: number
+  }>
+  generatedAt?: string | null
+}
+
 type Assessment = {
   account_id: number
   monitor_status: string
@@ -308,6 +348,7 @@ type Assessment = {
   latest_upstream_tps?: number
   latest_classification?: string
   latest_sample_at?: string | null
+  updated_at?: string | null
   risk_reasons: string[]
   quarantine_until?: string | null
   recovery_guarded?: boolean
@@ -2587,6 +2628,14 @@ export const api = {
     request<Page<UpstreamAccount>>(`/accounts/quarantine${query(params)}`, {
       signal,
     }),
+  quarantineStats: (
+    params: { from?: string; to?: string } = {},
+    signal?: AbortSignal
+  ) =>
+    request<IsolationStatsResponse>(
+      `/accounts/quarantine/stats${query(params)}`,
+      { signal }
+    ),
   deleteQuarantineLocal,
   updateAccountsEnabled,
   updateAccountsEgress,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, or_, select, update
@@ -330,6 +330,27 @@ class RegisterEventRepository:
         with self.database.session() as session:
             event = session.get(RegisterWebhookEvent, event_id)
             return model_dict(event) if event is not None else None
+
+    def list_created_between(
+        self, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        with self.database.session() as session:
+            events = session.scalars(
+                select(RegisterWebhookEvent)
+                .where(
+                    RegisterWebhookEvent.created_at >= start,
+                    RegisterWebhookEvent.created_at < end,
+                )
+                .order_by(RegisterWebhookEvent.created_at.asc())
+            ).all()
+            return [
+                {
+                    key: value
+                    for key, value in model_dict(event).items()
+                    if key != "sso"
+                }
+                for event in events
+            ]
 
     def list_unresolved_priority_holds(self) -> list[dict[str, Any]]:
         with self.database.session() as session:
