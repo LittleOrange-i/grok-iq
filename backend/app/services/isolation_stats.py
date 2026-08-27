@@ -66,13 +66,14 @@ def compute_isolation_stats(
         for item in registered_isolated
         if _in_range(_isolated_at_for(isolated_accounts, item["account_id"]), start, end)
     ]
-    hours_to_isolate = [
-        hours
-        for item in registered_isolated
-        if (hours := _hours_between(item["registered_at"], _isolated_at_for(isolated_accounts, item["account_id"])))
-        is not None
-        and hours >= 0
-    ]
+    hours_to_isolate = []
+    for item in registered_isolated:
+        hours = _hours_between(
+            item["registered_at"],
+            _isolated_at_for(isolated_accounts, item["account_id"]),
+        )
+        if hours is not None and hours >= 0:
+            hours_to_isolate.append(hours)
     completed = sum(1 for item in identities if item["status"] == "completed")
     isolated_count = len(registered_isolated)
     return {

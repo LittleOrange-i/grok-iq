@@ -8,13 +8,13 @@ from typing import Any
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
 from app.core.disposition import evidence_from
-from app.services.isolation_stats import compute_isolation_stats, resolve_stats_range
 from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.request_audit_repository import RequestAuditRepository
 from app.persistence.sso_report_repository import SsoReportRepository
+from app.services.isolation_stats import compute_isolation_stats, resolve_stats_range
 
 QUARANTINE_RECOVERY_PRIORITY = -2_000_000_000
 PUBLIC_UPSTREAM_SUMMARY_TTL_SECONDS = 10.0

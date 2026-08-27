@@ -838,14 +838,20 @@ export function QuarantinePage() {
     enabled: probeOpen,
     staleTime: 60_000,
   })
-  const egress = useQuery({
+  const {
+    data: egressData,
+    error: egressQueryError,
+    isError: egressIsError,
+    isFetching: egressFetching,
+    refetch: refetchEgress,
+  } = useQuery({
     queryKey: ['egress'],
     queryFn: () => api.egress({ pageSize: 500 }),
     staleTime: 60_000,
   })
   const egressNodeNames = useMemo(
-    () => buildEgressNodeNameMap(egress.data?.items),
-    [egress.data?.items]
+    () => buildEgressNodeNameMap(egressData?.items),
+    [egressData?.items]
   )
   const detailAccount =
     detail.data?.account ??
@@ -953,9 +959,9 @@ export function QuarantinePage() {
       setProbeAccountIds(accountIds)
       setProbeDisabledCount(disabledCount)
       setProbeOpen(true)
-      void egress.refetch()
+      void refetchEgress()
     },
-    [egress]
+    [refetchEgress]
   )
 
   const syncSelection = useCallback((accountIds: number[]) => {
@@ -1326,7 +1332,7 @@ export function QuarantinePage() {
                         <SelectContent>
                           <SelectItem value='all'>全部出口绑定</SelectItem>
                           <SelectItem value='unbound'>未绑定出口</SelectItem>
-                          {(egress.data?.items ?? []).map((node) => (
+                          {(egressData?.items ?? []).map((node) => (
                             <SelectItem key={node.id} value={String(node.id)}>
                               {node.name || `节点 #${node.id}`}
                             </SelectItem>
@@ -1719,10 +1725,10 @@ export function QuarantinePage() {
         profilesLoading={profiles.isFetching && !profiles.data}
         profilesError={profiles.isError ? getErrorMessage(profiles.error) : ''}
         onRefreshProfiles={() => void profiles.refetch()}
-        egress={egress.data?.items ?? []}
-        egressLoading={egress.isFetching}
-        egressError={egress.isError ? getErrorMessage(egress.error) : ''}
-        onRefreshEgress={() => void egress.refetch()}
+        egress={egressData?.items ?? []}
+        egressLoading={egressFetching}
+        egressError={egressIsError ? getErrorMessage(egressQueryError) : ''}
+        onRefreshEgress={() => void refetchEgress()}
         onCreated={() => {
           setSelected([])
           setSelectedDisabled([])
