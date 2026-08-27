@@ -770,7 +770,7 @@ export function SettingListItem({
   children,
 }: {
   label: string
-  description: string
+  description?: string
   checked?: boolean
   disabled?: boolean
   onCheckedChange?: (value: boolean) => void
@@ -781,9 +781,11 @@ export function SettingListItem({
       <div className='flex items-start justify-between gap-4'>
         <div className='min-w-0'>
           <div className='text-sm font-medium'>{label}</div>
-          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-            {description}
-          </p>
+          {description ? (
+            <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+              {description}
+            </p>
+          ) : null}
         </div>
         {onCheckedChange ? (
           <Switch

@@ -59,6 +59,7 @@ def build_settings_router(
             "degradation_tps",
             "strong_degradation_tps",
             "probe_tps_override_enabled",
+            "probe_tps_override_mode",
             "probe_tps_override_min_first_token_ms",
             "probe_tps_override_max_generation_ms",
             "consecutive_anomalies",

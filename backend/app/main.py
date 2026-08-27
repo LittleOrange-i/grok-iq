@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.analyzer import Thresholds
+from app.analyzer import thresholds_from_settings
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.version import current_version
@@ -37,37 +37,7 @@ from app.web.router import build_router
 
 settings = get_settings()
 probe_log_path = configure_logging(settings.database_path)
-thresholds = Thresholds(
-    degradation_tps=settings.degradation_tps,
-    strong_degradation_tps=settings.strong_degradation_tps,
-    probe_tps_override_enabled=settings.probe_tps_override_enabled,
-    probe_tps_override_min_first_token_ms=settings.probe_tps_override_min_first_token_ms,
-    probe_tps_override_max_generation_ms=settings.probe_tps_override_max_generation_ms,
-    minimum_output_tokens=settings.minimum_output_tokens,
-    buffer_first_token_share=settings.buffer_first_token_share,
-    min_generation_ms=settings.min_generation_ms,
-    consecutive_anomalies=settings.consecutive_anomalies,
-    cumulative_anomaly_rate=settings.cumulative_anomaly_rate,
-    high_risk_hard_count=settings.high_risk_hard_count,
-    risk_anomaly_rate_weight=settings.risk_anomaly_rate_weight,
-    risk_hard_weight=settings.risk_hard_weight,
-    risk_hard_cap=settings.risk_hard_cap,
-    risk_fast_weight=settings.risk_fast_weight,
-    risk_fast_cap=settings.risk_fast_cap,
-    risk_marker_miss_weight=settings.risk_marker_miss_weight,
-    risk_marker_miss_cap=settings.risk_marker_miss_cap,
-    risk_streak_weight=settings.risk_streak_weight,
-    risk_streak_cap=settings.risk_streak_cap,
-    risk_score_cap=settings.risk_score_cap,
-    risk_watch_floor=settings.risk_watch_floor,
-    risk_suspect_floor=settings.risk_suspect_floor,
-    risk_high_floor=settings.risk_high_floor,
-    reasoning_zero_risk_enabled=settings.reasoning_zero_risk_enabled,
-    reasoning_model_policies=tuple(settings.reasoning_model_policies),
-    media_input_observe_enabled=settings.media_input_observe_enabled,
-    request_audit_risk_enabled=settings.request_audit_risk_enabled,
-    risk_rule_overrides=tuple(settings.risk_rule_overrides),
-)
+thresholds = thresholds_from_settings(settings)
 
 database = Database(settings.database_path)
 account_repository = AccountRepository(database)

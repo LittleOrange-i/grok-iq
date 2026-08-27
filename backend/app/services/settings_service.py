@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.analyzer import Thresholds, risk_rule_definitions, risk_rule_enabled
+from app.analyzer import risk_rule_definitions, risk_rule_enabled, thresholds_from_settings
 from app.core.config import (
     DEFAULT_REGISTER_PROBE_PROFILE_IDS,
     REGISTER_PROBE_EXECUTION_MODE,
     REGISTER_PROBE_PROXY_TARGETS,
     Settings,
+    normalize_probe_tps_override_mode,
 )
 from app.persistence.settings_repository import SettingsRepository
 from app.services.runtime_settings_validator import RuntimeSettingsValidator
 
 REGISTER_FIXED_STRATEGY_MIGRATION_KEY = "register_probe_fixed_strategy_v2"
+PROBE_TPS_OVERRIDE_DEFAULT_MODE_KEY = "probe_tps_override_missing_reasoning_default_v1"
 INITIAL_ONBOARDING_COMPLETED_KEY = "initial_onboarding_completed_v1"
 RISK_RULE_SWITCH_FIELDS = {
     "reasoning_zero": "reasoning_zero_risk_enabled",
@@ -59,9 +61,29 @@ class RuntimeSettingsService:
             self.repository.mark_migration_applied(
                 REGISTER_FIXED_STRATEGY_MIGRATION_KEY
             )
+        if not self.repository.migration_applied(
+            PROBE_TPS_OVERRIDE_DEFAULT_MODE_KEY
+        ):
+            if "probe_tps_override_mode" not in overrides:
+                if overrides.get("probe_tps_override_enabled") is True:
+                    migrated = {
+                        "probe_tps_override_mode": "generation_window",
+                        "probe_tps_override_enabled": True,
+                    }
+                else:
+                    migrated = {
+                        "probe_tps_override_mode": "missing_reasoning",
+                        "probe_tps_override_enabled": True,
+                    }
+                overrides.update(migrated)
+                self.repository.save(migrated)
+            self.repository.mark_migration_applied(
+                PROBE_TPS_OVERRIDE_DEFAULT_MODE_KEY
+            )
         if not overrides:
             return
         synchronized = self._synchronize_risk_rule_switches(dict(overrides))
+        synchronized = self._synchronize_probe_tps_override(synchronized)
         if synchronized != overrides:
             self.repository.save(
                 {
@@ -81,6 +103,7 @@ class RuntimeSettingsService:
         if not changes:
             return []
         changes = self._synchronize_risk_rule_switches(changes)
+        changes = self._synchronize_probe_tps_override(changes)
         candidate = self._validate(self.settings.model_dump() | changes)
         normalized = {key: getattr(candidate, key) for key in changes}
         self.repository.save(normalized)
@@ -140,31 +163,42 @@ class RuntimeSettingsService:
             changes["risk_rule_overrides"] = overrides
         return changes
 
+    def _synchronize_probe_tps_override(
+        self,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        mode_present = "probe_tps_override_mode" in changes
+        enabled_present = "probe_tps_override_enabled" in changes
+        if not mode_present and not enabled_present:
+            return changes
+        if mode_present:
+            enabled = bool(
+                changes.get(
+                    "probe_tps_override_enabled",
+                    self.settings.probe_tps_override_enabled,
+                )
+            )
+            mode = normalize_probe_tps_override_mode(
+                str(changes.get("probe_tps_override_mode") or ""),
+                enabled=enabled,
+            )
+            changes["probe_tps_override_mode"] = mode
+            changes["probe_tps_override_enabled"] = mode != "off"
+            return changes
+        enabled = bool(changes.get("probe_tps_override_enabled", False))
+        changes["probe_tps_override_mode"] = (
+            "generation_window" if enabled else "off"
+        )
+        changes["probe_tps_override_enabled"] = enabled
+        return changes
+
     @classmethod
     def _validate(cls, values: dict[str, Any]) -> Settings:
         return cls._validator.validate(values, fixed_register_probe_strategy())
 
     def public_view(self) -> dict[str, Any]:
         s = self.settings
-        risk_thresholds = Thresholds(
-            degradation_tps=s.degradation_tps,
-            strong_degradation_tps=s.strong_degradation_tps,
-            probe_tps_override_enabled=s.probe_tps_override_enabled,
-            probe_tps_override_min_first_token_ms=(
-                s.probe_tps_override_min_first_token_ms
-            ),
-            probe_tps_override_max_generation_ms=(
-                s.probe_tps_override_max_generation_ms
-            ),
-            minimum_output_tokens=s.minimum_output_tokens,
-            buffer_first_token_share=s.buffer_first_token_share,
-            min_generation_ms=s.min_generation_ms,
-            reasoning_zero_risk_enabled=s.reasoning_zero_risk_enabled,
-            reasoning_model_policies=tuple(s.reasoning_model_policies),
-            media_input_observe_enabled=s.media_input_observe_enabled,
-            request_audit_risk_enabled=s.request_audit_risk_enabled,
-            risk_rule_overrides=tuple(s.risk_rule_overrides),
-        )
+        risk_thresholds = thresholds_from_settings(s)
         return {
             "grok2apiBaseUrl": s.grok2api_base_url,
             "grok2apiAdminUsername": s.grok2api_admin_username,
@@ -255,6 +289,7 @@ class RuntimeSettingsService:
             "degradationTps": s.degradation_tps,
             "strongDegradationTps": s.strong_degradation_tps,
             "probeTpsOverrideEnabled": s.probe_tps_override_enabled,
+            "probeTpsOverrideMode": s.probe_tps_override_mode,
             "probeTpsOverrideMinFirstTokenMs": (
                 s.probe_tps_override_min_first_token_ms
             ),

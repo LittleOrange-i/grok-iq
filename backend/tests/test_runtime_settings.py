@@ -153,8 +153,11 @@ def test_probe_tps_override_settings_are_persisted_and_exposed(tmp_path: Path):
         "probe_tps_override_enabled",
         "probe_tps_override_max_generation_ms",
         "probe_tps_override_min_first_token_ms",
+        "probe_tps_override_mode",
     ]
     assert settings.probe_tps_override_enabled is True
+    assert settings.probe_tps_override_mode == "generation_window"
+    assert service.public_view()["probeTpsOverrideMode"] == "generation_window"
     assert service.public_view()["probeTpsOverrideMinFirstTokenMs"] == 5000
     assert service.public_view()["probeTpsOverrideMaxGenerationMs"] == 500
 
@@ -165,6 +168,61 @@ def test_probe_tps_override_settings_are_persisted_and_exposed(tmp_path: Path):
     )
     reloaded.load()
     assert reloaded_settings.probe_tps_override_enabled is True
+    assert reloaded_settings.probe_tps_override_mode == "generation_window"
+
+
+def test_probe_tps_override_defaults_to_missing_reasoning(tmp_path: Path):
+    _, settings, service = build_service(tmp_path)
+
+    assert settings.probe_tps_override_mode == "missing_reasoning"
+    assert settings.probe_tps_override_enabled is True
+    assert service.public_view()["probeTpsOverrideMode"] == "missing_reasoning"
+    assert service.public_view()["probeTpsOverrideEnabled"] is True
+
+
+def test_existing_settings_without_mode_default_to_missing_reasoning(tmp_path: Path):
+    database, _settings, service = build_service(tmp_path)
+    service.repository.save({"probe_tps_override_enabled": False})
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+
+    assert reloaded_settings.probe_tps_override_mode == "missing_reasoning"
+    assert reloaded_settings.probe_tps_override_enabled is True
+
+
+def test_existing_enabled_override_without_mode_stays_generation_window(tmp_path: Path):
+    database, _settings, service = build_service(tmp_path)
+    service.repository.save({"probe_tps_override_enabled": True})
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+
+    assert reloaded_settings.probe_tps_override_mode == "generation_window"
+    assert reloaded_settings.probe_tps_override_enabled is True
+
+
+def test_probe_tps_override_modes_are_exclusive(tmp_path: Path):
+    _, settings, service = build_service(tmp_path)
+
+    changed = service.update({"probe_tps_override_mode": "missing_reasoning"})
+
+    assert "probe_tps_override_mode" in changed
+    assert settings.probe_tps_override_mode == "missing_reasoning"
+    assert settings.probe_tps_override_enabled is True
+    assert service.public_view()["probeTpsOverrideMode"] == "missing_reasoning"
+
+    service.update({"probe_tps_override_mode": "off"})
+    assert settings.probe_tps_override_mode == "off"
+    assert settings.probe_tps_override_enabled is False
 
 
 def test_quarantine_recovery_setting_is_persisted_and_exposed(tmp_path: Path):

@@ -18,6 +18,12 @@ REGISTER_PROBE_ROUNDS = 3
 REGISTER_PROBE_PROXY_TARGETS = [{"kind": "current", "id": None}]
 
 AutoIsolationMinStatus = Literal["watch", "suspect", "high_risk"]
+ProbeTpsOverrideMode = Literal["off", "generation_window", "missing_reasoning"]
+PROBE_TPS_OVERRIDE_MODES: tuple[ProbeTpsOverrideMode, ...] = (
+    "off",
+    "generation_window",
+    "missing_reasoning",
+)
 AUTO_ISOLATION_STATUS_ORDER: tuple[AutoIsolationMinStatus, ...] = (
     "watch",
     "suspect",
@@ -47,6 +53,17 @@ def should_auto_isolate(
         order[DEFAULT_AUTO_ISOLATION_MIN_STATUS],
     )
     return status_rank is not None and status_rank >= min_rank
+
+
+def normalize_probe_tps_override_mode(
+    mode: str | None,
+    *,
+    enabled: bool | None = None,
+) -> ProbeTpsOverrideMode:
+    value = str(mode or "").strip()
+    if value in PROBE_TPS_OVERRIDE_MODES:
+        return value  # type: ignore[return-value]
+    return "generation_window" if enabled else "off"
 
 
 class Settings(BaseSettings):
@@ -183,7 +200,8 @@ class Settings(BaseSettings):
     analysis_window_hours: int = Field(default=168, ge=1, le=24 * 365)
     degradation_tps: float = Field(default=150, gt=0)
     strong_degradation_tps: float = Field(default=500, gt=0)
-    probe_tps_override_enabled: bool = False
+    probe_tps_override_enabled: bool = True
+    probe_tps_override_mode: ProbeTpsOverrideMode = "missing_reasoning"
     probe_tps_override_min_first_token_ms: int = Field(
         default=5000, ge=0, le=600_000
     )
@@ -280,6 +298,7 @@ class Settings(BaseSettings):
         "degradation_tps",
         "strong_degradation_tps",
         "probe_tps_override_enabled",
+        "probe_tps_override_mode",
         "probe_tps_override_min_first_token_ms",
         "probe_tps_override_max_generation_ms",
         "consecutive_anomalies",

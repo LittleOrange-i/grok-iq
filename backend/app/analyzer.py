@@ -314,6 +314,7 @@ class Thresholds:
     degradation_tps: float = 150
     strong_degradation_tps: float = 500
     probe_tps_override_enabled: bool = False
+    probe_tps_override_mode: str = ""
     probe_tps_override_min_first_token_ms: int = 5000
     probe_tps_override_max_generation_ms: int = 1000
     minimum_output_tokens: int = 32
@@ -408,6 +409,8 @@ class SampleMetrics:
     # When available, use grok2api's server-side TPS instead of reconstructing
     # it from locally observed stream timing.
     measured_tps: float | None = None
+    # True/False when the probe stream is known; None for request-audit rows.
+    has_reasoning_text: bool | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -825,6 +828,22 @@ def aggregate_rule_reasons(
     return reasons
 
 
+def thresholds_from_settings(settings: Any) -> Thresholds:
+    values: dict[str, Any] = {}
+    for field_name, field_info in Thresholds.__dataclass_fields__.items():
+        if not field_info.init or not hasattr(settings, field_name):
+            continue
+        values[field_name] = getattr(settings, field_name)
+    return Thresholds(**values)
+
+
+def probe_tps_override_mode(thresholds: Thresholds) -> str:
+    mode = str(getattr(thresholds, "probe_tps_override_mode", "") or "").strip()
+    if mode in {"generation_window", "missing_reasoning", "off"}:
+        return mode
+    return "generation_window" if thresholds.probe_tps_override_enabled else "off"
+
+
 def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classification:
     upstream_tps = 0.0
     if sample.first_token_ms is None:
@@ -849,6 +868,7 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             generation_ms=generation_ms,
             upstream_tps=upstream_tps,
             thresholds=thresholds,
+            has_reasoning_text=sample.has_reasoning_text,
         )
         first_token_share = (
             sample.first_token_ms / sample.duration_ms
@@ -909,6 +929,7 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
         classification,
         upstream_tps=upstream_tps,
         generation_ms=generation_ms,
+        thresholds=thresholds,
     )
 
 
@@ -926,12 +947,13 @@ def effective_probe_tps(
     generation_ms: int,
     upstream_tps: float,
     thresholds: Thresholds,
+    has_reasoning_text: bool | None = None,
 ) -> float:
     """Return TPS used for probe/audit risk.
 
     grok2api deflates flush rows to output / duration when the generation
     tail is under 1000ms. That hides the burst the operator actually sees.
-    When the override matches, grok-iq restores output / generation window.
+    When a selected clue matches, grok-iq restores output / generation window.
     """
     if not should_override_probe_tps(
         output_tokens=output_tokens,
@@ -939,6 +961,7 @@ def effective_probe_tps(
         first_token_ms=first_token_ms,
         generation_ms=generation_ms,
         thresholds=thresholds,
+        has_reasoning_text=has_reasoning_text,
     ):
         return upstream_tps
     return generation_window_tps(output_tokens, generation_ms)
@@ -951,14 +974,17 @@ def should_override_probe_tps(
     first_token_ms: int | None,
     generation_ms: int,
     thresholds: Thresholds,
+    has_reasoning_text: bool | None = None,
 ) -> bool:
+    mode = probe_tps_override_mode(thresholds)
+    if mode == "off" or output_tokens <= 0 or generation_ms <= 0:
+        return False
+    if mode == "missing_reasoning":
+        return reasoning_tokens > 0 and has_reasoning_text is False
     if not (
-        thresholds.probe_tps_override_enabled
-        and output_tokens > 0
-        and reasoning_tokens > 0
+        reasoning_tokens > 0
         and first_token_ms is not None
         and first_token_ms >= thresholds.probe_tps_override_min_first_token_ms
-        and generation_ms > 0
     ):
         return False
     if generation_ms <= thresholds.probe_tps_override_max_generation_ms:
@@ -972,14 +998,21 @@ def should_override_probe_tps(
 
 def _override_tps_reason(
     *,
+    mode: str,
     upstream_tps: float,
     generation_ms: int,
     tps: float,
 ) -> str | None:
     if abs(upstream_tps - tps) <= 0.01:
         return None
+    if mode == "missing_reasoning":
+        return (
+            "缺失思考正文 TPS 重算："
+            f"上游上报了推理 Token 但没有思考正文，按 {generation_ms}ms "
+            f"生成窗口从 {upstream_tps:.1f} 重算为 {tps:.1f}"
+        )
     return (
-        "推理突发 TPS 覆盖："
+        "短窗口 TPS 重算："
         f"上游 {upstream_tps:.1f} 被压成全程均速，按 {generation_ms}ms "
         f"生成窗口重算为 {tps:.1f}"
     )
@@ -990,8 +1023,10 @@ def _with_override_tps_reason(
     *,
     upstream_tps: float,
     generation_ms: int,
+    thresholds: Thresholds,
 ) -> Classification:
     reason = _override_tps_reason(
+        mode=probe_tps_override_mode(thresholds),
         upstream_tps=upstream_tps,
         generation_ms=generation_ms,
         tps=classification.tps,
@@ -1037,6 +1072,10 @@ def classify_audit_sample(
             or generation_ms < thresholds.min_generation_ms
         )
     )
+    extra_values = extra or {}
+    has_reasoning_text = extra_values.get("has_reasoning_text")
+    if not isinstance(has_reasoning_text, bool):
+        has_reasoning_text = None
     effective_tps = effective_probe_tps(
         output_tokens=max(0, int(output_tokens or 0)),
         reasoning_tokens=max(0, int(reasoning_tokens or 0)),
@@ -1044,6 +1083,7 @@ def classify_audit_sample(
         generation_ms=generation_ms,
         upstream_tps=measured_tps,
         thresholds=thresholds,
+        has_reasoning_text=has_reasoning_text,
     )
     context = RuleContext(
         status_code=int(status_code or 0),
@@ -1117,6 +1157,7 @@ def classify_audit_sample(
         classification,
         upstream_tps=measured_tps,
         generation_ms=generation_ms,
+        thresholds=thresholds,
     )
 
 

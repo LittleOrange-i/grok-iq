@@ -161,7 +161,7 @@ def test_reasoning_burst_override_restores_generation_window_tps():
 
     assert result.tps == 1433 * 1000 / 500
     assert result.name == "buffered_hard"
-    assert any("推理突发 TPS 覆盖" in reason for reason in result.reasons)
+    assert any("短窗口 TPS 重算" in reason for reason in result.reasons)
 
 
 def test_reasoning_burst_override_catches_window_between_max_and_grok2api_cliff():
@@ -180,7 +180,7 @@ def test_reasoning_burst_override_catches_window_between_max_and_grok2api_cliff(
 
     assert result.tps == 1234 * 1000 / 877
     assert result.name == "buffered_hard"
-    assert any("推理突发 TPS 覆盖" in reason for reason in result.reasons)
+    assert any("短窗口 TPS 重算" in reason for reason in result.reasons)
 
 
 def test_reasoning_burst_override_keeps_already_high_generation_window_tps():
@@ -264,6 +264,87 @@ def test_audit_reasoning_burst_override_flags_deflated_upstream_tps():
 
     assert result.tps == 1834 * 1000 / 767
     assert result.name == "high"
+
+
+def test_missing_reasoning_override_restores_generation_window_without_first_token_gate():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=1085,
+            reasoning_tokens=1013,
+            first_token_ms=3000,
+            duration_ms=3400,
+            egress_key="node:34",
+            measured_tps=60.2,
+            has_reasoning_text=False,
+        ),
+        Thresholds(
+            probe_tps_override_enabled=True,
+            probe_tps_override_mode="missing_reasoning",
+            probe_tps_override_min_first_token_ms=5000,
+            probe_tps_override_max_generation_ms=1000,
+        ),
+    )
+
+    assert result.tps == 1085 * 1000 / 400
+    assert any("缺失思考正文 TPS 重算" in reason for reason in result.reasons)
+
+
+def test_missing_reasoning_override_keeps_upstream_tps_when_thinking_text_exists():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=1085,
+            reasoning_tokens=1013,
+            first_token_ms=3000,
+            duration_ms=3400,
+            egress_key="node:34",
+            measured_tps=60.2,
+            has_reasoning_text=True,
+        ),
+        Thresholds(
+            probe_tps_override_enabled=True,
+            probe_tps_override_mode="missing_reasoning",
+        ),
+    )
+
+    assert result.tps == 60.2
+    assert all("缺失思考正文 TPS 重算" not in reason for reason in result.reasons)
+
+
+def test_missing_reasoning_override_skips_audit_rows_without_stream_text():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=1834,
+        reasoning_tokens=1782,
+        first_token_ms=24_540,
+        duration_ms=25_307,
+        tps=72.47,
+        thresholds=Thresholds(
+            probe_tps_override_enabled=True,
+            probe_tps_override_mode="missing_reasoning",
+        ),
+    )
+
+    assert result.tps == 72.47
+
+
+def test_generation_window_mode_ignores_missing_reasoning_text():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=1085,
+            reasoning_tokens=1013,
+            first_token_ms=3000,
+            duration_ms=3400,
+            egress_key="node:34",
+            measured_tps=60.2,
+            has_reasoning_text=False,
+        ),
+        _flush_thresholds(),
+    )
+
+    assert result.tps == 60.2
 
 
 def test_classifies_delayed_burst_as_buffered_hard():

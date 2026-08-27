@@ -1180,6 +1180,10 @@ export type ReasoningModelPolicy = {
 }
 
 export type AutoIsolationMinStatus = 'watch' | 'suspect' | 'high_risk'
+export type ProbeTpsOverrideMode =
+  | 'off'
+  | 'generation_window'
+  | 'missing_reasoning'
 
 export type RuntimeSettings = {
   grok2apiBaseUrl: string
@@ -1243,6 +1247,7 @@ export type RuntimeSettings = {
   degradationTps: number
   strongDegradationTps: number
   probeTpsOverrideEnabled: boolean
+  probeTpsOverrideMode: ProbeTpsOverrideMode
   probeTpsOverrideMinFirstTokenMs: number
   probeTpsOverrideMaxGenerationMs: number
   consecutiveAnomalies: number
@@ -1350,6 +1355,7 @@ export type RuntimeSettingsUpdate = Partial<
     | 'degradationTps'
     | 'strongDegradationTps'
     | 'probeTpsOverrideEnabled'
+    | 'probeTpsOverrideMode'
     | 'probeTpsOverrideMinFirstTokenMs'
     | 'probeTpsOverrideMaxGenerationMs'
     | 'consecutiveAnomalies'
@@ -1390,6 +1396,7 @@ type RuntimeSettingsWire = Omit<
   | 'degradationTps'
   | 'strongDegradationTps'
   | 'probeTpsOverrideEnabled'
+  | 'probeTpsOverrideMode'
   | 'probeTpsOverrideMinFirstTokenMs'
   | 'probeTpsOverrideMaxGenerationMs'
   | 'cumulativeAnomalyRate'
@@ -1448,6 +1455,7 @@ type RuntimeSettingsWire = Omit<
   degradationTps?: number
   strongDegradationTps?: number
   probeTpsOverrideEnabled?: boolean
+  probeTpsOverrideMode?: ProbeTpsOverrideMode
   probeTpsOverrideMinFirstTokenMs?: number
   probeTpsOverrideMaxGenerationMs?: number
   cumulativeAnomalyRate?: number
@@ -1513,6 +1521,22 @@ function normalizeAutoIsolationMinStatus(
   return value === 'watch' || value === 'suspect' || value === 'high_risk'
     ? value
     : 'high_risk'
+}
+
+function normalizeProbeTpsOverrideMode(
+  value: unknown,
+  enabled?: boolean
+): ProbeTpsOverrideMode {
+  if (
+    value === 'off' ||
+    value === 'generation_window' ||
+    value === 'missing_reasoning'
+  ) {
+    return value
+  }
+  if (enabled === true) return 'generation_window'
+  if (enabled === false) return 'off'
+  return 'missing_reasoning'
 }
 
 function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
@@ -1638,7 +1662,15 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     wechatTemplateId: value.wechatTemplateId ?? '',
     degradationTps: value.degradationTps ?? value.softTps ?? 150,
     strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 500,
-    probeTpsOverrideEnabled: value.probeTpsOverrideEnabled ?? false,
+    probeTpsOverrideMode: normalizeProbeTpsOverrideMode(
+      value.probeTpsOverrideMode,
+      value.probeTpsOverrideEnabled
+    ),
+    probeTpsOverrideEnabled:
+      normalizeProbeTpsOverrideMode(
+        value.probeTpsOverrideMode,
+        value.probeTpsOverrideEnabled
+      ) !== 'off',
     probeTpsOverrideMinFirstTokenMs:
       value.probeTpsOverrideMinFirstTokenMs ?? 5000,
     probeTpsOverrideMaxGenerationMs:

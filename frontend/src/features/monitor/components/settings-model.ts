@@ -2,6 +2,7 @@ import type {
   AutoIsolationMinStatus,
   EditableRuntimeSettings,
   ExecutionMode,
+  ProbeTpsOverrideMode,
   ProxyTarget,
   RuntimeSettings,
   RuntimeSettingsUpdate,
@@ -64,6 +65,7 @@ export type SettingsForm = {
   degradationTps: number
   strongDegradationTps: number
   probeTpsOverrideEnabled: boolean
+  probeTpsOverrideMode: ProbeTpsOverrideMode
   probeTpsOverrideMinFirstTokenMs: number
   probeTpsOverrideMaxGenerationMs: number
   consecutiveAnomalies: number
@@ -121,6 +123,22 @@ export function autoIsolationMinStatusLabel(
     AUTO_ISOLATION_MIN_STATUS_OPTIONS.find((item) => item.value === status)
       ?.label ?? '高风险'
   )
+}
+
+export function normalizeProbeTpsOverrideMode(
+  value: unknown,
+  enabled?: boolean
+): ProbeTpsOverrideMode {
+  if (
+    value === 'off' ||
+    value === 'generation_window' ||
+    value === 'missing_reasoning'
+  ) {
+    return value
+  }
+  if (enabled === true) return 'generation_window'
+  if (enabled === false) return 'off'
+  return 'missing_reasoning'
 }
 
 export type SettingsSetter = <K extends keyof SettingsForm>(
@@ -306,7 +324,15 @@ export function toSettingsForm(
     analysisWindowHours: settings.analysisWindowHours,
     degradationTps: settings.degradationTps,
     strongDegradationTps: settings.strongDegradationTps,
-    probeTpsOverrideEnabled: settings.probeTpsOverrideEnabled ?? false,
+    probeTpsOverrideEnabled:
+      normalizeProbeTpsOverrideMode(
+        settings.probeTpsOverrideMode,
+        settings.probeTpsOverrideEnabled
+      ) !== 'off',
+    probeTpsOverrideMode: normalizeProbeTpsOverrideMode(
+      settings.probeTpsOverrideMode,
+      settings.probeTpsOverrideEnabled
+    ),
     probeTpsOverrideMinFirstTokenMs:
       settings.probeTpsOverrideMinFirstTokenMs ?? 5000,
     probeTpsOverrideMaxGenerationMs:
@@ -403,7 +429,8 @@ export function buildSettingsPayload(
     analysisWindowHours: form.analysisWindowHours,
     degradationTps: form.degradationTps,
     strongDegradationTps: form.strongDegradationTps,
-    probeTpsOverrideEnabled: form.probeTpsOverrideEnabled,
+    probeTpsOverrideEnabled: form.probeTpsOverrideMode !== 'off',
+    probeTpsOverrideMode: form.probeTpsOverrideMode,
     probeTpsOverrideMinFirstTokenMs: form.probeTpsOverrideMinFirstTokenMs,
     probeTpsOverrideMaxGenerationMs: form.probeTpsOverrideMaxGenerationMs,
     consecutiveAnomalies: form.consecutiveAnomalies,

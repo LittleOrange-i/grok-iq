@@ -392,6 +392,7 @@ class ProbeRunExecutor:
                 ),
                 reasoning_tokens_reported=result.reasoning_tokens_reported,
                 measured_tps=result.tps,
+                has_reasoning_text=bool(str(result.reasoning_text or "").strip()),
             ),
             manager.thresholds,
         )

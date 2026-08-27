@@ -18,6 +18,7 @@ from app.analyzer import (
     risk_rule_definitions,
     risk_rule_enabled,
     rule_candidate_min_count,
+    thresholds_from_settings,
 )
 from app.core.clock import APP_TIMEZONE, app_now, ensure_utc, to_app_timezone, utc_now
 from app.core.config import Settings
@@ -256,6 +257,10 @@ class RequestAuditService:
             ),
             self.settings.media_input_observe_enabled,
             self.settings.request_audit_risk_enabled,
+            self.settings.probe_tps_override_enabled,
+            self.settings.probe_tps_override_mode,
+            self.settings.probe_tps_override_min_first_token_ms,
+            self.settings.probe_tps_override_max_generation_ms,
             overrides_key,
         )
         if (
@@ -263,18 +268,7 @@ class RequestAuditService:
             and cache_key == self._rule_thresholds_cache_key
         ):
             return self._rule_thresholds_cache
-        value = Thresholds(
-            degradation_tps=self.settings.degradation_tps,
-            strong_degradation_tps=self.settings.strong_degradation_tps,
-            minimum_output_tokens=self.settings.minimum_output_tokens,
-            buffer_first_token_share=self.settings.buffer_first_token_share,
-            min_generation_ms=self.settings.min_generation_ms,
-            reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
-            reasoning_model_policies=tuple(self.settings.reasoning_model_policies),
-            media_input_observe_enabled=self.settings.media_input_observe_enabled,
-            request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
-            risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
-        )
+        value = thresholds_from_settings(self.settings)
         self._rule_thresholds_cache_key = cache_key
         self._rule_thresholds_cache = value
         return value

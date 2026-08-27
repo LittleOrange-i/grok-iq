@@ -489,6 +489,9 @@ class RuntimeSettingsInput(BaseModel):
     probe_tps_override_enabled: bool | None = Field(
         default=None, alias="probeTpsOverrideEnabled"
     )
+    probe_tps_override_mode: Literal[
+        "off", "generation_window", "missing_reasoning"
+    ] | None = Field(default=None, alias="probeTpsOverrideMode")
     probe_tps_override_min_first_token_ms: int | None = Field(
         default=None,
         alias="probeTpsOverrideMinFirstTokenMs",

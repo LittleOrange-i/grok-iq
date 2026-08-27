@@ -329,6 +329,9 @@ class AccountRepository:
                             if sample.upstream_tps is not None
                             else sample.tps
                         ),
+                        has_reasoning_text=bool(
+                            str(getattr(sample, "reasoning_text", "") or "").strip()
+                        ),
                     ),
                     thresholds,
                 )

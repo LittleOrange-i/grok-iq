@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import psutil
 
-from app.analyzer import Thresholds
+from app.analyzer import Thresholds, thresholds_from_settings
 from app.core.clock import account_created_at, app_isoformat, utc_now
 from app.core.config import Settings, should_auto_isolate
 from app.core.logging import (
@@ -143,41 +143,7 @@ class ProbeManager:
     async def reconfigure(self) -> None:
         """Hot-apply thresholds and resize the bounded worker pool."""
 
-        self.thresholds = Thresholds(
-            degradation_tps=self.settings.degradation_tps,
-            strong_degradation_tps=self.settings.strong_degradation_tps,
-            probe_tps_override_enabled=self.settings.probe_tps_override_enabled,
-            probe_tps_override_min_first_token_ms=(
-                self.settings.probe_tps_override_min_first_token_ms
-            ),
-            probe_tps_override_max_generation_ms=(
-                self.settings.probe_tps_override_max_generation_ms
-            ),
-            minimum_output_tokens=self.settings.minimum_output_tokens,
-            buffer_first_token_share=self.settings.buffer_first_token_share,
-            min_generation_ms=self.settings.min_generation_ms,
-            consecutive_anomalies=self.settings.consecutive_anomalies,
-            cumulative_anomaly_rate=self.settings.cumulative_anomaly_rate,
-            high_risk_hard_count=self.settings.high_risk_hard_count,
-            risk_anomaly_rate_weight=self.settings.risk_anomaly_rate_weight,
-            risk_hard_weight=self.settings.risk_hard_weight,
-            risk_hard_cap=self.settings.risk_hard_cap,
-            risk_fast_weight=self.settings.risk_fast_weight,
-            risk_fast_cap=self.settings.risk_fast_cap,
-            risk_marker_miss_weight=self.settings.risk_marker_miss_weight,
-            risk_marker_miss_cap=self.settings.risk_marker_miss_cap,
-            risk_streak_weight=self.settings.risk_streak_weight,
-            risk_streak_cap=self.settings.risk_streak_cap,
-            risk_score_cap=self.settings.risk_score_cap,
-            risk_watch_floor=self.settings.risk_watch_floor,
-            risk_suspect_floor=self.settings.risk_suspect_floor,
-            risk_high_floor=self.settings.risk_high_floor,
-            reasoning_zero_risk_enabled=self.settings.reasoning_zero_risk_enabled,
-            reasoning_model_policies=tuple(self.settings.reasoning_model_policies),
-            media_input_observe_enabled=self.settings.media_input_observe_enabled,
-            request_audit_risk_enabled=self.settings.request_audit_risk_enabled,
-            risk_rule_overrides=tuple(self.settings.risk_rule_overrides),
-        )
+        self.thresholds = thresholds_from_settings(self.settings)
         self._desired_worker_concurrency = self.settings.probe_worker_concurrency
         if not self._started:
             return
