@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     analysis_window_hours: int = Field(default=168, ge=1, le=24 * 365)
     degradation_tps: float = Field(default=150, gt=0)
     strong_degradation_tps: float = Field(default=500, gt=0)
+    probe_tps_override_enabled: bool = False
+    probe_tps_override_min_first_token_ms: int = Field(
+        default=5000, ge=0, le=600_000
+    )
+    probe_tps_override_max_generation_ms: int = Field(
+        default=500, ge=1, le=60_000
+    )
     consecutive_anomalies: int = Field(default=3, ge=2, le=20)
     cumulative_anomaly_rate: float = Field(default=0.5, ge=0.01, le=1)
     high_risk_hard_count: int = Field(default=2, ge=1, le=100)
@@ -272,6 +279,9 @@ class Settings(BaseSettings):
         "analysis_window_hours",
         "degradation_tps",
         "strong_degradation_tps",
+        "probe_tps_override_enabled",
+        "probe_tps_override_min_first_token_ms",
+        "probe_tps_override_max_generation_ms",
         "consecutive_anomalies",
         "cumulative_anomaly_rate",
         "high_risk_hard_count",

@@ -2504,7 +2504,14 @@ function SampleCard({
         )}
       </div>
       <div className='grid gap-3 border-b bg-muted/15 p-4 sm:grid-cols-3 lg:grid-cols-6'>
-        <Metric label='TPS' value={formatNumber(sample.tps)} />
+        <Metric label='判定 TPS' value={formatNumber(sample.tps)} />
+        {sample.upstream_tps != null &&
+          Math.abs(sample.upstream_tps - sample.tps) > 0.01 && (
+            <Metric
+              label='上游 TPS'
+              value={formatNumber(sample.upstream_tps)}
+            />
+          )}
         <Metric label='首 Token' value={`${sample.first_token_ms} ms`} />
         <Metric label='总耗时' value={`${sample.duration_ms} ms`} />
         <Metric label='生成窗口' value={`${sample.generation_ms} ms`} />

@@ -324,7 +324,11 @@ class AccountRepository:
                         reasoning_tokens_reported=bool(
                             sample.reasoning_tokens_reported
                         ),
-                        measured_tps=sample.tps,
+                        measured_tps=(
+                            sample.upstream_tps
+                            if sample.upstream_tps is not None
+                            else sample.tps
+                        ),
                     ),
                     thresholds,
                 )
@@ -438,6 +442,9 @@ class AccountRepository:
                             ),
                         )
                 sample.classification = classified.name
+                if sample.upstream_tps is None:
+                    sample.upstream_tps = sample.tps
+                sample.tps = classified.tps
                 sample.risk_rule_id = classified.rule_id
                 sample.risk_rule_ids = list(classified.rule_ids)
                 sample.risk_reasons = list(classified.reasons)

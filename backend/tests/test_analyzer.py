@@ -134,6 +134,64 @@ def test_authoritative_upstream_tps_is_used_for_probe_classification():
     assert result.hard is False
 
 
+def test_reasoning_burst_override_recomputes_probe_tps_when_all_conditions_match():
+    result = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=915,
+            reasoning_tokens=890,
+            first_token_ms=11_495,
+            duration_ms=11_716,
+            egress_key="node:38",
+            measured_tps=78.0983,
+        ),
+        Thresholds(
+            probe_tps_override_enabled=True,
+            probe_tps_override_min_first_token_ms=5000,
+            probe_tps_override_max_generation_ms=500,
+        ),
+    )
+
+    assert result.tps == 915 * 1000 / 221
+    assert result.name == "buffered_hard"
+    assert any("推理突发 TPS 覆盖" in reason for reason in result.reasons)
+
+
+def test_reasoning_burst_override_requires_every_condition():
+    thresholds = Thresholds(
+        probe_tps_override_enabled=True,
+        probe_tps_override_min_first_token_ms=5000,
+        probe_tps_override_max_generation_ms=500,
+    )
+    no_reasoning = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=915,
+            reasoning_tokens=0,
+            first_token_ms=11_495,
+            duration_ms=11_716,
+            egress_key="node:38",
+            measured_tps=78.0983,
+        ),
+        thresholds,
+    )
+    long_generation = classify_sample(
+        SampleMetrics(
+            status_code=200,
+            output_tokens=915,
+            reasoning_tokens=890,
+            first_token_ms=11_495,
+            duration_ms=12_495,
+            egress_key="node:38",
+            measured_tps=78.0983,
+        ),
+        thresholds,
+    )
+
+    assert no_reasoning.tps == 78.0983
+    assert long_generation.tps == 78.0983
+
+
 def test_classifies_delayed_burst_as_buffered_hard():
     result = classify_sample(
         SampleMetrics(

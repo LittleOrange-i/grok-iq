@@ -63,6 +63,9 @@ export type SettingsForm = {
   analysisWindowHours: number
   degradationTps: number
   strongDegradationTps: number
+  probeTpsOverrideEnabled: boolean
+  probeTpsOverrideMinFirstTokenMs: number
+  probeTpsOverrideMaxGenerationMs: number
   consecutiveAnomalies: number
   cumulativeAnomalyRate: number
   highRiskHardCount: number
@@ -303,6 +306,11 @@ export function toSettingsForm(
     analysisWindowHours: settings.analysisWindowHours,
     degradationTps: settings.degradationTps,
     strongDegradationTps: settings.strongDegradationTps,
+    probeTpsOverrideEnabled: settings.probeTpsOverrideEnabled ?? false,
+    probeTpsOverrideMinFirstTokenMs:
+      settings.probeTpsOverrideMinFirstTokenMs ?? 5000,
+    probeTpsOverrideMaxGenerationMs:
+      settings.probeTpsOverrideMaxGenerationMs ?? 500,
     consecutiveAnomalies: settings.consecutiveAnomalies,
     cumulativeAnomalyRate: settings.cumulativeAnomalyRate,
     highRiskHardCount: settings.highRiskHardCount,
@@ -395,6 +403,9 @@ export function buildSettingsPayload(
     analysisWindowHours: form.analysisWindowHours,
     degradationTps: form.degradationTps,
     strongDegradationTps: form.strongDegradationTps,
+    probeTpsOverrideEnabled: form.probeTpsOverrideEnabled,
+    probeTpsOverrideMinFirstTokenMs: form.probeTpsOverrideMinFirstTokenMs,
+    probeTpsOverrideMaxGenerationMs: form.probeTpsOverrideMaxGenerationMs,
     consecutiveAnomalies: form.consecutiveAnomalies,
     cumulativeAnomalyRate: form.cumulativeAnomalyRate,
     highRiskHardCount: form.highRiskHardCount,

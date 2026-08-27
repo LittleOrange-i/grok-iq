@@ -40,6 +40,9 @@ probe_log_path = configure_logging(settings.database_path)
 thresholds = Thresholds(
     degradation_tps=settings.degradation_tps,
     strong_degradation_tps=settings.strong_degradation_tps,
+    probe_tps_override_enabled=settings.probe_tps_override_enabled,
+    probe_tps_override_min_first_token_ms=settings.probe_tps_override_min_first_token_ms,
+    probe_tps_override_max_generation_ms=settings.probe_tps_override_max_generation_ms,
     minimum_output_tokens=settings.minimum_output_tokens,
     buffer_first_token_share=settings.buffer_first_token_share,
     min_generation_ms=settings.min_generation_ms,
@@ -154,6 +157,7 @@ async def lifespan(_: FastAPI):
     grok_client.reset_credentials()
     await probe_manager.reconfigure()
     probe_repository.reconcile_sample_metrics_from_request_audits()
+    probe_repository.backfill_probe_upstream_tps()
     # Recompute classifications even when audit metrics were already copied.
     # Older samples can retain a classification produced from the local stream
     # clock, while their persisted TPS now reflects grok2api's authoritative
@@ -162,6 +166,7 @@ async def lifespan(_: FastAPI):
         probe_manager.thresholds,
         settings.analysis_window_hours,
     )
+    probe_repository.refresh_all_run_summaries()
     account_repository.migrate_fixed_egress_risk_formula(
         probe_manager.thresholds,
         settings.analysis_window_hours,

@@ -295,6 +295,7 @@ class ProbeSample(Base):
     generation_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     first_token_share: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     tps: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    upstream_tps: Mapped[float | None] = mapped_column(Float)
     expected_matched: Mapped[bool | None] = mapped_column(Boolean)
     response_sha256: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     response_text: Mapped[str] = mapped_column(Text, default="", nullable=False)

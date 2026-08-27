@@ -169,7 +169,8 @@ class ProbeRepository:
                         sample.duration_ms != audit.duration_ms,
                         sample.generation_ms
                         != max(0, audit.duration_ms - (audit.first_token_ms or 0)),
-                        abs(float(sample.tps or 0) - tps) > 1e-9,
+                        sample.upstream_tps is None
+                        or abs(float(sample.upstream_tps or 0) - tps) > 1e-9,
                     )
                 )
                 if not changed:
@@ -189,9 +190,20 @@ class ProbeRepository:
                     if sample.duration_ms > 0
                     else 0.0
                 )
+                sample.upstream_tps = tps
                 sample.tps = tps
                 updated += 1
         return updated
+
+    def backfill_probe_upstream_tps(self) -> int:
+        """Preserve legacy probe TPS before the override feature rewrites it."""
+        with self.database.transaction() as session:
+            samples = session.scalars(
+                select(ProbeSample).where(ProbeSample.upstream_tps.is_(None))
+            ).all()
+            for sample in samples:
+                sample.upstream_tps = sample.tps
+            return len(samples)
 
     def seed_defaults(self) -> None:
         with self.database.transaction() as session:
@@ -1038,6 +1050,13 @@ class ProbeRepository:
             )
         ).all()
         run.summary = self._build_run_summary(run, sample_values)
+
+    def refresh_all_run_summaries(self) -> int:
+        with self.database.transaction() as session:
+            runs = session.scalars(select(ProbeRun)).all()
+            for run in runs:
+                self._refresh_run_summary(session, run)
+            return len(runs)
 
     def finish_run(
         self, run_id: str, status: str | None = None, error: str = ""

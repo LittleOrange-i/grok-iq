@@ -58,6 +58,9 @@ def build_settings_router(
             "analysis_window_hours",
             "degradation_tps",
             "strong_degradation_tps",
+            "probe_tps_override_enabled",
+            "probe_tps_override_min_first_token_ms",
+            "probe_tps_override_max_generation_ms",
             "consecutive_anomalies",
             "cumulative_anomaly_rate",
             "high_risk_hard_count",
@@ -87,6 +90,7 @@ def build_settings_router(
                 probes.thresholds,
                 settings.analysis_window_hours,
             )
+            probes.repository.refresh_all_run_summaries()
         await scheduler.reconfigure()
         return {**runtime_settings.public_view(), "changed": changed}
 

@@ -148,6 +148,10 @@ COMPATIBILITY_COLUMNS = {
             "ALTER TABLE probe_samples ADD COLUMN reasoning_tokens_reported "
             "BOOLEAN NOT NULL DEFAULT 0",
         ),
+        (
+            "upstream_tps",
+            "ALTER TABLE probe_samples ADD COLUMN upstream_tps FLOAT",
+        ),
     ],
     "sso_reports": [
         (

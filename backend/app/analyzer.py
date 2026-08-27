@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
@@ -313,6 +313,9 @@ def _sorted_rules(
 class Thresholds:
     degradation_tps: float = 150
     strong_degradation_tps: float = 500
+    probe_tps_override_enabled: bool = False
+    probe_tps_override_min_first_token_ms: int = 5000
+    probe_tps_override_max_generation_ms: int = 500
     minimum_output_tokens: int = 32
     buffer_first_token_share: float = 0.85
     min_generation_ms: int = 250
@@ -829,7 +832,7 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
         first_token_share = 0.0
     else:
         generation_ms = sample.duration_ms - sample.first_token_ms
-        tps = (
+        upstream_tps = (
             float(sample.measured_tps)
             if sample.measured_tps is not None
             else (
@@ -837,6 +840,14 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
                 if sample.output_tokens > 0 and generation_ms > 0
                 else 0.0
             )
+        )
+        tps = effective_probe_tps(
+            output_tokens=sample.output_tokens,
+            reasoning_tokens=sample.reasoning_tokens,
+            first_token_ms=sample.first_token_ms,
+            generation_ms=generation_ms,
+            upstream_tps=upstream_tps,
+            thresholds=thresholds,
         )
         first_token_share = (
             sample.first_token_ms / sample.duration_ms
@@ -884,13 +895,81 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             buffered,
         )
     rule, match = evaluated
-    return _match_classification(
+    classification = _match_classification(
         rule=rule,
         match=match,
         tps=tps,
         generation_ms=generation_ms,
         first_token_share=first_token_share,
         buffered=buffered,
+    )
+    if should_override_probe_tps(
+        output_tokens=sample.output_tokens,
+        reasoning_tokens=sample.reasoning_tokens,
+        first_token_ms=sample.first_token_ms,
+        generation_ms=generation_ms,
+        thresholds=thresholds,
+    ):
+        classification = replace(
+            classification,
+            reasons=tuple(
+                dict.fromkeys(
+                    (
+                        *classification.reasons,
+                        "推理突发 TPS 覆盖："
+                        f"上游 {upstream_tps:.1f}，按 {generation_ms}ms "
+                        f"生成窗口重算为 {tps:.1f}",
+                    )
+                )
+            ),
+        )
+    return classification
+
+
+def effective_probe_tps(
+    *,
+    output_tokens: int,
+    reasoning_tokens: int,
+    first_token_ms: int | None,
+    generation_ms: int,
+    upstream_tps: float,
+    thresholds: Thresholds,
+) -> float:
+    """Return the probe TPS, optionally correcting buffered reasoning bursts.
+
+    The override deliberately requires every signal: the feature is enabled,
+    reasoning tokens are present, first-token latency reaches the configured
+    floor, and the post-first-token generation window stays below its ceiling.
+    Otherwise grok2api's authoritative TPS remains untouched.
+    """
+    if not should_override_probe_tps(
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        first_token_ms=first_token_ms,
+        generation_ms=generation_ms,
+        thresholds=thresholds,
+    ):
+        return upstream_tps
+    return output_tokens * 1000.0 / generation_ms
+
+
+def should_override_probe_tps(
+    *,
+    output_tokens: int,
+    reasoning_tokens: int,
+    first_token_ms: int | None,
+    generation_ms: int,
+    thresholds: Thresholds,
+) -> bool:
+    return bool(
+        thresholds.probe_tps_override_enabled
+        and output_tokens > 0
+        and reasoning_tokens > 0
+        and first_token_ms is not None
+        and first_token_ms >= thresholds.probe_tps_override_min_first_token_ms
+        and generation_ms > 0
+        and generation_ms
+        <= thresholds.probe_tps_override_max_generation_ms
     )
 
 

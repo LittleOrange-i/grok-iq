@@ -1121,6 +1121,7 @@ export type ProbeSample = {
   generation_ms: number
   first_token_share: number
   tps: number
+  upstream_tps?: number | null
   expected_matched?: boolean | null
   response_sha256?: string
   response_text: string
@@ -1235,6 +1236,9 @@ export type RuntimeSettings = {
   analysisWindowHours: number
   degradationTps: number
   strongDegradationTps: number
+  probeTpsOverrideEnabled: boolean
+  probeTpsOverrideMinFirstTokenMs: number
+  probeTpsOverrideMaxGenerationMs: number
   consecutiveAnomalies: number
   cumulativeAnomalyRate: number
   highRiskHardCount: number
@@ -1339,6 +1343,9 @@ export type RuntimeSettingsUpdate = Partial<
     | 'analysisWindowHours'
     | 'degradationTps'
     | 'strongDegradationTps'
+    | 'probeTpsOverrideEnabled'
+    | 'probeTpsOverrideMinFirstTokenMs'
+    | 'probeTpsOverrideMaxGenerationMs'
     | 'consecutiveAnomalies'
     | 'cumulativeAnomalyRate'
     | 'highRiskHardCount'
@@ -1376,6 +1383,9 @@ type RuntimeSettingsWire = Omit<
   RuntimeSettings,
   | 'degradationTps'
   | 'strongDegradationTps'
+  | 'probeTpsOverrideEnabled'
+  | 'probeTpsOverrideMinFirstTokenMs'
+  | 'probeTpsOverrideMaxGenerationMs'
   | 'cumulativeAnomalyRate'
   | 'highRiskHardCount'
   | 'riskAnomalyRateWeight'
@@ -1431,6 +1441,9 @@ type RuntimeSettingsWire = Omit<
 > & {
   degradationTps?: number
   strongDegradationTps?: number
+  probeTpsOverrideEnabled?: boolean
+  probeTpsOverrideMinFirstTokenMs?: number
+  probeTpsOverrideMaxGenerationMs?: number
   cumulativeAnomalyRate?: number
   highRiskHardCount?: number
   riskAnomalyRateWeight?: number
@@ -1619,6 +1632,11 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     wechatTemplateId: value.wechatTemplateId ?? '',
     degradationTps: value.degradationTps ?? value.softTps ?? 150,
     strongDegradationTps: value.strongDegradationTps ?? value.hardTps ?? 500,
+    probeTpsOverrideEnabled: value.probeTpsOverrideEnabled ?? false,
+    probeTpsOverrideMinFirstTokenMs:
+      value.probeTpsOverrideMinFirstTokenMs ?? 5000,
+    probeTpsOverrideMaxGenerationMs:
+      value.probeTpsOverrideMaxGenerationMs ?? 500,
     cumulativeAnomalyRate: value.cumulativeAnomalyRate ?? 0.5,
     highRiskHardCount: value.highRiskHardCount ?? 2,
     riskAnomalyRateWeight: value.riskAnomalyRateWeight ?? 30,

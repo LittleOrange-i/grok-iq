@@ -486,6 +486,21 @@ class RuntimeSettingsInput(BaseModel):
     analysis_window_hours: int | None = Field(default=None, alias="analysisWindowHours", ge=1, le=24 * 365)
     degradation_tps: float | None = Field(default=None, alias="degradationTps", gt=0)
     strong_degradation_tps: float | None = Field(default=None, alias="strongDegradationTps", gt=0)
+    probe_tps_override_enabled: bool | None = Field(
+        default=None, alias="probeTpsOverrideEnabled"
+    )
+    probe_tps_override_min_first_token_ms: int | None = Field(
+        default=None,
+        alias="probeTpsOverrideMinFirstTokenMs",
+        ge=0,
+        le=600_000,
+    )
+    probe_tps_override_max_generation_ms: int | None = Field(
+        default=None,
+        alias="probeTpsOverrideMaxGenerationMs",
+        ge=1,
+        le=60_000,
+    )
     consecutive_anomalies: int | None = Field(default=None, alias="consecutiveAnomalies", ge=2, le=20)
     cumulative_anomaly_rate: float | None = Field(
         default=None, alias="cumulativeAnomalyRate", ge=0.01, le=1

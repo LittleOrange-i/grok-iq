@@ -146,6 +146,13 @@ class ProbeManager:
         self.thresholds = Thresholds(
             degradation_tps=self.settings.degradation_tps,
             strong_degradation_tps=self.settings.strong_degradation_tps,
+            probe_tps_override_enabled=self.settings.probe_tps_override_enabled,
+            probe_tps_override_min_first_token_ms=(
+                self.settings.probe_tps_override_min_first_token_ms
+            ),
+            probe_tps_override_max_generation_ms=(
+                self.settings.probe_tps_override_max_generation_ms
+            ),
             minimum_output_tokens=self.settings.minimum_output_tokens,
             buffer_first_token_share=self.settings.buffer_first_token_share,
             min_generation_ms=self.settings.min_generation_ms,

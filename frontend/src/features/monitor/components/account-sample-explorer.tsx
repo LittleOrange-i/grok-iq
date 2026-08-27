@@ -88,7 +88,12 @@ export function AccountSampleExplorer({
                 </div>
                 <div className='mt-2 grid grid-cols-3 gap-2 text-xs tabular-nums'>
                   <SampleListMetric
-                    label='TPS'
+                    label={
+                      sample.upstream_tps != null &&
+                      Math.abs(sample.upstream_tps - sample.tps) > 0.01
+                        ? '判定 TPS'
+                        : 'TPS'
+                    }
                     value={formatNumber(sample.tps)}
                   />
                   <SampleListMetric
@@ -172,7 +177,14 @@ function SampleDetail({
       </div>
       <div className='space-y-4 p-4'>
         <div className='grid gap-2 sm:grid-cols-3 xl:grid-cols-6'>
-          <SampleFact label='TPS' value={formatNumber(sample.tps)} />
+          <SampleFact label='判定 TPS' value={formatNumber(sample.tps)} />
+          {sample.upstream_tps != null &&
+            Math.abs(sample.upstream_tps - sample.tps) > 0.01 && (
+              <SampleFact
+                label='上游 TPS'
+                value={formatNumber(sample.upstream_tps)}
+              />
+            )}
           <SampleFact label='首 Token' value={`${sample.first_token_ms} ms`} />
           <SampleFact label='总耗时' value={`${sample.duration_ms} ms`} />
           <SampleFact label='生成窗口' value={`${sample.generation_ms} ms`} />

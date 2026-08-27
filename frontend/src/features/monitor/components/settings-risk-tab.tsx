@@ -278,6 +278,51 @@ function ProbeSamplesPanel({
         </RiskFieldGroup>
 
         <RiskFieldGroup
+          title='推理突发 TPS 覆盖'
+          hint='上游 TPS 可能把长时间推理等待平均进去；命中全部条件时改用生成窗口重新计算。'
+        >
+          <SettingListItem
+            label='启用推理突发覆盖'
+            description='有推理 Token、首 Token 延迟达到阈值且生成窗口足够短时，使用输出 Token ÷ 生成窗口。所有条件必须同时满足。'
+            checked={form.probeTpsOverrideEnabled}
+            onCheckedChange={(value) => set('probeTpsOverrideEnabled', value)}
+          />
+          {form.probeTpsOverrideEnabled && (
+            <div className='space-y-3'>
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <NumberField
+                  label='首 Token 最低延迟（ms）'
+                  hint='例如 5000 表示首字至少等待 5 秒。'
+                  value={form.probeTpsOverrideMinFirstTokenMs}
+                  min={0}
+                  max={600000}
+                  onChange={(value) =>
+                    set('probeTpsOverrideMinFirstTokenMs', value)
+                  }
+                />
+                <NumberField
+                  label='最大生成窗口（ms）'
+                  hint='例如 500 表示首字后 500ms 内完成输出。'
+                  value={form.probeTpsOverrideMaxGenerationMs}
+                  min={1}
+                  max={60000}
+                  onChange={(value) =>
+                    set('probeTpsOverrideMaxGenerationMs', value)
+                  }
+                />
+              </div>
+              <p className='rounded-lg bg-muted/35 px-3 py-2 text-xs leading-5 text-muted-foreground'>
+                判定关系：推理 Token &gt; 0 且首 Token ≥{' '}
+                {form.probeTpsOverrideMinFirstTokenMs}ms 且总耗时与首 Token
+                的差值 ≤ {form.probeTpsOverrideMaxGenerationMs}ms。命中后按
+                输出 Token ÷ 差值重算 TPS；任一条件不满足时继续使用上游
+                TPS。
+              </p>
+            </div>
+          )}
+        </RiskFieldGroup>
+
+        <RiskFieldGroup
           title='缓冲特征'
           hint='用于识别等待较久后集中吐出内容的样本。'
         >

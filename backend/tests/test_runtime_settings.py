@@ -138,6 +138,35 @@ def test_runtime_settings_reject_retry_wait_order(tmp_path: Path):
         )
 
 
+def test_probe_tps_override_settings_are_persisted_and_exposed(tmp_path: Path):
+    database, settings, service = build_service(tmp_path)
+
+    changed = service.update(
+        {
+            "probe_tps_override_enabled": True,
+            "probe_tps_override_min_first_token_ms": 5000,
+            "probe_tps_override_max_generation_ms": 500,
+        }
+    )
+
+    assert changed == [
+        "probe_tps_override_enabled",
+        "probe_tps_override_max_generation_ms",
+        "probe_tps_override_min_first_token_ms",
+    ]
+    assert settings.probe_tps_override_enabled is True
+    assert service.public_view()["probeTpsOverrideMinFirstTokenMs"] == 5000
+    assert service.public_view()["probeTpsOverrideMaxGenerationMs"] == 500
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings,
+        SettingsRepository(database, reloaded_settings),
+    )
+    reloaded.load()
+    assert reloaded_settings.probe_tps_override_enabled is True
+
+
 def test_quarantine_recovery_setting_is_persisted_and_exposed(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
 

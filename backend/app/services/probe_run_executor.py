@@ -420,7 +420,8 @@ class ProbeRunExecutor:
                 "duration_ms": result.duration_ms,
                 "generation_ms": result.generation_ms,
                 "first_token_share": result.first_token_share,
-                "tps": result.tps,
+                "tps": classified.tps,
+                "upstream_tps": result.tps,
                 "expected_matched": result.expected_matched,
                 "response_sha256": result.response_sha256,
                 "response_text": result.response_text,
@@ -444,7 +445,7 @@ class ProbeRunExecutor:
             target_key,
             result.status_code,
             result.output_tokens,
-            result.tps,
+            classified.tps,
             result.duration_ms,
             classified.name,
         )

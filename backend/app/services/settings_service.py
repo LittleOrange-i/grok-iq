@@ -149,6 +149,13 @@ class RuntimeSettingsService:
         risk_thresholds = Thresholds(
             degradation_tps=s.degradation_tps,
             strong_degradation_tps=s.strong_degradation_tps,
+            probe_tps_override_enabled=s.probe_tps_override_enabled,
+            probe_tps_override_min_first_token_ms=(
+                s.probe_tps_override_min_first_token_ms
+            ),
+            probe_tps_override_max_generation_ms=(
+                s.probe_tps_override_max_generation_ms
+            ),
             minimum_output_tokens=s.minimum_output_tokens,
             buffer_first_token_share=s.buffer_first_token_share,
             min_generation_ms=s.min_generation_ms,
@@ -247,6 +254,13 @@ class RuntimeSettingsService:
             "analysisWindowHours": s.analysis_window_hours,
             "degradationTps": s.degradation_tps,
             "strongDegradationTps": s.strong_degradation_tps,
+            "probeTpsOverrideEnabled": s.probe_tps_override_enabled,
+            "probeTpsOverrideMinFirstTokenMs": (
+                s.probe_tps_override_min_first_token_ms
+            ),
+            "probeTpsOverrideMaxGenerationMs": (
+                s.probe_tps_override_max_generation_ms
+            ),
             "consecutiveAnomalies": s.consecutive_anomalies,
             "cumulativeAnomalyRate": s.cumulative_anomaly_rate,
             "highRiskHardCount": s.high_risk_hard_count,
