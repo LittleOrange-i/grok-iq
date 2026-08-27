@@ -1,5 +1,8 @@
 import { cn, formatNumber } from '@/lib/utils'
-import { tpsOverridden } from '@/lib/tps'
+import {
+  generationWindowTps,
+  tpsOverridden,
+} from '@/lib/tps'
 
 export function DualTpsValue({
   tps,
@@ -21,7 +24,10 @@ export function DualTpsValue({
   if (compact) {
     return (
       <span
-        className={cn('inline-flex items-baseline gap-1.5 tabular-nums', className)}
+        className={cn(
+          'inline-flex items-baseline gap-1.5 tabular-nums',
+          className
+        )}
       >
         <span
           className='font-semibold text-violet-600 dark:text-violet-400'
@@ -48,6 +54,57 @@ export function DualTpsValue({
         title='上游 TPS'
       >
         {formatNumber(upstreamTps ?? tps)}
+      </span>
+    </span>
+  )
+}
+
+export function SampleTpsDetail({
+  tps,
+  upstreamTps,
+  outputTokens,
+  generationMs,
+  className,
+}: {
+  tps: number
+  upstreamTps?: number | null
+  outputTokens?: number | null
+  generationMs?: number | null
+  className?: string
+}) {
+  const upstream = upstreamTps ?? tps
+  const generated = generationWindowTps(outputTokens, generationMs)
+  const usedOverride = tpsOverridden(tps, upstream)
+  const generatedValue = usedOverride ? tps : generated
+  const showGenerated =
+    generatedValue != null && tpsOverridden(generatedValue, upstream)
+  if (!showGenerated) {
+    return (
+      <span className={cn('tabular-nums', className)}>{formatNumber(tps)}</span>
+    )
+  }
+  return (
+    <span className={cn('block tabular-nums', className)}>
+      <span
+        className='block font-semibold text-violet-600 dark:text-violet-400'
+        title={
+          usedOverride
+            ? '按生成窗口重算的 TPS，已用于判定'
+            : '按生成窗口计算的 TPS，未用于判定'
+        }
+      >
+        {formatNumber(generatedValue)}
+        {!usedOverride && (
+          <span className='ms-1 text-[10px] font-normal text-violet-600/80 dark:text-violet-300/80'>
+            参考
+          </span>
+        )}
+      </span>
+      <span
+        className='mt-0.5 block text-xs font-normal text-muted-foreground'
+        title='上游 TPS'
+      >
+        {formatNumber(upstream)}
       </span>
     </span>
   )

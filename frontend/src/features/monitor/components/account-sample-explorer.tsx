@@ -16,7 +16,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
-import { DualTpsValue } from '@/features/monitor/components/tps-display'
+import { DualTpsValue, SampleTpsDetail } from '@/features/monitor/components/tps-display'
 
 type AccountSampleExplorerProps = {
   samples: ProbeSample[]
@@ -183,7 +183,12 @@ function SampleDetail({
           <SampleFact
             label='TPS'
             value={
-              <DualTpsValue tps={sample.tps} upstreamTps={sample.upstream_tps} />
+              <SampleTpsDetail
+                tps={sample.tps}
+                upstreamTps={sample.upstream_tps}
+                outputTokens={sample.output_tokens}
+                generationMs={sample.generation_ms}
+              />
             }
           />
           <SampleFact label='首 Token' value={`${sample.first_token_ms} ms`} />

@@ -133,7 +133,7 @@ import {
 import { EgressNodeReference } from '@/features/monitor/components/egress-node-reference'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
-import { DualTpsValue } from '@/features/monitor/components/tps-display'
+import { DualTpsValue, SampleTpsDetail } from '@/features/monitor/components/tps-display'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
 const terminal = new Set([
@@ -2520,7 +2520,12 @@ function SampleCard({
         <Metric
           label='TPS'
           value={
-            <DualTpsValue tps={sample.tps} upstreamTps={sample.upstream_tps} />
+            <SampleTpsDetail
+              tps={sample.tps}
+              upstreamTps={sample.upstream_tps}
+              outputTokens={sample.output_tokens}
+              generationMs={sample.generation_ms}
+            />
           }
         />
         <Metric label='首 Token' value={`${sample.first_token_ms} ms`} />
