@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useIsFetching,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import {
   Activity,
   ChevronDown,
@@ -712,6 +717,8 @@ function OperatorNoteCell({
 
 export function QuarantinePage() {
   const client = useQueryClient()
+  const statsFetching =
+    useIsFetching({ queryKey: ['accounts', 'quarantine-stats'] }) > 0
   const view = usePersistedViewState(
     QUARANTINE_VIEW_STORAGE_KEY,
     defaultQuarantineView
@@ -1129,9 +1136,14 @@ export function QuarantinePage() {
           <>
             <ActionToolbar label='隔离区操作'>
               <ToolbarAction
-                label='刷新隔离账号'
-                pending={query.isFetching}
-                onClick={() => void query.refetch()}
+                label='刷新隔离页'
+                pending={query.isFetching || statsFetching}
+                onClick={() => {
+                  void query.refetch()
+                  void client.invalidateQueries({
+                    queryKey: ['accounts', 'quarantine-stats'],
+                  })
+                }}
               >
                 <RefreshCw />
               </ToolbarAction>
