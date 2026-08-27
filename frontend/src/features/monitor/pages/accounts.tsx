@@ -8,6 +8,7 @@ import {
   BatteryMedium,
   BatteryWarning,
   CircleHelp,
+  Gauge,
   CircleX,
   Eye,
   Filter,
@@ -26,6 +27,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
+  TriangleAlert,
   Undo2,
   UsersRound,
 } from 'lucide-react'
@@ -107,6 +109,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { DispositionBanner } from '@/features/monitor/components/disposition-summary'
+import { DualTpsValue } from '@/features/monitor/components/tps-display'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 
@@ -1496,7 +1499,6 @@ const AccountsTable = memo(function AccountsTable({
           <TableHead>上游状态</TableHead>
           <TableHead>监控判定</TableHead>
           <TableHead>周期样本 / 信号</TableHead>
-          <TableHead>TPS</TableHead>
           <TableHead className='w-24'>额度</TableHead>
           <TableHead>出口绑定</TableHead>
           <TableHead className='text-right'>操作</TableHead>
@@ -1529,6 +1531,68 @@ type AccountRowProps = {
   selected: boolean
   onSelectedChange: (checked: boolean) => void
   onDetail: () => void
+}
+
+function AccountPeriodStats({
+  assessment,
+}: {
+  assessment: UpstreamAccount['assessment']
+}) {
+  const samples = assessment.sample_count ?? 0
+  const anomalies = assessment.anomaly_count ?? 0
+  const latestTps = assessment.latest_tps ?? 0
+  const latestUpstream = assessment.latest_upstream_tps
+  const overridden = tpsOverridden(latestTps, latestUpstream)
+  const hasTps = latestTps > 0
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className='flex items-center gap-2 text-xs tabular-nums'>
+          <span className='inline-flex items-center gap-1 text-muted-foreground'>
+            <Activity className='size-3.5' />
+            {samples}
+          </span>
+          <span
+            className={cn(
+              'inline-flex items-center gap-1',
+              anomalies > 0
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-muted-foreground'
+            )}
+          >
+            <TriangleAlert className='size-3.5' />
+            {anomalies}
+          </span>
+          {hasTps ? (
+            <span className='inline-flex items-center gap-1 text-muted-foreground'>
+              <Gauge className='size-3.5' />
+              <DualTpsValue
+                tps={latestTps}
+                upstreamTps={latestUpstream}
+                compact
+              />
+            </span>
+          ) : null}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent className='max-w-80'>
+        风险周期内 {samples} 个样本，{anomalies} 个降智信号。
+        {hasTps
+          ? ` TPS 显示最新一条可计量样本${
+              overridden
+                ? '：紫色为按生成窗口重算，灰色为上游原值'
+                : ''
+            }。周期最高 ${formatDualTps(
+              assessment.max_tps,
+              assessment.max_upstream_tps
+            )}，平均 ${formatDualTps(
+              assessment.avg_tps,
+              assessment.avg_upstream_tps
+            )}。`
+          : ' 当前周期还没有可计量 TPS。'}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 const AccountRow = memo(function AccountRow({
@@ -1625,25 +1689,7 @@ const AccountRow = memo(function AccountRow({
         </div>
       </TableCell>
       <TableCell>
-        <span className='tabular-nums'>{assessment.sample_count ?? 0}</span>
-        <span className='mx-1 text-muted-foreground'>/</span>
-        <span className='text-amber-600 tabular-nums'>
-          {assessment.anomaly_count ?? 0}
-        </span>
-      </TableCell>
-      <TableCell>
-        <div className='tabular-nums'>
-          {formatNumber(assessment.latest_tps)}
-        </div>
-        <div className='text-xs text-muted-foreground'>
-          {tpsOverridden(
-            assessment.latest_tps,
-            assessment.latest_upstream_tps
-          )
-            ? `上游 ${formatNumber(assessment.latest_upstream_tps)} · `
-            : ''}
-          max {formatNumber(assessment.max_tps)}
-        </div>
+        <AccountPeriodStats assessment={assessment} />
       </TableCell>
       <TableCell>
         <QuotaRemainingIndicator quota={account.quota} />
@@ -1863,13 +1909,24 @@ function AccountDetail({
                       ? '上游调度（诊断）'
                       : item.egress_name}
                 </span>
-                <span className='whitespace-nowrap tabular-nums sm:text-right'>
-                  {formatDualTps(item.max_tps, item.max_upstream_tps)} TPS max
+                <span className='inline-flex items-baseline gap-1 whitespace-nowrap tabular-nums sm:text-right'>
+                  <DualTpsValue
+                    tps={item.max_tps ?? 0}
+                    upstreamTps={item.max_upstream_tps}
+                    compact
+                  />
+                  <span className='text-xs font-normal text-muted-foreground'>
+                    max
+                  </span>
                 </span>
               </div>
               <div className='mt-1 text-xs text-muted-foreground'>
                 {item.samples} 个样本 · {item.anomalies ?? 0} 个降智信号 · 平均{' '}
-                {formatDualTps(item.avg_tps, item.avg_upstream_tps)} TPS
+                <DualTpsValue
+                  tps={item.avg_tps ?? 0}
+                  upstreamTps={item.avg_upstream_tps}
+                  compact
+                />
               </div>
             </div>
           ))}

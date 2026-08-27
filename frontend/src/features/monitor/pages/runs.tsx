@@ -1799,12 +1799,11 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
           {stats.maxTps != null && (
             <span className='inline-flex items-center gap-1 text-muted-foreground'>
               <Gauge className='size-3.5' />
-              {formatNumber(stats.maxTps)}
-              {tpsOverridden(stats.maxTps, stats.maxUpstreamTps) ? (
-                <span className='text-[11px] font-normal text-muted-foreground/80'>
-                  / {formatNumber(stats.maxUpstreamTps)}
-                </span>
-              ) : null}
+              <DualTpsValue
+                tps={stats.maxTps}
+                upstreamTps={stats.maxUpstreamTps}
+                compact
+              />
             </span>
           )}
         </div>
@@ -1814,7 +1813,11 @@ function RunProbeStats({ run }: { run: ProbeRun }) {
         {stats.warnings > 0 ? `，${stats.warnings} 个样本不足` : ''} /{' '}
         {stats.samples} 个样本
         {stats.maxTps != null
-          ? `，最高 ${formatDualTps(stats.maxTps, stats.maxUpstreamTps)} TPS，平均 ${formatDualTps(stats.avgTps, stats.avgUpstreamTps)}`
+          ? `。TPS 显示本任务最高值 ${formatDualTps(stats.maxTps, stats.maxUpstreamTps)}，平均 ${formatDualTps(stats.avgTps, stats.avgUpstreamTps)}${
+              tpsOverridden(stats.maxTps, stats.maxUpstreamTps)
+                ? '；紫色为按生成窗口重算，灰色为上游原值'
+                : ''
+            }`
           : ''}
         。样本不足会在任务中心标记异常提示，不能视为探针通过
         {run.trigger === 'register' ? '，注册联动也不会恢复优先级' : ''}

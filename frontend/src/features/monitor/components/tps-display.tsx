@@ -20,20 +20,34 @@ export function DualTpsValue({
   }
   if (compact) {
     return (
-      <span className={cn('tabular-nums', className)}>
-        {formatNumber(tps)}
-        <span className='font-normal text-muted-foreground'>
-          {' '}
-          / 上游 {formatNumber(upstreamTps ?? tps)}
+      <span
+        className={cn('inline-flex items-baseline gap-1.5 tabular-nums', className)}
+      >
+        <span
+          className='font-semibold text-violet-600 dark:text-violet-400'
+          title='重算 TPS'
+        >
+          {formatNumber(tps)}
+        </span>
+        <span className='font-normal text-muted-foreground' title='上游 TPS'>
+          {formatNumber(upstreamTps ?? tps)}
         </span>
       </span>
     )
   }
   return (
-    <span className={cn('tabular-nums', className)}>
-      <span className='block'>重算 {formatNumber(tps)}</span>
-      <span className='mt-0.5 block text-xs font-normal text-muted-foreground'>
-        上游 {formatNumber(upstreamTps ?? tps)}
+    <span className={cn('block tabular-nums', className)}>
+      <span
+        className='block font-semibold text-violet-600 dark:text-violet-400'
+        title='重算 TPS'
+      >
+        {formatNumber(tps)}
+      </span>
+      <span
+        className='mt-0.5 block text-xs font-normal text-muted-foreground'
+        title='上游 TPS'
+      >
+        {formatNumber(upstreamTps ?? tps)}
       </span>
     </span>
   )
