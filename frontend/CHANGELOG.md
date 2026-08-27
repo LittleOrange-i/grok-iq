@@ -339,13 +339,19 @@ but introduces breaking changes.
 - highlight remaining quota in isolation upstream viewer
 - record isolation source and disable reason from audit or probes
 - set grok2api priority when restoring isolated accounts
+- batch disable grok2api accounts from the isolation zone
 - split bootstrap settings and per-profile register probe rounds
+- add exclusive probe TPS recalc modes for short windows or missing reasoning text
+- show probe reasoning and upstream vs recalculated TPS
 
 ### Fix
 
 - stop grok2api SSE after completed and skip API gzip
 - keep register priority hold on insufficient samples
 - keep isolation restore compatible with ES2020 and ruff
+- restore generation-window TPS so grok2api flush deflation does not hide degraded accounts
+- keep probe thinking text in samples
+- fold account TPS back into period sample icons
 
 ## v0.5.0 (2026-08-26)
 
