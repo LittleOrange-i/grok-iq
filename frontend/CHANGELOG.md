@@ -329,6 +329,20 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.6.1 (2026-08-27)
+
+### Feat
+
+- align the in-app GrokIQ mark with the browser tab favicon
+- reorder first-register probe profiles independently
+- add isolation zone stats board and isolation timestamps
+- create probe tasks from the isolation zone
+
+### Fix
+
+- stop showing pending action on every audit request
+- drop SSE field names from missing-reasoning copy
+
 ## v0.6.0 (2026-08-27)
 
 ### Feat
