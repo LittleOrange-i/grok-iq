@@ -69,8 +69,7 @@ export function ReasoningPanel({
               </div>
             ) : missing ? (
               <span className='text-muted-foreground'>
-                上游上报了 {tokenCount} 个推理 Token，但流里没有
-                response.reasoning_summary_text.delta 思考正文。这本身也是降智常见特征。
+                上游上报了 {tokenCount} 个推理 Token，但流里没有思考正文。这本身也是降智常见特征。
               </span>
             ) : (
               <span className='text-muted-foreground'>正在等待思考片段…</span>
