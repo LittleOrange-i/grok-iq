@@ -310,7 +310,7 @@ export function toSettingsForm(
     probeTpsOverrideMinFirstTokenMs:
       settings.probeTpsOverrideMinFirstTokenMs ?? 5000,
     probeTpsOverrideMaxGenerationMs:
-      settings.probeTpsOverrideMaxGenerationMs ?? 500,
+      settings.probeTpsOverrideMaxGenerationMs ?? 1000,
     consecutiveAnomalies: settings.consecutiveAnomalies,
     cumulativeAnomalyRate: settings.cumulativeAnomalyRate,
     highRiskHardCount: settings.highRiskHardCount,

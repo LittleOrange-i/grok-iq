@@ -1,6 +1,6 @@
 import { cn, formatNumber } from '@/lib/utils'
 import {
-  generationWindowTps,
+  durationWindowTps,
   tpsOverridden,
 } from '@/lib/tps'
 
@@ -31,7 +31,7 @@ export function DualTpsValue({
       >
         <span
           className='font-semibold text-violet-600 dark:text-violet-400'
-          title='重算 TPS'
+          title='全程耗时校正 TPS'
         >
           {formatNumber(tps)}
         </span>
@@ -45,7 +45,7 @@ export function DualTpsValue({
     <span className={cn('block tabular-nums', className)}>
       <span
         className='block font-semibold text-violet-600 dark:text-violet-400'
-        title='重算 TPS'
+        title='全程耗时校正 TPS'
       >
         {formatNumber(tps)}
       </span>
@@ -63,22 +63,21 @@ export function SampleTpsDetail({
   tps,
   upstreamTps,
   outputTokens,
-  generationMs,
+  durationMs,
   className,
 }: {
   tps: number
   upstreamTps?: number | null
   outputTokens?: number | null
-  generationMs?: number | null
+  durationMs?: number | null
   className?: string
 }) {
   const upstream = upstreamTps ?? tps
-  const generated = generationWindowTps(outputTokens, generationMs)
+  const duration = durationWindowTps(outputTokens, durationMs)
   const usedOverride = tpsOverridden(tps, upstream)
-  const generatedValue = usedOverride ? tps : generated
-  const showGenerated =
-    generatedValue != null && tpsOverridden(generatedValue, upstream)
-  if (!showGenerated) {
+  const showDurationHint =
+    !usedOverride && duration != null && tpsOverridden(duration, upstream)
+  if (!usedOverride && !showDurationHint) {
     return (
       <span className={cn('tabular-nums', className)}>{formatNumber(tps)}</span>
     )
@@ -86,26 +85,35 @@ export function SampleTpsDetail({
   return (
     <span className={cn('block tabular-nums', className)}>
       <span
-        className='block font-semibold text-violet-600 dark:text-violet-400'
+        className={cn(
+          'block',
+          usedOverride && 'font-semibold text-violet-600 dark:text-violet-400'
+        )}
         title={
           usedOverride
-            ? '按生成窗口重算的 TPS，已用于判定'
-            : '按生成窗口计算的 TPS，未用于判定'
+            ? '按全程耗时校正的 TPS，已用于判定'
+            : '用于判定的 TPS'
         }
       >
-        {formatNumber(generatedValue)}
-        {!usedOverride && (
-          <span className='ms-1 text-[10px] font-normal text-violet-600/80 dark:text-violet-300/80'>
-            参考
-          </span>
-        )}
+        {formatNumber(tps)}
       </span>
-      <span
-        className='mt-0.5 block text-xs font-normal text-muted-foreground'
-        title='上游 TPS'
-      >
-        {formatNumber(upstream)}
-      </span>
+      {usedOverride && (
+        <span
+          className='mt-0.5 block text-xs font-normal text-muted-foreground'
+          title='上游 TPS'
+        >
+          {formatNumber(upstream)}
+        </span>
+      )}
+      {showDurationHint && duration != null && (
+        <span
+          className='mt-0.5 block text-[10px] font-normal text-violet-600/80 dark:text-violet-300/80'
+          title='按全程耗时计算的 TPS，未用于判定。把最大生成窗口调到覆盖该样本的生成窗口后才会用于判定。'
+        >
+          {formatNumber(duration)}
+          <span className='ms-1'>全程参考</span>
+        </span>
+      )}
     </span>
   )
 }

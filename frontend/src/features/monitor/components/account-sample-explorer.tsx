@@ -187,7 +187,7 @@ function SampleDetail({
                 tps={sample.tps}
                 upstreamTps={sample.upstream_tps}
                 outputTokens={sample.output_tokens}
-                generationMs={sample.generation_ms}
+                durationMs={sample.duration_ms}
               />
             }
           />

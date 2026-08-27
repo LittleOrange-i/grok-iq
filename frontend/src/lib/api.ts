@@ -1642,7 +1642,7 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     probeTpsOverrideMinFirstTokenMs:
       value.probeTpsOverrideMinFirstTokenMs ?? 5000,
     probeTpsOverrideMaxGenerationMs:
-      value.probeTpsOverrideMaxGenerationMs ?? 500,
+      value.probeTpsOverrideMaxGenerationMs ?? 1000,
     cumulativeAnomalyRate: value.cumulativeAnomalyRate ?? 0.5,
     highRiskHardCount: value.highRiskHardCount ?? 2,
     riskAnomalyRateWeight: value.riskAnomalyRateWeight ?? 30,

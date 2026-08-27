@@ -315,7 +315,7 @@ class Thresholds:
     strong_degradation_tps: float = 500
     probe_tps_override_enabled: bool = False
     probe_tps_override_min_first_token_ms: int = 5000
-    probe_tps_override_max_generation_ms: int = 500
+    probe_tps_override_max_generation_ms: int = 1000
     minimum_output_tokens: int = 32
     buffer_first_token_share: float = 0.85
     min_generation_ms: int = 250
@@ -826,6 +826,7 @@ def aggregate_rule_reasons(
 
 
 def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classification:
+    upstream_tps = 0.0
     if sample.first_token_ms is None:
         generation_ms = 0
         tps = 0.0
@@ -846,6 +847,7 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             reasoning_tokens=sample.reasoning_tokens,
             first_token_ms=sample.first_token_ms,
             generation_ms=generation_ms,
+            duration_ms=sample.duration_ms,
             upstream_tps=upstream_tps,
             thresholds=thresholds,
         )
@@ -884,7 +886,7 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
     )
     evaluated = DEFAULT_RISK_RULES.evaluate(context, thresholds)
     if evaluated is None:
-        return Classification(
+        classification = Classification(
             "normal",
             0,
             tps,
@@ -894,36 +896,27 @@ def classify_sample(sample: SampleMetrics, thresholds: Thresholds) -> Classifica
             False,
             buffered,
         )
-    rule, match = evaluated
-    classification = _match_classification(
-        rule=rule,
-        match=match,
-        tps=tps,
-        generation_ms=generation_ms,
-        first_token_share=first_token_share,
-        buffered=buffered,
-    )
-    if should_override_probe_tps(
-        output_tokens=sample.output_tokens,
-        reasoning_tokens=sample.reasoning_tokens,
-        first_token_ms=sample.first_token_ms,
-        generation_ms=generation_ms,
-        thresholds=thresholds,
-    ):
-        classification = replace(
-            classification,
-            reasons=tuple(
-                dict.fromkeys(
-                    (
-                        *classification.reasons,
-                        "推理突发 TPS 覆盖："
-                        f"上游 {upstream_tps:.1f}，按 {generation_ms}ms "
-                        f"生成窗口重算为 {tps:.1f}",
-                    )
-                )
-            ),
+    else:
+        rule, match = evaluated
+        classification = _match_classification(
+            rule=rule,
+            match=match,
+            tps=tps,
+            generation_ms=generation_ms,
+            first_token_share=first_token_share,
+            buffered=buffered,
         )
-    return classification
+    return _with_flush_tps_reason(
+        classification,
+        upstream_tps=upstream_tps,
+        duration_ms=sample.duration_ms,
+    )
+
+
+def duration_window_tps(output_tokens: int, duration_ms: int) -> float:
+    if output_tokens <= 0 or duration_ms <= 0:
+        return 0.0
+    return output_tokens * 1000.0 / duration_ms
 
 
 def effective_probe_tps(
@@ -932,15 +925,16 @@ def effective_probe_tps(
     reasoning_tokens: int,
     first_token_ms: int | None,
     generation_ms: int,
+    duration_ms: int,
     upstream_tps: float,
     thresholds: Thresholds,
 ) -> float:
-    """Return the probe TPS, optionally correcting buffered reasoning bursts.
+    """Return TPS after grok2api-style reasoning-flush correction.
 
-    The override deliberately requires every signal: the feature is enabled,
-    reasoning tokens are present, first-token latency reaches the configured
-    floor, and the post-first-token generation window stays below its ceiling.
-    Otherwise grok2api's authoritative TPS remains untouched.
+    grok2api uses output tokens / generation window, except when reasoning
+    tokens appear to flush in a short tail. In that case the denominator
+    becomes the full request duration, which *deflates* a false-high rate.
+    grok-iq keeps the same direction and makes the 1000ms cliff configurable.
     """
     if not should_override_probe_tps(
         output_tokens=output_tokens,
@@ -950,7 +944,7 @@ def effective_probe_tps(
         thresholds=thresholds,
     ):
         return upstream_tps
-    return output_tokens * 1000.0 / generation_ms
+    return duration_window_tps(output_tokens, duration_ms)
 
 
 def should_override_probe_tps(
@@ -968,8 +962,42 @@ def should_override_probe_tps(
         and first_token_ms is not None
         and first_token_ms >= thresholds.probe_tps_override_min_first_token_ms
         and generation_ms > 0
-        and generation_ms
-        <= thresholds.probe_tps_override_max_generation_ms
+        and generation_ms < first_token_ms
+        and generation_ms <= thresholds.probe_tps_override_max_generation_ms
+    )
+
+
+def _flush_tps_reason(
+    *,
+    upstream_tps: float,
+    duration_ms: int,
+    tps: float,
+) -> str | None:
+    if abs(upstream_tps - tps) <= 0.01:
+        return None
+    return (
+        "推理 flush 校正："
+        f"上游 {upstream_tps:.1f} 按生成窗口虚高，改用全程 {duration_ms}ms "
+        f"校正为 {tps:.1f}"
+    )
+
+
+def _with_flush_tps_reason(
+    classification: Classification,
+    *,
+    upstream_tps: float,
+    duration_ms: int,
+) -> Classification:
+    reason = _flush_tps_reason(
+        upstream_tps=upstream_tps,
+        duration_ms=duration_ms,
+        tps=classification.tps,
+    )
+    if reason is None:
+        return classification
+    return replace(
+        classification,
+        reasons=tuple(dict.fromkeys((*classification.reasons, reason))),
     )
 
 
@@ -993,9 +1021,10 @@ def classify_audit_sample(
     """
 
     measured_tps = max(0.0, float(tps or 0.0))
-    generation_ms = max(0, int(duration_ms or 0) - int(first_token_ms or 0))
+    safe_duration_ms = max(0, int(duration_ms or 0))
+    generation_ms = max(0, safe_duration_ms - int(first_token_ms or 0))
     first_token_share = (
-        int(first_token_ms or 0) / duration_ms if duration_ms > 0 else 0.0
+        int(first_token_ms or 0) / safe_duration_ms if safe_duration_ms > 0 else 0.0
     )
     buffered = bool(
         first_token_ms is not None
@@ -1005,14 +1034,23 @@ def classify_audit_sample(
             or generation_ms < thresholds.min_generation_ms
         )
     )
+    effective_tps = effective_probe_tps(
+        output_tokens=max(0, int(output_tokens or 0)),
+        reasoning_tokens=max(0, int(reasoning_tokens or 0)),
+        first_token_ms=first_token_ms,
+        generation_ms=generation_ms,
+        duration_ms=safe_duration_ms,
+        upstream_tps=measured_tps,
+        thresholds=thresholds,
+    )
     context = RuleContext(
         status_code=int(status_code or 0),
         output_tokens=max(0, int(output_tokens or 0)),
         reasoning_tokens=max(0, int(reasoning_tokens or 0)),
         first_token_ms=first_token_ms,
-        duration_ms=max(0, int(duration_ms or 0)),
+        duration_ms=safe_duration_ms,
         generation_ms=generation_ms,
-        tps=measured_tps,
+        tps=effective_tps,
         first_token_share=first_token_share,
         buffered=buffered,
         expected_matched=expected_matched,
@@ -1020,55 +1058,63 @@ def classify_audit_sample(
         extra=extra or {},
     )
     if not thresholds.request_audit_risk_enabled:
-        return Classification(
+        classification = Classification(
             "normal",
             0,
-            measured_tps,
+            effective_tps,
             generation_ms,
             first_token_share,
             False,
             False,
             buffered,
         )
-    evaluated = DEFAULT_RISK_RULES.evaluate(context, thresholds)
-    if evaluated is None:
-        return Classification(
-            "normal",
-            0,
-            measured_tps,
-            generation_ms,
-            first_token_share,
-            False,
-            False,
-            buffered,
-        )
-    rule, match = evaluated
-    if match.classification in {"error", "unmeasurable", "normal"}:
-        return _match_classification(
-            rule=rule,
-            match=match,
-            tps=measured_tps,
-            generation_ms=generation_ms,
-            first_token_share=first_token_share,
-            buffered=buffered,
-        )
-    # Request-audit consumers use a compact severity vocabulary while the
-    # persisted rule ID remains available for filtering and explanations.
-    level = "high" if match.hard else "watch"
-    mapped = RuleMatch(
-        classification=level,
-        severity=match.severity,
-        anomalous=True,
-        hard=match.hard,
-        reason=match.reason,
-    )
-    return _match_classification(
-        rule=rule,
-        match=mapped,
-        tps=measured_tps,
-        generation_ms=generation_ms,
-        first_token_share=first_token_share,
-        buffered=buffered,
+    else:
+        evaluated = DEFAULT_RISK_RULES.evaluate(context, thresholds)
+        if evaluated is None:
+            classification = Classification(
+                "normal",
+                0,
+                effective_tps,
+                generation_ms,
+                first_token_share,
+                False,
+                False,
+                buffered,
+            )
+        else:
+            rule, match = evaluated
+            if match.classification in {"error", "unmeasurable", "normal"}:
+                classification = _match_classification(
+                    rule=rule,
+                    match=match,
+                    tps=effective_tps,
+                    generation_ms=generation_ms,
+                    first_token_share=first_token_share,
+                    buffered=buffered,
+                )
+            else:
+                # Request-audit consumers use a compact severity vocabulary while the
+                # persisted rule ID remains available for filtering and explanations.
+                level = "high" if match.hard else "watch"
+                mapped = RuleMatch(
+                    classification=level,
+                    severity=match.severity,
+                    anomalous=True,
+                    hard=match.hard,
+                    reason=match.reason,
+                )
+                classification = _match_classification(
+                    rule=rule,
+                    match=mapped,
+                    tps=effective_tps,
+                    generation_ms=generation_ms,
+                    first_token_share=first_token_share,
+                    buffered=buffered,
+                )
+    return _with_flush_tps_reason(
+        classification,
+        upstream_tps=measured_tps,
+        duration_ms=safe_duration_ms,
     )
 
 

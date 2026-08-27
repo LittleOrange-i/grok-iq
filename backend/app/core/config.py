@@ -188,7 +188,7 @@ class Settings(BaseSettings):
         default=5000, ge=0, le=600_000
     )
     probe_tps_override_max_generation_ms: int = Field(
-        default=500, ge=1, le=60_000
+        default=1000, ge=1, le=60_000
     )
     consecutive_anomalies: int = Field(default=3, ge=2, le=20)
     cumulative_anomaly_rate: float = Field(default=0.5, ge=0.01, le=1)
