@@ -444,6 +444,7 @@ async def test_saving_risk_formula_recalculates_existing_accounts():
     probes = SimpleNamespace(
         thresholds=object(),
         reconfigure=AsyncMock(),
+        repository=MagicMock(),
     )
     accounts = MagicMock()
     scheduler = SimpleNamespace(reconfigure=AsyncMock())
