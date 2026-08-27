@@ -8,6 +8,7 @@ import {
   Loader2,
   Network,
   Pencil,
+  Play,
   Plus,
   PowerOff,
   RefreshCw,
@@ -103,6 +104,7 @@ import {
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
+import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 import { QuarantineStatsBoard } from '@/features/monitor/components/quarantine-stats-board'
 
 type SsoRiskFilter =
@@ -738,6 +740,11 @@ export function QuarantinePage() {
   )
   const tableQuery = usePaintDeferredValue(committedQuery)
   const [selected, setSelected] = useState<number[]>([])
+  const [selectedDisabled, setSelectedDisabled] = useState<number[]>([])
+  const [selectedMissing, setSelectedMissing] = useState<number[]>([])
+  const [probeOpen, setProbeOpen] = useState(false)
+  const [probeAccountIds, setProbeAccountIds] = useState<number[]>([])
+  const [probeDisabledCount, setProbeDisabledCount] = useState(0)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restorePriority, setRestorePriority] = useState('')
   const [disableOpen, setDisableOpen] = useState(false)
@@ -804,6 +811,8 @@ export function QuarantinePage() {
     if (appliedFilterKeyRef.current === tableFilterKey) return
     appliedFilterKeyRef.current = tableFilterKey
     setSelected((current) => (current.length === 0 ? current : []))
+    setSelectedDisabled((current) => (current.length === 0 ? current : []))
+    setSelectedMissing((current) => (current.length === 0 ? current : []))
   }, [beginTableInteraction, tableFilterKey, tableQueryPending])
 
   const detail = useQuery({
@@ -815,6 +824,12 @@ export function QuarantinePage() {
     queryKey: ['account-samples', detailId],
     queryFn: () => api.accountSamples(detailId!, { page: 1, pageSize: 50 }),
     enabled: detailOpen && detailId != null,
+  })
+  const profiles = useQuery({
+    queryKey: ['profiles'],
+    queryFn: api.profiles,
+    enabled: probeOpen,
+    staleTime: 60_000,
   })
   const egress = useQuery({
     queryKey: ['egress'],
@@ -858,22 +873,91 @@ export function QuarantinePage() {
     accounts.length > 0 &&
     accounts.every((item) => selected.includes(Number(item.id)))
 
+  const selectedMissingSet = useMemo(
+    () => new Set(selectedMissing),
+    [selectedMissing]
+  )
+  const selectedDisabledSet = useMemo(
+    () => new Set(selectedDisabled),
+    [selectedDisabled]
+  )
+  const probeableSelected = useMemo(
+    () => selected.filter((id) => !selectedMissingSet.has(id)),
+    [selected, selectedMissingSet]
+  )
+
   const toggleCurrentPageSelection = useCallback(
     (checked: boolean) => {
       const pageIds = accounts.map((item) => Number(item.id))
+      const missingIds = accounts
+        .filter((item) => item.missingUpstream)
+        .map((item) => Number(item.id))
+      const disabledIds = accounts
+        .filter((item) => !item.missingUpstream && !item.enabled)
+        .map((item) => Number(item.id))
       setSelected((current) =>
         checked
           ? Array.from(new Set([...current, ...pageIds]))
           : current.filter((id) => !pageIds.includes(id))
       )
+      setSelectedMissing((current) =>
+        checked
+          ? Array.from(new Set([...current, ...missingIds]))
+          : current.filter((id) => !pageIds.includes(id))
+      )
+      setSelectedDisabled((current) =>
+        checked
+          ? Array.from(new Set([...current, ...disabledIds]))
+          : current.filter((id) => !pageIds.includes(id))
+      )
     },
     [accounts]
   )
-  const toggleAccountSelection = useCallback((id: number, checked: boolean) => {
-    setSelected((current) =>
-      checked
-        ? [...new Set([...current, id])]
-        : current.filter((item) => item !== id)
+  const toggleAccountSelection = useCallback(
+    (id: number, checked: boolean) => {
+      const account = accounts.find((item) => Number(item.id) === id)
+      const missing = Boolean(account?.missingUpstream)
+      const disabled = Boolean(account && !missing && !account.enabled)
+      setSelected((current) =>
+        checked
+          ? [...new Set([...current, id])]
+          : current.filter((item) => item !== id)
+      )
+      setSelectedMissing((current) =>
+        checked && missing
+          ? [...new Set([...current, id])]
+          : current.filter((item) => item !== id)
+      )
+      setSelectedDisabled((current) =>
+        checked && disabled
+          ? [...new Set([...current, id])]
+          : current.filter((item) => item !== id)
+      )
+    },
+    [accounts]
+  )
+
+  const openProbeDialog = useCallback(
+    (accountIds: number[], disabledCount: number) => {
+      if (!accountIds.length) {
+        toast.error('没有可创建探针的账号')
+        return
+      }
+      setProbeAccountIds(accountIds)
+      setProbeDisabledCount(disabledCount)
+      setProbeOpen(true)
+      void egress.refetch()
+    },
+    [egress]
+  )
+
+  const syncSelection = useCallback((accountIds: number[]) => {
+    setSelected(accountIds)
+    setSelectedDisabled((current) =>
+      current.filter((id) => accountIds.includes(id))
+    )
+    setSelectedMissing((current) =>
+      current.filter((id) => accountIds.includes(id))
     )
   }, [])
 
@@ -900,7 +984,7 @@ export function QuarantinePage() {
         new Set([...skippedAccountIds, ...failedAccountIds])
       )
       setRestoreOpen(false)
-      setSelected(retainedAccountIds)
+      syncSelection(retainedAccountIds)
       if (detailId != null && !retainedAccountIds.includes(detailId)) {
         setDetailOpen(false)
       }
@@ -934,7 +1018,7 @@ export function QuarantinePage() {
         new Set([...skippedAccountIds, ...failedAccountIds])
       )
       setDisableOpen(false)
-      setSelected(retainedAccountIds)
+      syncSelection(retainedAccountIds)
       if (failedAccountIds.length > 0 || skippedAccountIds.length > 0) {
         const details = [`已停用上游 ${result.updated} 个账号`]
         if (failedAccountIds.length) {
@@ -968,7 +1052,7 @@ export function QuarantinePage() {
         new Set([...skippedAccountIds, ...failedAccountIds])
       )
       setDeleteOpen(false)
-      setSelected(retainedAccountIds)
+      syncSelection(retainedAccountIds)
       if (detailId != null && !retainedAccountIds.includes(detailId)) {
         setDetailOpen(false)
       }
@@ -1056,8 +1140,34 @@ export function QuarantinePage() {
               selectedCount={selected.length}
               entityLabel='账号'
               disabled={selectionActionPending}
-              onClear={() => setSelected([])}
+              onClear={() => {
+                setSelected([])
+                setSelectedDisabled([])
+                setSelectedMissing([])
+              }}
             >
+              <ToolbarAction
+                label={
+                  probeableSelected.length
+                    ? selectedMissing.length
+                      ? `测试已选 ${probeableSelected.length} 个可探测账号`
+                      : `测试已选 ${selected.length} 个账号`
+                    : '已选账号缺少上游记录，无法创建探针'
+                }
+                disabled={
+                  selectionActionPending || probeableSelected.length === 0
+                }
+                onClick={() =>
+                  openProbeDialog(
+                    probeableSelected,
+                    probeableSelected.filter((id) =>
+                      selectedDisabledSet.has(id)
+                    ).length
+                  )
+                }
+              >
+                <Play />
+              </ToolbarAction>
               <ToolbarAction
                 label={`恢复已选 ${selected.length} 个账号的上游`}
                 pending={restorePending}
@@ -1309,6 +1419,14 @@ export function QuarantinePage() {
                   onNoteEditorOpenChange={setNoteEditorOpen}
                   onOpenUpstream={openAccountUpstream}
                   onOpenSamples={openAccountSamples}
+                  onProbe={(account) => {
+                    const id = Number(account.id)
+                    if (account.missingUpstream) {
+                      toast.error('该账号缺少上游记录，无法创建探针任务')
+                      return
+                    }
+                    openProbeDialog([id], account.enabled ? 0 : 1)
+                  }}
                 />
                 {showTableLoading && (
                   <ServerTableLoadingOverlay
@@ -1580,6 +1698,30 @@ export function QuarantinePage() {
           </div>
         </DialogContent>
       </Dialog>
+      <ProbeDialog
+        open={probeOpen}
+        onOpenChange={setProbeOpen}
+        accountIds={probeAccountIds}
+        disabledAccountCount={probeDisabledCount}
+        profiles={profiles.data ?? []}
+        profilesLoading={profiles.isFetching && !profiles.data}
+        profilesError={profiles.isError ? getErrorMessage(profiles.error) : ''}
+        onRefreshProfiles={() => void profiles.refetch()}
+        egress={egress.data?.items ?? []}
+        egressLoading={egress.isFetching}
+        egressError={egress.isError ? getErrorMessage(egress.error) : ''}
+        onRefreshEgress={() => void egress.refetch()}
+        onCreated={() => {
+          setSelected([])
+          setSelectedDisabled([])
+          setSelectedMissing([])
+          setProbeAccountIds([])
+          setProbeDisabledCount(0)
+          void client.invalidateQueries({ queryKey: ['runs'] })
+          void client.invalidateQueries({ queryKey: ['dashboard'] })
+          void client.invalidateQueries({ queryKey: ['accounts'] })
+        }}
+      />
     </Page>
   )
 }
@@ -1611,6 +1753,7 @@ function QuarantineTable({
   onNoteEditorOpenChange,
   onOpenUpstream,
   onOpenSamples,
+  onProbe,
 }: {
   accounts: UpstreamAccount[]
   selected: number[]
@@ -1621,6 +1764,7 @@ function QuarantineTable({
   onNoteEditorOpenChange: (id: number, open: boolean) => void
   onOpenUpstream: (id: number) => void
   onOpenSamples: (id: number) => void
+  onProbe: (account: UpstreamAccount) => void
 }) {
   const selectedIdSet = useMemo(() => new Set(selected), [selected])
   return (
@@ -1658,6 +1802,7 @@ function QuarantineTable({
               onNoteOpenChange={(open) => onNoteEditorOpenChange(id, open)}
               onOpenUpstream={() => onOpenUpstream(id)}
               onOpenSamples={() => onOpenSamples(id)}
+              onProbe={() => onProbe(account)}
             />
           )
         })}
@@ -1674,6 +1819,7 @@ function QuarantineRow({
   onNoteOpenChange,
   onOpenUpstream,
   onOpenSamples,
+  onProbe,
 }: {
   account: UpstreamAccount
   selected: boolean
@@ -1682,6 +1828,7 @@ function QuarantineRow({
   onNoteOpenChange: (open: boolean) => void
   onOpenUpstream: () => void
   onOpenSamples: () => void
+  onProbe: () => void
 }) {
   const id = Number(account.id)
   const assessment = account.assessment
@@ -1746,6 +1893,24 @@ function QuarantineRow({
       </TableCell>
       <TableCell className='text-right'>
         <div className='inline-flex items-center justify-end'>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size='icon'
+                variant='ghost'
+                disabled={Boolean(account.missingUpstream)}
+                onClick={onProbe}
+                aria-label={`为 ${accountLabel} 创建探针任务`}
+              >
+                <Play />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {account.missingUpstream
+                ? '缺少上游记录，无法创建探针'
+                : '创建探针任务'}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
