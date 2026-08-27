@@ -329,6 +329,12 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.6.3 (2026-08-27)
+
+### Fix
+
+- satisfy release lint for isolation stats and quarantine refresh
+
 ## v0.6.2 (2026-08-27)
 
 ### Fix
