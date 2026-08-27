@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { Activity, Check, Loader2, Radar, ShieldCheck } from 'lucide-react'
+import { Logo } from '@/assets/logo'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -72,9 +73,7 @@ export function SignIn() {
       <section className='relative hidden overflow-hidden border-r bg-zinc-950 p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-14'>
         <div className='absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(14,165,233,.18),transparent_35%),radial-gradient(circle_at_80%_75%,rgba(16,185,129,.13),transparent_32%)]' />
         <div className='relative flex items-center gap-3'>
-          <span className='flex size-10 items-center justify-center rounded-xl bg-white text-zinc-950 shadow-sm'>
-            <ShieldCheck className='size-5' />
-          </span>
+          <Logo className='size-10' variant='on-dark' />
           <div>
             <div className='font-semibold'>GrokIQ</div>
             <div className='text-xs text-zinc-400'>账号质量与风控探针</div>
@@ -110,9 +109,7 @@ export function SignIn() {
         <Card className='w-full max-w-[28rem] gap-5 border-border/80 shadow-[0_24px_70px_-45px_rgba(15,23,42,.55)]'>
           <CardHeader className='gap-3'>
             <div className='mb-2 flex items-center gap-3 lg:hidden'>
-              <span className='flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground'>
-                <ShieldCheck className='size-5' />
-              </span>
+              <Logo className='size-10' />
               <div>
                 <div className='font-semibold'>GrokIQ</div>
                 <div className='text-xs text-muted-foreground'>

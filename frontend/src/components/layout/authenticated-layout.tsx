@@ -1,5 +1,6 @@
 import { Link, Outlet } from '@tanstack/react-router'
-import { Bot, CircleCheckBig, ShieldCheck } from 'lucide-react'
+import { Bot, CircleCheckBig } from 'lucide-react'
+import { Logo } from '@/assets/logo'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
 import { LayoutProvider } from '@/context/layout-provider'
@@ -26,9 +27,7 @@ export function AuthenticatedLayout({
         <SkipToMain />
         <Header>
           <Link to='/' className='flex min-w-0 items-center gap-2.5'>
-            <span className='flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs'>
-              <ShieldCheck className='size-4' />
-            </span>
+            <Logo className='size-8' />
             <span className='hidden min-w-0 sm:block'>
               <span className='block truncate text-sm leading-4 font-semibold'>
                 GrokIQ

@@ -16,6 +16,7 @@ import {
   Workflow,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Logo } from '@/assets/logo'
 import { api, type RuntimeSettings } from '@/lib/api'
 import { cn, getErrorMessage } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -187,9 +188,7 @@ export function OnboardingPage() {
       <header className='border-b bg-background/95'>
         <div className='mx-auto flex h-14 w-full max-w-5xl items-center px-4 sm:px-6'>
           <div className='flex items-center gap-2.5'>
-            <span className='flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground'>
-              <ShieldCheck className='size-4' />
-            </span>
+            <Logo className='size-8' />
             <div>
               <div className='text-sm leading-4 font-semibold'>GrokIQ</div>
               <div className='text-[11px] text-muted-foreground'>
