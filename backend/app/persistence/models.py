@@ -91,6 +91,9 @@ class AccountAssessment(Base):
     )
     manual_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
     operator_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    operator_notes: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(AppDateTime(), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False

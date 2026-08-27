@@ -26,6 +26,12 @@ export type Assessment = {
   quarantine_until?: string | null
   recovery_guarded?: boolean
   operator_note?: string
+  operator_notes?: {
+    id: string
+    content: string
+    created_at: string
+    updated_at?: string | null
+  }[]
 }
 
 export type UpstreamAccount = {

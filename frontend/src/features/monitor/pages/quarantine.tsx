@@ -6,6 +6,8 @@ import {
   Eye,
   Loader2,
   Network,
+  Pencil,
+  Plus,
   RefreshCw,
   Search,
   Server,
@@ -18,7 +20,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatAccountSecondaryLabel } from '@/lib/account-label'
-import { api, type ProbeSample, type UpstreamAccount } from '@/lib/api'
+import { api, type OperatorNote, type ProbeSample, type UpstreamAccount } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
 import { StatusBadge } from '@/lib/status'
 import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
@@ -268,6 +270,16 @@ function RiskReasonCell({ account }: { account: UpstreamAccount }) {
   )
 }
 
+function accountOperatorNotes(account: UpstreamAccount): OperatorNote[] {
+  const notes = account.assessment?.operator_notes
+  if (Array.isArray(notes) && notes.length > 0) {
+    return notes.filter((note) => String(note.content || '').trim())
+  }
+  const legacy = String(account.assessment?.operator_note ?? '').trim()
+  if (!legacy) return []
+  return [{ id: 'legacy', content: legacy, created_at: '', updated_at: null }]
+}
+
 function OperatorNoteCell({
   account,
   open,
@@ -278,113 +290,327 @@ function OperatorNoteCell({
   onOpenChange: (open: boolean) => void
 }) {
   const client = useQueryClient()
-  const savedNote = String(account.assessment?.operator_note ?? '')
-  const [draft, setDraft] = useState(savedNote)
-  const mutation = useMutation({
+  const notes = accountOperatorNotes(account)
+  const latest = notes[0]
+  const [composer, setComposer] = useState<'add' | string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const invalidate = () => {
+    void client.invalidateQueries({ queryKey: ['accounts'] })
+    void client.invalidateQueries({
+      queryKey: ['account', Number(account.id)],
+    })
+  }
+  const addMutation = useMutation({
     mutationFn: (note: string) =>
-      api.updateAccountOperatorNote(Number(account.id), note),
-    onSuccess: (result) => {
-      setDraft(result.operatorNote)
-      onOpenChange(false)
-      toast.success(result.operatorNote ? '备注已保存' : '备注已清空')
+      api.addAccountOperatorNote(Number(account.id), note),
+    onSuccess: () => {
+      setComposer(null)
+      setDraft('')
+      toast.success('备注已添加')
     },
     onError: (error) => toast.error(getErrorMessage(error)),
-    onSettled: () => {
-      void client.invalidateQueries({ queryKey: ['accounts'] })
-      void client.invalidateQueries({
-        queryKey: ['account', Number(account.id)],
-      })
-    },
+    onSettled: invalidate,
   })
-  const trimmedDraft = draft.trim()
-  const trimmedSaved = savedNote.trim()
-  const dirty = trimmedDraft !== trimmedSaved
+  const updateMutation = useMutation({
+    mutationFn: ({ noteId, note }: { noteId: string; note: string }) =>
+      api.updateAccountOperatorNote(Number(account.id), noteId, note),
+    onSuccess: () => {
+      setComposer(null)
+      setDraft('')
+      toast.success('备注已修改')
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: invalidate,
+  })
+  const deleteMutation = useMutation({
+    mutationFn: (noteId: string) =>
+      api.deleteAccountOperatorNote(Number(account.id), noteId),
+    onSuccess: () => {
+      setPendingDeleteId(null)
+      if (typeof composer === 'string') {
+        setComposer(null)
+        setDraft('')
+      }
+      toast.success('备注已删除')
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+    onSettled: invalidate,
+  })
+  const busy =
+    addMutation.isPending ||
+    updateMutation.isPending ||
+    deleteMutation.isPending
   const accountLabel = account.name || account.email || account.id
+  const startAdd = () => {
+    setPendingDeleteId(null)
+    setComposer('add')
+    setDraft('')
+    onOpenChange(true)
+  }
+  const startEdit = (note: OperatorNote) => {
+    setPendingDeleteId(null)
+    setComposer(note.id)
+    setDraft(note.content)
+  }
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (mutation.isPending) return
-        if (next) setDraft(savedNote)
-        onOpenChange(next)
-      }}
-    >
-      <PopoverTrigger asChild>
-        {trimmedSaved ? (
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            className='h-8 max-w-52 gap-1.5 px-2.5 text-xs font-normal'
-            aria-label={`编辑 ${accountLabel} 的隔离备注`}
-          >
-            <span className='truncate' title={trimmedSaved}>
-              {trimmedSaved}
-            </span>
-            <span className='shrink-0 text-muted-foreground'>1 项</span>
-          </Button>
-        ) : (
-          <button
-            type='button'
-            className='inline-flex h-8 items-center text-muted-foreground'
-            aria-label={`为 ${accountLabel} 添加隔离备注`}
-          >
-            —
-          </button>
-        )}
-      </PopoverTrigger>
-      <PopoverContent
-        align='start'
-        className='w-80 p-0'
-        onClick={(event) => event.stopPropagation()}
+    <div className='flex items-center gap-1'>
+      <Popover
+        open={open}
+        onOpenChange={(next) => {
+          if (busy) return
+          if (!next) {
+            setComposer(null)
+            setDraft('')
+            setPendingDeleteId(null)
+          }
+          onOpenChange(next)
+        }}
       >
-        <div className='border-b px-3 py-2.5'>
-          <div className='text-sm font-medium'>隔离备注</div>
-          <div className='mt-1 text-[11px] leading-5 text-muted-foreground'>
-            只保存在本系统，方便以后回忆为什么隔离
-          </div>
-        </div>
-        {trimmedSaved ? (
-          <ul className='max-h-40 space-y-0.5 overflow-y-auto p-2'>
-            <li className='rounded-md bg-muted/40 px-2.5 py-1.5 text-xs leading-5 whitespace-pre-wrap'>
-              {trimmedSaved}
-            </li>
-          </ul>
-        ) : (
-          <p className='px-3 py-2.5 text-xs text-muted-foreground'>暂无备注</p>
-        )}
-        <div className='space-y-3 border-t p-3'>
-          <Textarea
-            value={draft}
-            maxLength={2000}
-            rows={4}
-            placeholder='例如：出口异常、人工确认降智、先观察几天'
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={mutation.isPending}
-          />
-          <div className='flex items-center justify-between gap-3'>
-            <span className='text-[11px] tabular-nums text-muted-foreground'>
-              {draft.length}/2000
-            </span>
+        <PopoverTrigger asChild>
+          {latest ? (
             <Button
               type='button'
+              variant='outline'
               size='sm'
-              disabled={mutation.isPending || !dirty}
-              onClick={() => mutation.mutate(draft)}
+              className='h-8 max-w-52 gap-1.5 px-2.5 text-xs font-normal'
+              aria-label={`查看 ${accountLabel} 的隔离备注`}
             >
-              {mutation.isPending ? (
-                <>
-                  <Loader2 className='animate-spin' />
-                  保存中…
-                </>
-              ) : (
-                '保存'
-              )}
+              <span className='truncate' title={latest.content}>
+                {latest.content}
+              </span>
+              <span className='shrink-0 text-muted-foreground'>
+                {notes.length} 项
+              </span>
+            </Button>
+          ) : (
+            <button
+              type='button'
+              className='inline-flex h-8 items-center text-muted-foreground'
+              aria-label={`查看 ${accountLabel} 的隔离备注`}
+            >
+              —
+            </button>
+          )}
+        </PopoverTrigger>
+        <PopoverContent
+          align='start'
+          className='w-96 p-0'
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className='flex items-start justify-between gap-3 border-b px-3 py-2.5'>
+            <div>
+              <div className='text-sm font-medium'>隔离备注</div>
+              <div className='mt-1 text-[11px] leading-5 text-muted-foreground'>
+                {notes.length
+                  ? `${notes.length} 条记录，含时间戳`
+                  : '只保存在本系统，方便以后回忆为什么隔离'}
+              </div>
+            </div>
+            <Button
+              type='button'
+              size='icon'
+              variant='outline'
+              className='size-8'
+              disabled={busy}
+              onClick={startAdd}
+              aria-label={`为 ${accountLabel} 添加隔离备注`}
+            >
+              <Plus />
             </Button>
           </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+          {composer === 'add' ? (
+            <div className='space-y-3 border-b p-3'>
+              <Textarea
+                value={draft}
+                maxLength={2000}
+                rows={4}
+                autoFocus
+                placeholder='例如：出口异常、人工确认降智、先观察几天'
+                onChange={(event) => setDraft(event.target.value)}
+                disabled={busy}
+              />
+              <div className='flex items-center justify-between gap-3'>
+                <span className='text-[11px] tabular-nums text-muted-foreground'>
+                  {draft.length}/2000
+                </span>
+                <div className='flex gap-2'>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='ghost'
+                    disabled={busy}
+                    onClick={() => {
+                      setComposer(null)
+                      setDraft('')
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    type='button'
+                    size='sm'
+                    disabled={busy || !draft.trim()}
+                    onClick={() => addMutation.mutate(draft)}
+                  >
+                    {addMutation.isPending ? (
+                      <>
+                        <Loader2 className='animate-spin' />
+                        添加中…
+                      </>
+                    ) : (
+                      '添加'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {notes.length ? (
+            <ul className='max-h-80 space-y-2 overflow-y-auto p-2'>
+              {notes.map((note) => {
+                const editing = composer === note.id
+                const timestamp = note.updated_at || note.created_at
+                return (
+                  <li
+                    key={note.id}
+                    className='rounded-md bg-muted/40 px-2.5 py-2'
+                  >
+                    <div className='flex items-start justify-between gap-2'>
+                      <div className='text-[11px] leading-5 text-muted-foreground tabular-nums'>
+                        {timestamp ? formatDate(timestamp) : '时间未知'}
+                        {note.updated_at ? ' · 已修改' : ''}
+                      </div>
+                      <div className='flex shrink-0'>
+                        <Button
+                          type='button'
+                          size='icon'
+                          variant='ghost'
+                          className='size-7'
+                          disabled={busy}
+                          onClick={() => startEdit(note)}
+                          aria-label='修改这条备注'
+                        >
+                          <Pencil className='size-3.5' />
+                        </Button>
+                        {pendingDeleteId === note.id ? (
+                          <Button
+                            type='button'
+                            size='sm'
+                            variant='ghost'
+                            className='h-7 px-2 text-destructive'
+                            disabled={busy}
+                            onClick={() => deleteMutation.mutate(note.id)}
+                          >
+                            {deleteMutation.isPending &&
+                            deleteMutation.variables === note.id ? (
+                              <Loader2 className='animate-spin' />
+                            ) : (
+                              '确认删除'
+                            )}
+                          </Button>
+                        ) : (
+                          <Button
+                            type='button'
+                            size='icon'
+                            variant='ghost'
+                            className='size-7'
+                            disabled={busy}
+                            onClick={() => {
+                              setComposer(null)
+                              setPendingDeleteId(note.id)
+                            }}
+                            aria-label='删除这条备注'
+                          >
+                            <Trash2 className='size-3.5' />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {editing ? (
+                      <div className='mt-2 space-y-2'>
+                        <Textarea
+                          value={draft}
+                          maxLength={2000}
+                          rows={3}
+                          onChange={(event) => setDraft(event.target.value)}
+                          disabled={busy}
+                        />
+                        <div className='flex items-center justify-between gap-3'>
+                          <span className='text-[11px] tabular-nums text-muted-foreground'>
+                            {draft.length}/2000
+                          </span>
+                          <div className='flex gap-2'>
+                            <Button
+                              type='button'
+                              size='sm'
+                              variant='ghost'
+                              disabled={busy}
+                              onClick={() => {
+                                setComposer(null)
+                                setDraft('')
+                              }}
+                            >
+                              取消
+                            </Button>
+                            <Button
+                              type='button'
+                              size='sm'
+                              disabled={
+                                busy ||
+                                !draft.trim() ||
+                                draft.trim() === note.content.trim()
+                              }
+                              onClick={() =>
+                                updateMutation.mutate({
+                                  noteId: note.id,
+                                  note: draft,
+                                })
+                              }
+                            >
+                              {updateMutation.isPending ? (
+                                <>
+                                  <Loader2 className='animate-spin' />
+                                  保存中…
+                                </>
+                              ) : (
+                                '保存'
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className='mt-1 text-xs leading-5 whitespace-pre-wrap'>
+                        {note.content}
+                      </p>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : composer === 'add' ? null : (
+            <p className='px-3 py-2.5 text-xs text-muted-foreground'>
+              暂无备注，点击右上角 + 添加
+            </p>
+          )}
+        </PopoverContent>
+      </Popover>
+      <Button
+        type='button'
+        size='icon'
+        variant='ghost'
+        className='size-8'
+        disabled={busy}
+        onClick={(event) => {
+          event.stopPropagation()
+          startAdd()
+        }}
+        aria-label={`为 ${accountLabel} 添加隔离备注`}
+      >
+        <Plus />
+      </Button>
+    </div>
   )
 }
 
@@ -1326,7 +1552,7 @@ function QuarantineSampleDetail({
   egressNodeNames: EgressNodeNameMap
 }) {
   const reasons = account?.assessment?.risk_reasons ?? []
-  const operatorNote = String(account?.assessment?.operator_note ?? '').trim()
+  const notes = account ? accountOperatorNotes(account) : []
   return (
     <div className='space-y-4'>
       {account && (
@@ -1344,15 +1570,27 @@ function QuarantineSampleDetail({
           </span>
         </div>
       )}
-      {operatorNote ? (
+      {notes.length > 0 ? (
         <div className='rounded-lg border bg-muted/30 p-3'>
           <div className='flex items-center gap-2 text-sm font-medium'>
             <StickyNote className='size-4 text-muted-foreground' />
             隔离备注
           </div>
-          <p className='mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground'>
-            {operatorNote}
-          </p>
+          <ul className='mt-2 space-y-2'>
+            {notes.map((note) => (
+              <li key={note.id} className='text-sm leading-6'>
+                <div className='text-[11px] text-muted-foreground tabular-nums'>
+                  {note.updated_at || note.created_at
+                    ? formatDate(note.updated_at || note.created_at)
+                    : '时间未知'}
+                  {note.updated_at ? ' · 已修改' : ''}
+                </div>
+                <p className='whitespace-pre-wrap text-muted-foreground'>
+                  {note.content}
+                </p>
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       {reasons.length > 0 && (

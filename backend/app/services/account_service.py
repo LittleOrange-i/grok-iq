@@ -970,29 +970,87 @@ class AccountService:
             ),
         )
 
-    async def set_operator_note(
+    def _require_isolation_zone(self, account_id: int) -> dict[str, Any]:
+        assessment = self.accounts.get_assessment(account_id)
+        if not self._is_isolation_zone(assessment):
+            raise ValueError("只有隔离区账号可以填写备注")
+        return assessment or {}
+
+    def _operator_note_payload(
+        self,
+        account_id: int,
+        assessment: dict[str, Any],
+    ) -> dict[str, Any]:
+        notes = list(assessment.get("operator_notes") or [])
+        return {
+            "accountId": account_id,
+            "notes": notes,
+            "operatorNote": str(assessment.get("operator_note") or ""),
+            "assessment": assessment,
+        }
+
+    async def add_operator_note(
         self,
         account_id: int,
         note: str,
     ) -> dict[str, Any]:
-        """Save an operator remark on an isolated account."""
+        """Append an operator remark on an isolated account."""
 
         normalized_account_id = int(account_id)
         normalized_note = str(note or "").strip()
+        if not normalized_note:
+            raise ValueError("备注不能为空")
         if len(normalized_note) > 2000:
             raise ValueError("备注不能超过 2000 个字符")
-        assessment = self.accounts.get_assessment(normalized_account_id)
-        if not self._is_isolation_zone(assessment):
-            raise ValueError("只有隔离区账号可以填写备注")
-        updated = self.accounts.set_operator_note(
+        self._require_isolation_zone(normalized_account_id)
+        updated = self.accounts.add_operator_note(
             normalized_account_id,
             normalized_note,
         )
-        return {
-            "accountId": normalized_account_id,
-            "operatorNote": str(updated.get("operator_note") or ""),
-            "assessment": updated,
-        }
+        return self._operator_note_payload(normalized_account_id, updated)
+
+    async def update_operator_note(
+        self,
+        account_id: int,
+        note_id: str,
+        note: str,
+    ) -> dict[str, Any]:
+        """Edit one operator remark on an isolated account."""
+
+        normalized_account_id = int(account_id)
+        normalized_note_id = str(note_id or "").strip()
+        normalized_note = str(note or "").strip()
+        if not normalized_note_id:
+            raise ValueError("备注不存在")
+        if not normalized_note:
+            raise ValueError("备注不能为空")
+        if len(normalized_note) > 2000:
+            raise ValueError("备注不能超过 2000 个字符")
+        self._require_isolation_zone(normalized_account_id)
+        updated = self.accounts.update_operator_note(
+            normalized_account_id,
+            normalized_note_id,
+            normalized_note,
+        )
+        return self._operator_note_payload(normalized_account_id, updated)
+
+    async def delete_operator_note(
+        self,
+        account_id: int,
+        note_id: str,
+    ) -> dict[str, Any]:
+        """Delete one operator remark on an isolated account."""
+
+        normalized_account_id = int(account_id)
+        normalized_note_id = str(note_id or "").strip()
+        if not normalized_note_id:
+            raise ValueError("备注不存在")
+        self._require_isolation_zone(normalized_account_id)
+        updated = self.accounts.delete_operator_note(
+            normalized_account_id,
+            normalized_note_id,
+        )
+        return self._operator_note_payload(normalized_account_id, updated)
 
     async def list_isolation_zone(
         self,

@@ -171,14 +171,36 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             page_size=page_size,
         )
 
-    @router.patch("/accounts/{account_id}/operator-note")
-    async def update_operator_note(
+    @router.post("/accounts/{account_id}/operator-notes")
+    async def add_operator_note(
         account_id: int,
         payload: AccountOperatorNoteInput,
     ) -> dict[str, Any]:
-        return await service.set_operator_note(
+        return await service.add_operator_note(
             account_id=account_id,
             note=payload.note,
+        )
+
+    @router.patch("/accounts/{account_id}/operator-notes/{note_id}")
+    async def update_operator_note(
+        account_id: int,
+        note_id: str,
+        payload: AccountOperatorNoteInput,
+    ) -> dict[str, Any]:
+        return await service.update_operator_note(
+            account_id=account_id,
+            note_id=note_id,
+            note=payload.note,
+        )
+
+    @router.delete("/accounts/{account_id}/operator-notes/{note_id}")
+    async def delete_operator_note(
+        account_id: int,
+        note_id: str,
+    ) -> dict[str, Any]:
+        return await service.delete_operator_note(
+            account_id=account_id,
+            note_id=note_id,
         )
 
     @router.post("/accounts/{account_id}/action")

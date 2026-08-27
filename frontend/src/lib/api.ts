@@ -275,6 +275,13 @@ export function isAuthenticationRequiredCode(
   )
 }
 
+export type OperatorNote = {
+  id: string
+  content: string
+  created_at: string
+  updated_at?: string | null
+}
+
 type Assessment = {
   account_id: number
   monitor_status: string
@@ -292,6 +299,7 @@ type Assessment = {
   quarantine_until?: string | null
   recovery_guarded?: boolean
   operator_note?: string
+  operator_notes?: OperatorNote[]
 }
 
 export type UpstreamQuota = {
@@ -2456,14 +2464,34 @@ export const api = {
       missingUpstream: boolean
       account: Record<string, unknown> | null
     }>(`/accounts/${id}/upstream`),
-  updateAccountOperatorNote: (id: number, note: string) =>
+  addAccountOperatorNote: (id: number, note: string) =>
     request<{
       accountId: number
+      notes: OperatorNote[]
       operatorNote: string
       assessment: Assessment
-    }>(`/accounts/${id}/operator-note`, {
+    }>(`/accounts/${id}/operator-notes`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  updateAccountOperatorNote: (id: number, noteId: string, note: string) =>
+    request<{
+      accountId: number
+      notes: OperatorNote[]
+      operatorNote: string
+      assessment: Assessment
+    }>(`/accounts/${id}/operator-notes/${noteId}`, {
       method: 'PATCH',
       body: JSON.stringify({ note }),
+    }),
+  deleteAccountOperatorNote: (id: number, noteId: string) =>
+    request<{
+      accountId: number
+      notes: OperatorNote[]
+      operatorNote: string
+      assessment: Assessment
+    }>(`/accounts/${id}/operator-notes/${noteId}`, {
+      method: 'DELETE',
     }),
   accountAction: (
     id: number,

@@ -19,6 +19,10 @@ COMPATIBILITY_COLUMNS = {
             "operator_note",
             "ALTER TABLE account_assessments ADD COLUMN operator_note TEXT NOT NULL DEFAULT ''",
         ),
+        (
+            "operator_notes",
+            "ALTER TABLE account_assessments ADD COLUMN operator_notes JSON NOT NULL DEFAULT '[]'",
+        ),
     ],
     "probe_profiles": [
         (

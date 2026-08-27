@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, case, delete, func, or_, select
@@ -19,7 +19,7 @@ from app.analyzer import (
     risk_status,
     rule_metadata,
 )
-from app.core.clock import ensure_utc, utc_now
+from app.core.clock import app_isoformat, ensure_utc, utc_now
 from app.reasoning_policy import canonical_reasoning_model
 
 from .database import Database
@@ -43,6 +43,77 @@ HARD_ANOMALY_NAMES = {
 PROMOTED_REASONING_ZERO_SEVERITY = 4
 FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
 ALL_EGRESS_RISK_MIGRATION_KEY = "all_egress_risk_formula_v1"
+MAX_OPERATOR_NOTES = 50
+MAX_OPERATOR_NOTE_LENGTH = 2000
+
+
+def _sort_operator_notes(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(notes, key=lambda item: str(item.get("created_at") or ""), reverse=True)
+
+
+def _normalized_operator_notes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_notes = payload.get("operator_notes") or []
+    notes: list[dict[str, Any]] = []
+    if isinstance(raw_notes, list):
+        for item in raw_notes:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            note_id = str(item.get("id") or "").strip()
+            if not content or not note_id:
+                continue
+            updated_at = str(item.get("updated_at") or "").strip() or None
+            notes.append(
+                {
+                    "id": note_id,
+                    "content": content,
+                    "created_at": str(item.get("created_at") or "").strip(),
+                    "updated_at": updated_at,
+                }
+            )
+    if notes:
+        return _sort_operator_notes(notes)
+    legacy = str(payload.get("operator_note") or "").strip()
+    if not legacy:
+        return []
+    created = payload.get("updated_at") or payload.get("created_at")
+    created_at = (
+        app_isoformat(created) if isinstance(created, datetime) else str(created or "")
+    )
+    return [
+        {
+            "id": f"legacy-{payload.get('account_id')}",
+            "content": legacy,
+            "created_at": created_at or "",
+            "updated_at": None,
+        }
+    ]
+
+
+def _persistable_operator_notes(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    persisted: list[dict[str, Any]] = []
+    for note in notes:
+        note_id = str(note.get("id") or "").strip()
+        if not note_id or note_id.startswith("legacy-"):
+            note_id = uuid.uuid4().hex
+        persisted.append(
+            {
+                "id": note_id,
+                "content": str(note.get("content") or "").strip(),
+                "created_at": str(note.get("created_at") or "").strip()
+                or app_isoformat(utc_now()),
+                "updated_at": str(note.get("updated_at") or "").strip() or None,
+            }
+        )
+    return _sort_operator_notes(persisted)
+
+
+def _assessment_dict(value: AccountAssessment) -> dict[str, Any]:
+    payload = model_dict(value)
+    notes = _normalized_operator_notes(payload)
+    payload["operator_notes"] = notes
+    payload["operator_note"] = str(notes[0]["content"]) if notes else ""
+    return payload
 
 
 class AccountRepository:
@@ -52,7 +123,7 @@ class AccountRepository:
     def get_assessment(self, account_id: int) -> dict[str, Any] | None:
         with self.database.session() as session:
             value = session.get(AccountAssessment, account_id)
-            return model_dict(value) if value else None
+            return _assessment_dict(value) if value else None
 
     def get_assessments(self, account_ids: list[int]) -> dict[int, dict[str, Any]]:
         if not account_ids:
@@ -61,7 +132,7 @@ class AccountRepository:
             values = session.scalars(
                 select(AccountAssessment).where(AccountAssessment.account_id.in_(account_ids))
             ).all()
-            return {value.account_id: model_dict(value) for value in values}
+            return {value.account_id: _assessment_dict(value) for value in values}
 
     def list_assessments(self, limit: int = 1000) -> list[dict[str, Any]]:
         with self.database.session() as session:
@@ -70,7 +141,7 @@ class AccountRepository:
                 .order_by(AccountAssessment.risk_score.desc(), AccountAssessment.updated_at.desc())
                 .limit(limit)
             ).all()
-            return [model_dict(value) for value in values]
+            return [_assessment_dict(value) for value in values]
 
     def list_isolation_zone(self) -> list[dict[str, Any]]:
         """Return permanent isolations: quarantined with no recovery deadline."""
@@ -84,7 +155,7 @@ class AccountRepository:
                 )
                 .order_by(AccountAssessment.account_id.desc())
             ).all()
-            return [model_dict(value) for value in values]
+            return [_assessment_dict(value) for value in values]
 
     def migrate_fixed_egress_risk_formula(
         self,
@@ -464,7 +535,7 @@ class AccountRepository:
             assessment.risk_reasons = reasons
             assessment.updated_at = utc_now()
             session.flush()
-            result = model_dict(assessment)
+            result = _assessment_dict(assessment)
         return result
 
     @staticmethod
@@ -504,18 +575,90 @@ class AccountRepository:
                 assessment.recovery_guarded = recovery_guarded
             assessment.updated_at = utc_now()
             session.flush()
-            result = model_dict(assessment)
+            result = _assessment_dict(assessment)
         return result
 
-    def set_operator_note(self, account_id: int, note: str) -> dict[str, Any]:
+    def _load_operator_notes(
+        self,
+        assessment: AccountAssessment,
+    ) -> list[dict[str, Any]]:
+        return _persistable_operator_notes(_normalized_operator_notes(model_dict(assessment)))
+
+    def add_operator_note(self, account_id: int, content: str) -> dict[str, Any]:
         with self.database.transaction() as session:
             assessment = session.get(AccountAssessment, account_id)
             if assessment is None:
                 assessment = AccountAssessment(account_id=account_id)
                 session.add(assessment)
-            assessment.operator_note = note
+            notes = self._load_operator_notes(assessment)
+            if len(notes) >= MAX_OPERATOR_NOTES:
+                raise ValueError("备注最多 50 条")
+            notes.insert(
+                0,
+                {
+                    "id": uuid.uuid4().hex,
+                    "content": content,
+                    "created_at": app_isoformat(utc_now()),
+                    "updated_at": None,
+                },
+            )
+            notes = _sort_operator_notes(notes)
+            assessment.operator_notes = notes
+            assessment.operator_note = content
             session.flush()
-            result = model_dict(assessment)
+            result = _assessment_dict(assessment)
+        return result
+
+    def update_operator_note(
+        self,
+        account_id: int,
+        note_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        with self.database.transaction() as session:
+            assessment = session.get(AccountAssessment, account_id)
+            if assessment is None:
+                raise ValueError("备注不存在")
+            current = _normalized_operator_notes(model_dict(assessment))
+            updated_notes: list[dict[str, Any]] = []
+            found = False
+            for note in current:
+                if str(note.get("id") or "") != note_id:
+                    updated_notes.append(note)
+                    continue
+                found = True
+                updated_notes.append(
+                    {
+                        **note,
+                        "content": content,
+                        "updated_at": app_isoformat(utc_now()),
+                    }
+                )
+            if not found:
+                raise ValueError("备注不存在")
+            notes = _persistable_operator_notes(updated_notes)
+            assessment.operator_notes = notes
+            assessment.operator_note = str(notes[0]["content"]) if notes else ""
+            session.flush()
+            result = _assessment_dict(assessment)
+        return result
+
+    def delete_operator_note(self, account_id: int, note_id: str) -> dict[str, Any]:
+        with self.database.transaction() as session:
+            assessment = session.get(AccountAssessment, account_id)
+            if assessment is None:
+                raise ValueError("备注不存在")
+            current = _normalized_operator_notes(model_dict(assessment))
+            remaining = [
+                note for note in current if str(note.get("id") or "") != note_id
+            ]
+            if len(remaining) == len(current):
+                raise ValueError("备注不存在")
+            notes = _persistable_operator_notes(remaining)
+            assessment.operator_notes = notes
+            assessment.operator_note = str(notes[0]["content"]) if notes else ""
+            session.flush()
+            result = _assessment_dict(assessment)
         return result
 
     def mark_registration_risk(
@@ -551,7 +694,7 @@ class AccountRepository:
             assessment.manual_note = f"registration:{registration_id}"
             assessment.updated_at = utc_now()
             session.flush()
-            result = model_dict(assessment)
+            result = _assessment_dict(assessment)
         return result
 
     def due_quarantines(self) -> list[dict[str, Any]]:
@@ -565,7 +708,7 @@ class AccountRepository:
                     AccountAssessment.quarantine_until <= now,
                 )
             ).all()
-            return [model_dict(value) for value in values]
+            return [_assessment_dict(value) for value in values]
 
     def mark_restored(self, account_id: int, *, recovery_guarded: bool) -> None:
         with self.database.transaction() as session:

@@ -687,7 +687,7 @@ async def test_isolation_zone_lists_only_permanent_isolations(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_isolation_zone_operator_note_roundtrip(tmp_path: Path):
-    _database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    database, accounts, _probes, _client, service = _isolation_service(tmp_path)
     accounts.set_manual_status(
         account_id=1,
         status="quarantined",
@@ -698,16 +698,41 @@ async def test_isolation_zone_operator_note_roundtrip(tmp_path: Path):
         recovery_guarded=False,
     )
 
-    result = await service.set_operator_note(1, "  出口异常，先隔离观察  ")
-    assert result["operatorNote"] == "出口异常，先隔离观察"
+    first = await service.add_operator_note(1, "  出口异常，先隔离观察  ")
+    assert first["operatorNote"] == "出口异常，先隔离观察"
+    assert len(first["notes"]) == 1
+    first_id = first["notes"][0]["id"]
+    assert first["notes"][0]["content"] == "出口异常，先隔离观察"
+    assert first["notes"][0]["created_at"]
+
+    second = await service.add_operator_note(1, "人工确认降智")
+    assert [item["content"] for item in second["notes"]] == [
+        "人工确认降智",
+        "出口异常，先隔离观察",
+    ]
     stored = accounts.get_assessment(1)
     assert stored is not None
-    assert stored["operator_note"] == "出口异常，先隔离观察"
+    assert stored["operator_note"] == "人工确认降智"
     assert stored["manual_note"] == "permanent"
 
     page = await service.list_isolation_zone(page=1, page_size=50)
     item = next(value for value in page["items"] if int(value["id"]) == 1)
-    assert item["assessment"]["operator_note"] == "出口异常，先隔离观察"
+    assert [note["content"] for note in item["assessment"]["operator_notes"]] == [
+        "人工确认降智",
+        "出口异常，先隔离观察",
+    ]
+
+    edited = await service.update_operator_note(1, first_id, "出口异常，继续观察")
+    assert [item["content"] for item in edited["notes"]] == [
+        "人工确认降智",
+        "出口异常，继续观察",
+    ]
+    edited_note = next(item for item in edited["notes"] if item["id"] == first_id)
+    assert edited_note["updated_at"]
+
+    deleted = await service.delete_operator_note(1, first_id)
+    assert [item["content"] for item in deleted["notes"]] == ["人工确认降智"]
+    assert deleted["operatorNote"] == "人工确认降智"
 
     accounts.set_manual_status(
         account_id=1,
@@ -721,19 +746,34 @@ async def test_isolation_zone_operator_note_roundtrip(tmp_path: Path):
     stored = accounts.get_assessment(1)
     assert stored is not None
     assert stored["manual_note"] == "re-isolated"
-    assert stored["operator_note"] == "出口异常，先隔离观察"
+    assert stored["operator_note"] == "人工确认降智"
 
-    cleared = await service.set_operator_note(1, "   ")
-    assert cleared["operatorNote"] == ""
-    stored = accounts.get_assessment(1)
-    assert stored is not None
-    assert stored["operator_note"] == ""
-
+    with pytest.raises(ValueError, match="不能为空"):
+        await service.add_operator_note(1, "   ")
     with pytest.raises(ValueError, match="2000"):
-        await service.set_operator_note(1, "x" * 2001)
-
+        await service.add_operator_note(1, "x" * 2001)
     with pytest.raises(ValueError, match="隔离区"):
-        await service.set_operator_note(2, "not isolated")
+        await service.add_operator_note(2, "not isolated")
+
+    accounts.set_manual_status(
+        account_id=99,
+        status="quarantined",
+        note="missing",
+        quarantine_until=None,
+        previous_upstream_enabled=False,
+        disabled_by_monitor=False,
+        recovery_guarded=False,
+    )
+    from app.persistence.models import AccountAssessment
+
+    with database.transaction() as session:
+        assessment = session.get(AccountAssessment, 99)
+        assert assessment is not None
+        assessment.operator_note = "旧备注"
+
+    page = await service.list_isolation_zone(page=1, page_size=50)
+    legacy = next(value for value in page["items"] if int(value["id"]) == 99)
+    assert legacy["assessment"]["operator_notes"][0]["content"] == "旧备注"
 
 
 @pytest.mark.asyncio
@@ -764,7 +804,7 @@ async def test_isolation_zone_note_does_not_reorder(tmp_path: Path):
     ]
     assert before == [99, 1]
 
-    await service.set_operator_note(1, "不会因为备注改排序")
+    await service.add_operator_note(1, "不会因为备注改排序")
     after = [
         int(item["id"])
         for item in (await service.list_isolation_zone(page=1, page_size=50))["items"]
