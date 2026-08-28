@@ -1,10 +1,17 @@
+import { type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   Activity,
+  CalendarDays,
+  CircleCheck,
   Gauge,
   RefreshCw,
+  Server,
   ShieldAlert,
+  ShieldBan,
   TimerReset,
+  UserPlus,
   UsersRound,
   Zap,
 } from 'lucide-react'
@@ -19,249 +26,420 @@ import {
 } from 'recharts'
 import { api, type ProbeRun, type UpstreamAccount } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
-import { formatDate, formatNumber } from '@/lib/utils'
+import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { Badge } from '@/components/ui/badge'
+import { ProgressBar } from '@/components/ui/progress'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { InfoTooltip } from '@/components/info-tooltip'
-import { Page, PageHeader, LoadingState } from '@/components/page'
+import { EmptyState, Page, PageHeader } from '@/components/page'
+import { SegmentedControl } from '@/components/segmented-control'
+import { StatCard, type StatTone } from '@/components/stat-card'
+
+type DashboardRange = 'today' | '24h' | '7d' | '30d'
+type DashboardPath = '/accounts' | '/quarantine' | '/runs' | '/workers'
+
+const DASHBOARD_RANGE_KEY = 'grokiq.monitor.dashboard-range.v1'
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000
+const defaultRange = { preset: 'today' as DashboardRange }
+const RANGE_PRESETS: Array<{
+  value: DashboardRange
+  label: string
+  icon?: typeof CalendarDays
+}> = [
+  { value: 'today', label: '今天', icon: CalendarDays },
+  { value: '24h', label: '近 24 小时' },
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+]
 
 export function DashboardPage() {
+  const view = usePersistedViewState(DASHBOARD_RANGE_KEY, defaultRange)
+  const preset = isDashboardRange(view.value.preset)
+    ? view.value.preset
+    : 'today'
+  const rangeLabel =
+    RANGE_PRESETS.find((item) => item.value === preset)?.label ?? '今天'
   const query = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => api.dashboard(168),
+    queryKey: ['dashboard', preset],
+    queryFn: () => api.dashboard(hoursForPreset(preset)),
     refetchInterval: 15_000,
+    placeholderData: (previous) => previous,
   })
-  if (query.isLoading)
-    return (
-      <Page>
-        <LoadingState />
-      </Page>
-    )
+  const loading = query.isLoading && !query.data
   const data = query.data ?? {}
   const upstream = data.upstream ?? {}
   const assessments = data.assessments ?? {}
   const samples = data.samples ?? {}
   const queue = data.queue ?? {}
+  const registered = data.registered ?? {}
+  const isolated = data.isolated ?? {}
+  const probeRuns = data.probeRuns ?? {}
+  const workers = data.workers ?? {}
+  const queued = workers.queued ?? queue.queued ?? 0
+  const running = workers.running ?? queue.running ?? 0
+  const failedRuns =
+    (probeRuns.failed ?? 0) + (probeRuns.completedWithErrors ?? 0)
+  const finishedRuns = (probeRuns.completed ?? 0) + failedRuns
+  const sampleSeries = seriesFromTrend(data.trend, 'samples')
+  const tpsSeries = seriesFromTrend(data.trend, 'max_tps')
+  const hardSeries = seriesFromTrend(data.trend, 'hard')
 
-  const cards = [
+  const cards: Array<{
+    label: string
+    value: string
+    detail: string
+    icon: typeof UsersRound
+    tone: StatTone
+    to?: DashboardPath
+    sparkline?: number[]
+    sparklineVariant?: 'line'
+    details?: Array<{ label: string; value: string }>
+  }> = [
     {
       label: '上游账号',
-      value: upstream.total ?? 0,
-      detail: `${upstream.available ?? 0} 个当前可调度`,
+      value: formatNumber(upstream.total ?? 0, 0),
+      detail: `${formatNumber(upstream.available ?? 0, 0)} 个当前可调度`,
       icon: UsersRound,
-      tone: 'text-blue-600 bg-blue-500/10',
+      tone: 'blue',
+      to: '/accounts',
+      details: [
+        {
+          label: '可调度',
+          value: formatNumber(upstream.available ?? 0, 0),
+        },
+        {
+          label: '已评估',
+          value: formatNumber(assessments.total ?? 0, 0),
+        },
+      ],
     },
     {
       label: '风险账号',
-      value: assessments.risky ?? 0,
-      detail: `${assessments.quarantined ?? 0} 个已暂时停用`,
+      value: formatNumber(assessments.risky ?? 0, 0),
+      detail: `平均风险 ${formatNumber(assessments.avgRisk ?? 0)} 分`,
       icon: ShieldAlert,
-      tone: 'text-red-600 bg-red-500/10',
+      tone: 'red',
+      to: '/accounts',
+      sparkline: hardSeries,
+      sparklineVariant: 'line',
     },
     {
-      label: '七日探针样本',
-      value: samples.total ?? 0,
-      detail: `${samples.anomalies ?? 0} 个降智信号`,
+      label: '区间新隔离',
+      value: formatNumber(isolated.inRange ?? 0, 0),
+      detail: `当前隔离 ${formatNumber(isolated.zoneTotal ?? 0, 0)} 个`,
+      icon: ShieldBan,
+      tone: 'rose',
+      to: '/quarantine',
+      details: [
+        {
+          label: '当前隔离',
+          value: formatNumber(isolated.zoneTotal ?? 0, 0),
+        },
+        {
+          label: '区间新隔离',
+          value: formatNumber(isolated.inRange ?? 0, 0),
+        },
+      ],
+    },
+    {
+      label: '区间注册',
+      value: formatNumber(registered.total ?? 0, 0),
+      detail: `完成 ${formatNumber(registered.completed ?? 0, 0)} · 失败 ${formatNumber(registered.failed ?? 0, 0)}`,
+      icon: UserPlus,
+      tone: 'sky',
+      to: '/quarantine',
+      details: [
+        {
+          label: '完成',
+          value: formatNumber(registered.completed ?? 0, 0),
+        },
+        {
+          label: '失败',
+          value: formatNumber(registered.failed ?? 0, 0),
+        },
+      ],
+    },
+    {
+      label: `${rangeLabel}探针样本`,
+      value: formatNumber(samples.total ?? 0, 0),
+      detail: `${formatNumber(samples.anomalies ?? 0, 0)} 个降智信号`,
       icon: Activity,
-      tone: 'text-violet-600 bg-violet-500/10',
+      tone: 'violet',
+      to: '/runs',
+      sparkline: sampleSeries,
+      sparklineVariant: 'line',
     },
     {
       label: '最高 TPS',
       value: formatNumber(samples.maxTps ?? 0),
       detail: `平均 ${formatNumber(samples.avgTps ?? 0)}；上游最高 ${formatNumber(samples.maxUpstreamTps ?? 0)}`,
       icon: Zap,
-      tone: 'text-amber-600 bg-amber-500/10',
+      tone: 'amber',
+      sparkline: tpsSeries,
+      sparklineVariant: 'line',
     },
     {
       label: '排队 / 执行',
-      value: `${queue.queued ?? 0} / ${queue.running ?? 0}`,
+      value: `${queued} / ${running}`,
       detail: '持久队列限制任务堆积',
       icon: TimerReset,
-      tone: 'text-cyan-600 bg-cyan-500/10',
+      tone: 'cyan',
+      to: '/runs',
+      details: [
+        { label: '排队', value: formatNumber(queued, 0) },
+        { label: '执行中', value: formatNumber(running, 0) },
+      ],
+    },
+    {
+      label: '探针任务',
+      value: finishedRuns ? formatPercent(probeRuns.successRate) : '—',
+      detail: finishedRuns
+        ? `成功 ${formatNumber(probeRuns.completed ?? 0, 0)} · 失败 ${formatNumber(failedRuns, 0)}`
+        : '所选区间暂无完成任务',
+      icon: CircleCheck,
+      tone: 'emerald',
+      to: '/runs',
+      details: [
+        {
+          label: '成功',
+          value: formatNumber(probeRuns.completed ?? 0, 0),
+        },
+        { label: '失败', value: formatNumber(failedRuns, 0) },
+      ],
+    },
+    {
+      label: 'Worker / 队列',
+      value:
+        (workers.stale ?? 0) > 0
+          ? `${formatNumber(workers.stale, 0)} 超时`
+          : `${formatNumber(running, 0)} 执行`,
+      detail: workerHealthDetail(workers, queued),
+      icon: Server,
+      tone: (workers.stale ?? 0) > 0 ? 'red' : 'indigo',
+      to: '/workers',
+      details: [
+        {
+          label: '可领取',
+          value: formatNumber(workers.eligible ?? 0, 0),
+        },
+        {
+          label: '心跳超时',
+          value: formatNumber(workers.stale ?? 0, 0),
+        },
+      ],
     },
   ]
 
   return (
-    <Page>
+    <Page className='relative'>
+      <div className='surface-glow pointer-events-none absolute inset-x-0 -top-6 h-44' />
       <PageHeader
         title='监控概览'
         description='直接读取 grok2api 当前账号状态，本地聚合风险周期内固定出口和临时切换出口的多轮探针结果。'
         descriptionAsHint
         actions={
-          <ActionToolbar label='监控概览操作'>
-            <ToolbarAction
-              label='刷新监控概览'
-              pending={query.isFetching}
-              onClick={() => void query.refetch()}
-            >
-              <RefreshCw />
-            </ToolbarAction>
-          </ActionToolbar>
+          <div className='flex flex-wrap items-center justify-end gap-2'>
+            <SegmentedControl
+              ariaLabel='监控概览时间范围'
+              value={preset}
+              onChange={(next) => view.setValue({ preset: next })}
+              options={RANGE_PRESETS}
+            />
+            <ActionToolbar label='监控概览操作'>
+              <ToolbarAction
+                label='刷新监控概览'
+                pending={query.isFetching}
+                onClick={() => void query.refetch()}
+              >
+                <RefreshCw />
+              </ToolbarAction>
+            </ActionToolbar>
+          </div>
         }
       />
-      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-5'>
-        {cards.map((item) => (
-          <Card key={item.label}>
-            <CardContent className='flex items-start gap-3 p-5'>
-              <div
-                className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${item.tone}`}
-              >
-                <item.icon className='size-5' />
-              </div>
-              <div className='min-w-0'>
-                <p className='text-xs text-muted-foreground'>{item.label}</p>
-                <p className='number mt-1 text-2xl font-semibold'>
-                  {item.value}
-                </p>
-                <p className='mt-1 truncate text-xs text-muted-foreground'>
-                  {item.detail}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+      {query.isError && !query.data ? (
+        <Card className='border-destructive/30'>
+          <CardContent className='p-5 text-sm text-destructive'>
+            监控概览读取失败：{getErrorMessage(query.error)}
+          </CardContent>
+        </Card>
+      ) : null}
+      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3'>
+        {cards.map((item, index) => (
+          <StatCard key={item.label} {...item} loading={loading} index={index} />
         ))}
       </div>
 
       <div className='grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]'>
-        <Card>
-          <CardHeader>
+        <Card className='overflow-hidden py-0 shadow-xs'>
+          <CardHeader className='border-b py-4'>
             <CardTitle className='flex items-center gap-1.5'>
-              <Gauge className='size-4 text-primary' />
+              <span className='flex size-8 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-300'>
+                <Gauge className='size-4' />
+              </span>
               TPS 趋势
               <InfoTooltip
                 label='TPS 趋势'
-                content='最近七天实际探针流的平均与最高输出速度。'
+                content={`${rangeLabel}实际探针流的平均与最高输出速度。`}
               />
             </CardTitle>
           </CardHeader>
-          <CardContent className='h-80'>
-            <ResponsiveContainer width='100%' height='100%'>
-              <AreaChart
-                data={data.trend ?? []}
-                margin={{ left: -20, right: 8 }}
-              >
-                <defs>
-                  <linearGradient id='avgFill' x1='0' y1='0' x2='0' y2='1'>
-                    <stop
-                      offset='5%'
-                      stopColor='var(--chart-1)'
-                      stopOpacity={0.35}
-                    />
-                    <stop
-                      offset='95%'
-                      stopColor='var(--chart-1)'
-                      stopOpacity={0}
-                    />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid
-                  strokeDasharray='3 3'
-                  vertical={false}
-                  stroke='var(--border)'
-                />
-                <XAxis
-                  dataKey='day'
-                  tick={{ fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11 }}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 10,
-                    border: '1px solid var(--border)',
-                    background: 'var(--popover)',
-                    fontSize: 12,
-                  }}
-                />
-                <Area
-                  type='monotone'
-                  dataKey='max_tps'
-                  name='最高 TPS'
-                  stroke='var(--chart-5)'
-                  fill='transparent'
-                  strokeWidth={1.5}
-                />
-                <Area
-                  type='monotone'
-                  dataKey='avg_tps'
-                  name='平均 TPS'
-                  stroke='var(--chart-1)'
-                  fill='url(#avgFill)'
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <CardContent className='h-80 py-4'>
+            {loading ? (
+              <Skeleton className='h-full w-full rounded-xl' />
+            ) : (data.trend ?? []).length ? (
+              <ResponsiveContainer width='100%' height='100%'>
+                <AreaChart
+                  data={data.trend ?? []}
+                  margin={{ left: -20, right: 8 }}
+                >
+                  <defs>
+                    <linearGradient id='avgFill' x1='0' y1='0' x2='0' y2='1'>
+                      <stop
+                        offset='5%'
+                        stopColor='var(--chart-1)'
+                        stopOpacity={0.35}
+                      />
+                      <stop
+                        offset='95%'
+                        stopColor='var(--chart-1)'
+                        stopOpacity={0}
+                      />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    strokeDasharray='3 3'
+                    vertical={false}
+                    stroke='var(--border)'
+                  />
+                  <XAxis
+                    dataKey='day'
+                    tick={{ fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      borderRadius: 12,
+                      border: '1px solid var(--border)',
+                      background: 'var(--popover)',
+                      fontSize: 12,
+                    }}
+                  />
+                  <Area
+                    type='monotone'
+                    dataKey='max_tps'
+                    name='最高 TPS'
+                    stroke='var(--chart-5)'
+                    fill='transparent'
+                    strokeWidth={1.5}
+                  />
+                  <Area
+                    type='monotone'
+                    dataKey='avg_tps'
+                    name='平均 TPS'
+                    stroke='var(--chart-1)'
+                    fill='url(#avgFill)'
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState
+                compact
+                icon={Gauge}
+                title='暂无 TPS 趋势'
+                description='所选区间还没有探针样本，完成探测后会显示速度曲线。'
+                className='h-full border-0 bg-transparent'
+              />
+            )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
+        <Card className='overflow-hidden py-0 shadow-xs'>
+          <CardHeader className='border-b py-4'>
             <CardTitle className='flex items-center gap-1.5'>
+              <span className='flex size-8 items-center justify-center rounded-full bg-red-500/10 text-red-600 dark:text-red-300'>
+                <ShieldAlert className='size-4' />
+              </span>
               风险排行
-              <InfoTooltip
-                label='风险排行'
-                content='仅展示本地已有探针判定的账号。'
-              />
             </CardTitle>
           </CardHeader>
-          <CardContent className='space-y-2'>
-            {(data.riskyAccounts ?? []).map((account: UpstreamAccount) => (
-              <div
-                key={account.id}
-                className='flex items-center gap-3 rounded-lg border p-3'
-              >
-                <div className='flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold'>
-                  {String(account.name || account.id)
-                    .slice(0, 2)
-                    .toUpperCase()}
+          <CardContent className='space-y-2 py-4'>
+            {loading ? (
+              Array.from({ length: 5 }, (_, index) => (
+                <div
+                  key={index}
+                  className='flex items-center justify-between rounded-xl border p-3'
+                >
+                  <Skeleton className='h-4 w-36' />
+                  <Skeleton className='h-5 w-16' />
                 </div>
-                <div className='min-w-0 flex-1'>
-                  <div className='truncate text-sm font-medium'>
-                    {account.name || `账号 ${account.id}`}
+              ))
+            ) : data.riskyAccounts?.length ? (
+              data.riskyAccounts.map((account: UpstreamAccount) => (
+                <Link
+                  key={account.id}
+                  to='/accounts'
+                  className='flex items-center gap-3 rounded-xl border bg-background/50 p-3 transition-all hover:border-red-500/30 hover:bg-red-500/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-safe:hover:-translate-y-0.5'
+                >
+                  <div className='flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-500/20 to-red-500/5 text-xs font-semibold text-red-700 ring-1 ring-red-500/20 dark:text-red-300'>
+                    {String(account.name || account.id)
+                      .slice(0, 2)
+                      .toUpperCase()}
                   </div>
-                  <div className='truncate text-xs text-muted-foreground'>
-                    {account.email || `ID ${account.id}`}
+                  <div className='min-w-0 flex-1'>
+                    <div className='truncate text-sm font-medium'>
+                      {account.name || `账号 ${account.id}`}
+                    </div>
+                    <div className='truncate text-xs text-muted-foreground'>
+                      {account.email || `ID ${account.id}`}
+                    </div>
                   </div>
-                </div>
-                <div className='text-right'>
-                  <StatusBadge value={account.assessment?.monitor_status} />
-                  {account.ssoRiskStatus === 'flagged' && (
-                    <Badge variant='destructive' className='mt-1 ml-1'>
-                      SSO 已标记
-                    </Badge>
-                  )}
-                  {account.egressRecommendation?.type === 'change_egress' && (
-                    <Badge variant='warning' className='mt-1 ml-1'>
-                      建议换出口
-                    </Badge>
-                  )}
-                  <div className='mt-1 text-xs text-muted-foreground tabular-nums'>
-                    {formatNumber(account.assessment?.risk_score)} 分
+                  <div className='text-right'>
+                    <StatusBadge value={account.assessment?.monitor_status} />
+                    {account.ssoRiskStatus === 'flagged' && (
+                      <Badge variant='destructive' className='mt-1 ml-1'>
+                        SSO 已标记
+                      </Badge>
+                    )}
+                    {account.egressRecommendation?.type === 'change_egress' && (
+                      <Badge variant='warning' className='mt-1 ml-1'>
+                        建议换出口
+                      </Badge>
+                    )}
+                    <div className='mt-1 text-xs text-muted-foreground tabular-nums'>
+                      {formatNumber(account.assessment?.risk_score)} 分
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
-            {!data.riskyAccounts?.length && (
-              <div className='flex min-h-44 flex-col items-center justify-center rounded-lg border border-dashed px-5 text-center'>
-                <ShieldAlert className='mb-2 size-6 text-muted-foreground' />
-                <div className='text-sm font-medium'>暂无已评估账号</div>
-                <div className='mt-1 text-xs text-muted-foreground'>
-                  完成账号探针后会在这里显示风险排序
-                </div>
-              </div>
+                </Link>
+              ))
+            ) : (
+              <EmptyState
+                compact
+                icon={ShieldAlert}
+                title='暂无已评估账号'
+                description='完成账号探针后会在这里显示风险排序'
+                className='min-h-44 border-0 bg-transparent'
+              />
             )}
           </CardContent>
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
+      <Card className='overflow-hidden py-0 shadow-xs'>
+        <CardHeader className='border-b py-4'>
           <CardTitle className='flex items-center gap-1.5'>
+            <span className='flex size-8 items-center justify-center rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-300'>
+              <TimerReset className='size-4' />
+            </span>
             最近任务
             <InfoTooltip
               label='最近任务'
@@ -269,42 +447,129 @@ export function DashboardPage() {
             />
           </CardTitle>
         </CardHeader>
-        <CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
-          {(data.recentRuns ?? []).map((run: ProbeRun) => (
-            <div key={run.id} className='rounded-lg border p-3'>
-              <div className='flex items-center justify-between gap-2'>
-                <div className='truncate text-sm font-medium'>
-                  {run.account_name || `账号 ${run.account_id}`}
+        <CardContent className='grid gap-3 py-4 md:grid-cols-2 xl:grid-cols-4'>
+          {loading ? (
+            Array.from({ length: 4 }, (_, index) => (
+              <div key={index} className='rounded-2xl border p-3'>
+                <div className='flex items-center justify-between gap-2'>
+                  <Skeleton className='h-4 w-28' />
+                  <Skeleton className='h-5 w-14' />
                 </div>
-                <StatusBadge value={run.status} />
+                <div className='mt-3 flex items-center justify-between'>
+                  <Skeleton className='h-3 w-16' />
+                  <Skeleton className='h-3 w-20' />
+                </div>
+                <Skeleton className='mt-2 h-1.5 w-full rounded-full' />
               </div>
-              <div className='mt-3 flex items-center justify-between text-xs text-muted-foreground'>
-                <span>
-                  {run.completed_steps}/{run.total_steps} 步
-                </span>
-                <span>{formatDate(run.created_at)}</span>
-              </div>
-              <div className='mt-2 h-1.5 overflow-hidden rounded-full bg-muted'>
-                <div
-                  className='h-full rounded-full bg-primary transition-all'
-                  style={{
-                    width: `${run.total_steps ? (run.completed_steps / run.total_steps) * 100 : 0}%`,
-                  }}
+            ))
+          ) : data.recentRuns?.length ? (
+            data.recentRuns.map((run: ProbeRun, index) => (
+              <Link
+                key={run.id}
+                to='/runs'
+                style={{ '--stagger': String(index) } as CSSProperties}
+                className='animate-rise rounded-2xl border bg-background/50 p-3 transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-safe:hover:-translate-y-0.5'
+              >
+                <div className='flex items-center justify-between gap-2'>
+                  <div className='truncate text-sm font-medium'>
+                    {run.account_name || `账号 ${run.account_id}`}
+                  </div>
+                  <StatusBadge value={run.status} />
+                </div>
+                <div className='mt-3 flex items-center justify-between text-xs text-muted-foreground'>
+                  <span>
+                    {run.completed_steps}/{run.total_steps} 步
+                  </span>
+                  <span>{formatDate(run.created_at)}</span>
+                </div>
+                <ProgressBar
+                  className='mt-2'
+                  value={
+                    run.total_steps
+                      ? (run.completed_steps / run.total_steps) * 100
+                      : 0
+                  }
                 />
-              </div>
-            </div>
-          ))}
-          {!data.recentRuns?.length && (
-            <div className='flex min-h-28 flex-col items-center justify-center rounded-lg border border-dashed px-5 text-center md:col-span-2 xl:col-span-4'>
-              <TimerReset className='mb-2 size-6 text-muted-foreground' />
-              <div className='text-sm font-medium'>暂无最近任务</div>
-              <div className='mt-1 text-xs text-muted-foreground'>
-                手动测试或 Cron 调度后会显示执行进度
-              </div>
-            </div>
+              </Link>
+            ))
+          ) : (
+            <EmptyState
+              compact
+              icon={TimerReset}
+              title='暂无最近任务'
+              description='手动测试或 Cron 调度后会显示执行进度'
+              className='md:col-span-2 xl:col-span-4'
+            />
           )}
         </CardContent>
       </Card>
     </Page>
   )
+}
+
+function isDashboardRange(value: string): value is DashboardRange {
+  return (
+    value === 'today' || value === '24h' || value === '7d' || value === '30d'
+  )
+}
+
+function hoursForPreset(preset: DashboardRange) {
+  if (preset === 'today') return hoursSinceShanghaiMidnight()
+  if (preset === '24h') return 24
+  if (preset === '7d') return 168
+  return 720
+}
+
+function hoursSinceShanghaiMidnight(now = Date.now()) {
+  const shanghai = new Date(now + SHANGHAI_OFFSET_MS)
+  const midnightUtc =
+    Date.UTC(
+      shanghai.getUTCFullYear(),
+      shanghai.getUTCMonth(),
+      shanghai.getUTCDate()
+    ) - SHANGHAI_OFFSET_MS
+  const hours = (now - midnightUtc) / 3_600_000
+  return Math.min(24, Math.max(1, Math.ceil(hours)))
+}
+
+function formatPercent(rate: number | null | undefined) {
+  if (rate == null || Number.isNaN(rate)) return '—'
+  const percent = rate * 100
+  return `${percent.toFixed(percent > 0 && percent < 10 ? 1 : 0)}%`
+}
+
+function formatWaitSeconds(value: number | null | undefined) {
+  const seconds = Math.max(0, Math.floor(Number(value ?? 0)))
+  if (seconds <= 0) return '无排队等待'
+  if (seconds < 60) return `最长等待 ${seconds} 秒`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `最长等待 ${minutes} 分钟`
+  return `最长等待 ${(minutes / 60).toFixed(1)} 小时`
+}
+
+function workerHealthDetail(
+  workers: {
+    stale?: number
+    eligible?: number
+    blockedRestore?: number
+    oldestQueueWaitSeconds?: number
+  },
+  queued: number
+) {
+  if ((workers.stale ?? 0) > 0) return `${queued} 排队 · 执行心跳超时`
+  if ((workers.blockedRestore ?? 0) > 0) {
+    return `${workers.blockedRestore} 个恢复阻塞 · ${formatWaitSeconds(workers.oldestQueueWaitSeconds)}`
+  }
+  if (workers.eligible != null) {
+    return `${formatNumber(workers.eligible, 0)} 个可领取 · ${formatWaitSeconds(workers.oldestQueueWaitSeconds)}`
+  }
+  return formatWaitSeconds(workers.oldestQueueWaitSeconds)
+}
+
+function seriesFromTrend(
+  trend: Array<Record<string, string | number | null>> | undefined,
+  key: string
+) {
+  const values = (trend ?? []).map((row) => Number(row[key] ?? 0))
+  return values.some((value) => value > 0) ? values : undefined
 }

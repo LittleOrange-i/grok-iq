@@ -48,14 +48,22 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { CopyButton } from '@/components/copy-button'
 import { SourceCodeView } from '@/components/formatted-content'
 import { InfoTooltip } from '@/components/info-tooltip'
-import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
+import {
+  EmptyState,
+  LoadingState,
+  Page,
+  PageHeader,
+  PageSkeleton,
+} from '@/components/page'
 import {
   buildEgressNodeNameMap,
   getEgressNodeName,
   type EgressNodeNameMap,
 } from '@/features/monitor/components/egress-node-names'
+import { runsSearchFromAccount } from '@/features/monitor/pages/runs-search'
 import { EgressNodeReference } from '@/features/monitor/components/egress-node-reference'
 import { RegisterWebhookInbox } from '@/features/monitor/components/register-webhook-inbox'
 
@@ -132,11 +140,7 @@ export function WorkersPage() {
           </CardContent>
         </Card>
       ) : workerQuery.isLoading || !workerQuery.data ? (
-        <Card>
-          <CardContent className='p-6'>
-            <LoadingState label='正在读取 Worker 状态' />
-          </CardContent>
-        </Card>
+        <PageSkeleton />
       ) : (
         <WorkerDashboard
           data={workerQuery.data}
@@ -490,7 +494,12 @@ function WorkerCard({
         </Tooltip>
         <div className='min-w-0 flex-1'>
           <div className='flex flex-wrap items-center gap-2'>
-            <span className='font-mono text-sm font-semibold'>{worker.id}</span>
+            <span className='flex min-w-0 items-center gap-1'>
+              <span className='font-mono text-sm font-semibold'>
+                {worker.id}
+              </span>
+              <CopyButton value={worker.id} className='size-6' />
+            </span>
             <span className={cn('text-xs', meta.tone)}>{meta.label}</span>
             {!worker.desired && <Badge variant='outline'>已移出</Badge>}
             {!worker.taskAlive && <Badge variant='destructive'>离线</Badge>}
@@ -524,7 +533,16 @@ function WorkerCard({
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button asChild size='icon' variant='ghost'>
-                  <Link to='/runs' aria-label='前往任务中心'>
+                  <Link
+                    to='/runs'
+                    search={
+                      runsSearchFromAccount(
+                        worker.currentRun.accountId,
+                        worker.currentRun.id
+                      ) as never
+                    }
+                    aria-label='前往任务中心'
+                  >
                     <ExternalLink />
                   </Link>
                 </Button>
@@ -551,11 +569,14 @@ function WorkerCard({
               已运行 {formatDuration(worker.currentRun.elapsedSeconds)}
             </span>
           </div>
-          <div
-            className='mt-2 truncate font-mono text-[11px] text-muted-foreground'
-            title={worker.currentRun.id}
-          >
-            {worker.currentRun.id}
+          <div className='mt-2 flex min-w-0 items-center gap-1'>
+            <div
+              className='min-w-0 truncate font-mono text-[11px] text-muted-foreground'
+              title={worker.currentRun.id}
+            >
+              {worker.currentRun.id}
+            </div>
+            <CopyButton value={worker.currentRun.id} className='size-6' />
           </div>
         </div>
       ) : (

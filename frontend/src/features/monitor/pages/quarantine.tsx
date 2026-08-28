@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   Activity,
   ChevronDown,
@@ -43,7 +44,6 @@ import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Collapsible,
@@ -86,8 +86,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ExportMenu } from '@/components/export-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { CopyButton } from '@/components/copy-button'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
+import { TablePanel } from '@/components/table-panel'
 import { PersistedViewNotice } from '@/components/persisted-view-notice'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
@@ -1139,7 +1142,6 @@ export function QuarantinePage() {
         hintContentClassName='max-w-[28rem]'
         descriptionAsHint
         actions={
-          <>
             <ActionToolbar label='隔离区操作'>
               <ToolbarAction
                 label='刷新隔离页'
@@ -1153,8 +1155,12 @@ export function QuarantinePage() {
               >
                 <RefreshCw />
               </ToolbarAction>
-            </ActionToolbar>
+            <ExportMenu
+              label='导出隔离名单'
+              onExport={(format) => api.exportQuarantine(format)}
+            />
             <SelectionToolbar
+              wrap={false}
               selectedCount={selected.length}
               entityLabel='账号'
               disabled={selectionActionPending}
@@ -1216,13 +1222,13 @@ export function QuarantinePage() {
                 <Trash2 />
               </ToolbarAction>
             </SelectionToolbar>
-          </>
+          </ActionToolbar>
         }
       />
       <QuarantineStatsBoard />
-      <Card>
-        <CardContent className='p-4'>
-          <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
+      <TablePanel
+        toolbar={
+          <div className='space-y-2' aria-busy={showTableLoading}>
             <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
               <div className='relative min-w-0 flex-1'>
                 <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
@@ -1232,7 +1238,7 @@ export function QuarantinePage() {
                     updateView({ search: event.target.value, page: 1 })
                   }
                   placeholder='搜索名称、邮箱或账号 ID'
-                  className='h-10 pr-9 pl-9'
+                  className='h-8 pr-8 pl-8'
                 />
                 {showTableLoading && (
                   <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
@@ -1242,7 +1248,7 @@ export function QuarantinePage() {
                 <PopoverTrigger asChild>
                   <Button
                     variant='outline'
-                    className='h-10 shrink-0 gap-2 px-3'
+                    className='h-8 shrink-0 gap-2 px-3'
                   >
                     <SlidersHorizontal className='size-4' />
                     筛选条件
@@ -1373,7 +1379,7 @@ export function QuarantinePage() {
               </Popover>
             </div>
             {(activeFilterCount > 0 || search.trim()) && (
-              <div className='flex flex-wrap items-center gap-1.5 border-t pt-3'>
+              <div className='flex flex-wrap items-center gap-1.5'>
                 <span className='mr-1 text-xs text-muted-foreground'>
                   当前条件
                 </span>
@@ -1405,7 +1411,6 @@ export function QuarantinePage() {
                 )}
               </div>
             )}
-          </div>
           {view.active && (
             <PersistedViewNotice
               restored={view.restored}
@@ -1416,6 +1421,29 @@ export function QuarantinePage() {
               }}
             />
           )}
+          </div>
+        }
+        footer={
+          accounts.length ? (
+            <ServerPagination
+              page={page}
+              pageSize={pageSize}
+              total={query.data?.total ?? 0}
+              disabled={showTableLoading}
+              loading={showTableLoading}
+              itemLabel='账号'
+              onPageChange={(value) => {
+                beginTableInteraction()
+                updateView({ page: value })
+              }}
+              onPageSizeChange={(value) => {
+                beginTableInteraction()
+                updateView({ pageSize: value, page: 1 })
+              }}
+            />
+          ) : null
+        }
+      >
           {query.isLoading && !query.data ? (
             <LoadingState />
           ) : query.isError && !query.data ? (
@@ -1454,22 +1482,6 @@ export function QuarantinePage() {
                   />
                 )}
               </div>
-              <ServerPagination
-                page={page}
-                pageSize={pageSize}
-                total={query.data?.total ?? 0}
-                disabled={showTableLoading}
-                loading={showTableLoading}
-                itemLabel='账号'
-                onPageChange={(value) => {
-                  beginTableInteraction()
-                  updateView({ page: value })
-                }}
-                onPageSizeChange={(value) => {
-                  beginTableInteraction()
-                  updateView({ pageSize: value, page: 1 })
-                }}
-              />
             </>
           ) : (
             <div className='relative min-h-48' aria-busy={showTableLoading}>
@@ -1483,6 +1495,13 @@ export function QuarantinePage() {
                     ? '没有匹配当前筛选的隔离账号，请调整条件后重试。'
                     : '隔离后账号会保留在本地并停用上游；可从账号探针人工移入。'
                 }
+                action={
+                  hasActiveFilters ? undefined : (
+                    <Button asChild>
+                      <Link to='/accounts'>去账号探针</Link>
+                    </Button>
+                  )
+                }
               />
               {showTableLoading && (
                 <ServerTableLoadingOverlay
@@ -1493,8 +1512,7 @@ export function QuarantinePage() {
               )}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </TablePanel>
 
       <ConfirmDialog
         open={restoreOpen}
@@ -1638,9 +1656,20 @@ export function QuarantinePage() {
           <DialogHeader className='shrink-0'>
             <DialogTitle className='flex items-center gap-2'>
               <Server className='size-5 text-primary' />
-              {upstreamListAccount?.name ||
-                upstreamListAccount?.email ||
-                `账号 ${upstreamId}`}
+              <span className='min-w-0 truncate'>
+                {upstreamListAccount?.name ||
+                  upstreamListAccount?.email ||
+                  `账号 ${upstreamId}`}
+              </span>
+              {upstreamListAccount ? (
+                <CopyButton
+                  value={
+                    upstreamListAccount.email?.trim() ||
+                    String(upstreamListAccount.id)
+                  }
+                  className='size-6'
+                />
+              ) : null}
             </DialogTitle>
             <DialogDescription>
               {upstreamListAccount
@@ -1685,9 +1714,19 @@ export function QuarantinePage() {
           <DialogHeader className='shrink-0'>
             <DialogTitle className='flex items-center gap-2'>
               <ShieldBan className='size-5 text-primary' />
-              {detailAccount?.name ||
-                detailAccount?.email ||
-                `账号 ${detailId}`}
+              <span className='min-w-0 truncate'>
+                {detailAccount?.name ||
+                  detailAccount?.email ||
+                  `账号 ${detailId}`}
+              </span>
+              {detailAccount ? (
+                <CopyButton
+                  value={
+                    detailAccount.email?.trim() || String(detailAccount.id)
+                  }
+                  className='size-6'
+                />
+              ) : null}
             </DialogTitle>
             <DialogDescription>
               {detailAccount
@@ -1867,12 +1906,20 @@ function QuarantineRow({
         />
       </TableCell>
       <TableCell>
-        <div className='font-medium'>{accountLabel}</div>
-        <div
-          className='max-w-80 text-xs text-muted-foreground'
-          title={secondaryAccountLabel}
-        >
-          {secondaryAccountLabel}
+        <div className='flex items-start gap-1'>
+          <div className='min-w-0'>
+            <div className='font-medium'>{accountLabel}</div>
+            <div
+              className='max-w-80 text-xs text-muted-foreground'
+              title={secondaryAccountLabel}
+            >
+              {secondaryAccountLabel}
+            </div>
+          </div>
+          <CopyButton
+            value={account.email?.trim() || String(id)}
+            className='size-6'
+          />
         </div>
       </TableCell>
       <TableCell>

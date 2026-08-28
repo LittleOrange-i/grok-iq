@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import {
   Activity,
   ArrowUp,
@@ -49,6 +50,7 @@ import {
   type ProbeSample,
   type RunSelectionAction,
   type RunSelectionItem,
+  type UpstreamAccount,
 } from '@/lib/api'
 import { extractHtmlPreviews } from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
@@ -70,7 +72,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -107,13 +108,17 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ExportMenu } from '@/components/export-menu'
+import { CopyButton, CopyableText } from '@/components/copy-button'
 import {
   FormattedContentPreviewButton,
   HtmlPreviewButton,
   MarkdownView,
   SourceCodeView,
 } from '@/components/formatted-content'
+import { ProgressBar } from '@/components/ui/progress'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
+import { TablePanel } from '@/components/table-panel'
 import { PersistedViewNotice } from '@/components/persisted-view-notice'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
@@ -135,6 +140,12 @@ import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
 import { DualTpsValue, SampleTpsDetail } from '@/features/monitor/components/tps-display'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
+import {
+  isRunsPath,
+  pinnedAccountIdFromRunsSearch,
+  readRunsSearch,
+  type RunsSearch,
+} from '@/features/monitor/pages/runs-search'
 
 const terminal = new Set([
   'completed',
@@ -203,13 +214,60 @@ const defaultRunsView = {
   pageSize: 50,
 }
 
+function PinnedAccountBar({
+  accountId,
+  detail,
+  onClear,
+}: {
+  accountId: number
+  detail?: UpstreamAccount
+  onClear: () => void
+}) {
+  const name = detail?.name || `账号 ${accountId}`
+  const secondary = formatAccountSecondaryLabel({
+    id: accountId,
+    email: detail?.email,
+    createdAt: detail?.createdAt,
+    accountLabel: name,
+  })
+  return (
+    <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs sm:flex-row sm:items-center sm:justify-between'>
+      <div className='min-w-0'>
+        <div className='text-[11px] font-medium tracking-wide text-muted-foreground uppercase'>
+          已筛选账号
+        </div>
+        <div className='mt-0.5 truncate text-sm font-semibold'>{name}</div>
+        <p className='truncate text-xs text-muted-foreground' title={secondary}>
+          {secondary}
+        </p>
+        <p className='mt-1 text-[11px] text-muted-foreground'>
+          已按该账号过滤任务中心
+        </p>
+      </div>
+      <Button type='button' variant='ghost' className='h-8' onClick={onClear}>
+        清除筛选
+      </Button>
+    </div>
+  )
+}
+
 export function RunsPage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
+  const pathname = useLocation({ select: (location) => location.pathname })
+  const rawSearch = useSearch({ strict: false })
+  const isActive = isRunsPath(pathname)
+  const parsedSearch = isActive ? readRunsSearch(rawSearch) : null
+  const lastSearchRef = useRef<RunsSearch>({})
+  if (parsedSearch) lastSearchRef.current = parsedSearch
+  const runsSearch = parsedSearch ?? lastSearchRef.current
+  const pinnedAccountId = pinnedAccountIdFromRunsSearch(runsSearch)
   const runsView = usePersistedViewState(RUNS_VIEW_STORAGE_KEY, defaultRunsView)
   const { status, search, createdFrom, createdTo, page, pageSize } =
     runsView.value
+  const setRunsViewValue = runsView.setValue
   const updateRunsView = (patch: Partial<typeof defaultRunsView>) =>
-    runsView.setValue((current) => ({ ...current, ...patch }))
+    setRunsViewValue((current) => ({ ...current, ...patch }))
   const [deferredSearch] = useDebouncedValue(search.trim())
   const createdFromIso = toIsoDateTime(createdFrom)
   const createdToIso = toIsoDateTime(createdTo)
@@ -246,6 +304,29 @@ export function RunsPage() {
     detailScrollTopRef.current = 0
     setDetailId(id)
   }, [])
+  const closeDetail = useCallback(() => {
+    detailScrollTopRef.current = 0
+    setDetailId(null)
+    if (!isActive || !runsSearch.run) return
+    void navigate({
+      to: '/runs',
+      search: runsSearch.account ? { account: runsSearch.account } : {},
+    } as never)
+  }, [isActive, navigate, runsSearch.account, runsSearch.run])
+  const clearPinnedAccount = useCallback(() => {
+    void navigate({ to: '/runs', search: {} } as never)
+  }, [navigate])
+  useEffect(() => {
+    if (!isActive) return
+    const runId = runsSearch.run?.trim()
+    if (runId) openDetail(runId)
+  }, [isActive, openDetail, runsSearch.run])
+  useEffect(() => {
+    if (pinnedAccountId == null) return
+    setRunsViewValue((current) =>
+      current.page === 1 ? current : { ...current, page: 1 }
+    )
+  }, [pinnedAccountId, setRunsViewValue])
   const invalidTimeRange = Boolean(
     createdFromIso && createdToIso && createdFromIso > createdToIso
   )
@@ -265,6 +346,7 @@ export function RunsPage() {
       tableQuery.createdTo,
       tableQuery.page,
       tableQuery.pageSize,
+      pinnedAccountId,
     ],
     queryFn: ({ signal }) =>
       api.runs(
@@ -272,7 +354,8 @@ export function RunsPage() {
           page: tableQuery.page,
           pageSize: tableQuery.pageSize,
           status: tableQuery.status === 'all' ? '' : tableQuery.status,
-          search: tableQuery.search,
+          search: pinnedAccountId != null ? '' : tableQuery.search,
+          accountId: pinnedAccountId ?? undefined,
           createdFrom: tableQuery.createdFrom,
           createdTo: tableQuery.createdTo,
         },
@@ -304,6 +387,12 @@ export function RunsPage() {
     staleTime: 60_000,
     enabled: probeSelection != null,
   })
+  const pinnedAccountQuery = useQuery({
+    queryKey: ['account', pinnedAccountId],
+    queryFn: () => api.account(pinnedAccountId!, 1),
+    enabled: pinnedAccountId != null,
+    staleTime: 30_000,
+  })
   const egressNodeNames = useMemo(
     () => buildEgressNodeNameMap(egress.data?.items),
     [egress.data?.items]
@@ -327,6 +416,7 @@ export function RunsPage() {
     tableQuery.search,
     tableQuery.createdFrom,
     tableQuery.createdTo,
+    pinnedAccountId ?? '',
   ].join('|')
   const appliedFilterKeyRef = useRef(tableFilterKey)
   useEffect(() => {
@@ -459,8 +549,7 @@ export function RunsPage() {
               : '已请求取消'
       )
       if (variables.action === 'delete') {
-        detailScrollTopRef.current = 0
-        setDetailId(null)
+        closeDetail()
         setSelection((current) => {
           if (!current.has(variables.id)) return current
           const next = new Map(current)
@@ -496,8 +585,7 @@ export function RunsPage() {
         requestedIds.includes(detailId) &&
         !skipped.has(detailId)
       ) {
-        detailScrollTopRef.current = 0
-        setDetailId(null)
+        closeDetail()
       }
       void client.invalidateQueries({ queryKey: ['runs'] })
       void client.invalidateQueries({ queryKey: ['run'] })
@@ -570,7 +658,8 @@ export function RunsPage() {
     mutationFn: () =>
       api.runSelection({
         status: tableQuery.status === 'all' ? '' : tableQuery.status,
-        search: tableQuery.search,
+        search: pinnedAccountId != null ? '' : tableQuery.search,
+        accountId: pinnedAccountId ?? undefined,
         createdFrom: tableQuery.createdFrom,
         createdTo: tableQuery.createdTo,
       }),
@@ -726,6 +815,11 @@ export function RunsPage() {
   const bindableEgress = (egress.data?.items ?? []).filter(
     (node) => node.enabled && node.proxyConfigured
   )
+  const pinnedAccountDetail = pinnedAccountQuery.data?.account
+  const pinnedAccountLabel =
+    pinnedAccountDetail?.name ||
+    pinnedAccountDetail?.email ||
+    (pinnedAccountId != null ? `账号 ${pinnedAccountId}` : '')
 
   return (
     <Page>
@@ -734,7 +828,6 @@ export function RunsPage() {
         description='Cron、注册联动和手动探针共用持久队列；支持进度查看、批量重测、取消、重试与删除。'
         descriptionAsHint
         actions={
-          <>
             <ActionToolbar label='任务列表操作'>
               <ToolbarAction
                 label='刷新任务列表'
@@ -768,8 +861,17 @@ export function RunsPage() {
               >
                 <ListChecks />
               </ToolbarAction>
-            </ActionToolbar>
+            <ExportMenu
+              label='导出样本'
+              onExport={(format) =>
+                api.exportProbeSamples({
+                  format,
+                  accountId: pinnedAccountId ?? undefined,
+                })
+              }
+            />
             <SelectionToolbar
+              wrap={false}
               selectedCount={selectedRunIds.length}
               entityLabel='任务'
               disabled={selectionActionPending}
@@ -856,22 +958,34 @@ export function RunsPage() {
                 <Trash2 />
               </ToolbarAction>
             </SelectionToolbar>
-          </>
+          </ActionToolbar>
         }
       />
-      <Card>
-        <CardContent className='p-4'>
-          <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
+      {pinnedAccountId != null ? (
+        <PinnedAccountBar
+          accountId={pinnedAccountId}
+          detail={pinnedAccountDetail}
+          onClear={clearPinnedAccount}
+        />
+      ) : null}
+      <TablePanel
+        toolbar={
+          <div className='space-y-2' aria-busy={showTableLoading}>
             <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
               <div className='relative min-w-0 flex-1'>
                 <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
                 <Input
-                  value={search}
+                  value={pinnedAccountId != null ? '' : search}
                   onChange={(event) => {
                     updateRunsView({ search: event.target.value, page: 1 })
                   }}
-                  placeholder='搜索账号名称、邮箱或账号 ID'
-                  className='h-10 pr-9 pl-9'
+                  disabled={pinnedAccountId != null}
+                  placeholder={
+                    pinnedAccountId != null
+                      ? '已按该账号过滤任务中心'
+                      : '搜索账号名称、邮箱或账号 ID'
+                  }
+                  className='h-8 pr-8 pl-8'
                 />
                 {showTableLoading && (
                   <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
@@ -881,7 +995,7 @@ export function RunsPage() {
                 <PopoverTrigger asChild>
                   <Button
                     variant='outline'
-                    className='h-10 shrink-0 gap-2 px-3'
+                    className='h-8 shrink-0 gap-2 px-3'
                   >
                     <SlidersHorizontal className='size-4' />
                     筛选条件
@@ -1033,12 +1147,20 @@ export function RunsPage() {
                 </PopoverContent>
               </Popover>
             </div>
-            {(activeFilterCount > 0 || search.trim()) && (
-              <div className='flex flex-wrap items-center gap-1.5 border-t pt-3'>
+            {(activeFilterCount > 0 ||
+              (pinnedAccountId == null && search.trim()) ||
+              pinnedAccountId != null) && (
+              <div className='flex flex-wrap items-center gap-1.5'>
                 <span className='mr-1 text-xs text-muted-foreground'>
                   当前条件
                 </span>
-                {search.trim() && (
+                {pinnedAccountId != null && (
+                  <FilterChip
+                    label={`账号：${pinnedAccountLabel}`}
+                    onClear={clearPinnedAccount}
+                  />
+                )}
+                {pinnedAccountId == null && search.trim() && (
                   <FilterChip
                     label={`搜索：${search.trim()}`}
                     onClear={() => updateRunsView({ search: '', page: 1 })}
@@ -1061,7 +1183,6 @@ export function RunsPage() {
                 )}
               </div>
             )}
-          </div>
           {runsView.active && (
             <PersistedViewNotice
               restored={runsView.restored}
@@ -1070,10 +1191,33 @@ export function RunsPage() {
             />
           )}
           {invalidTimeRange && (
-            <p className='mb-4 text-xs text-destructive'>
+            <p className='text-xs text-destructive'>
               开始时间需要早于或等于结束时间。
             </p>
           )}
+          </div>
+        }
+        footer={
+          query.data ? (
+            <ServerPagination
+              page={page}
+              pageSize={pageSize}
+              total={query.data.total}
+              disabled={showTableLoading}
+              loading={showTableLoading}
+              itemLabel='任务'
+              onPageChange={(value) => {
+                beginTableInteraction()
+                updateRunsView({ page: value })
+              }}
+              onPageSizeChange={(value) => {
+                beginTableInteraction()
+                updateRunsView({ pageSize: value, page: 1 })
+              }}
+            />
+          ) : null
+        }
+      >
           {query.isLoading && !query.data ? (
             <LoadingState />
           ) : (
@@ -1121,28 +1265,9 @@ export function RunsPage() {
                   />
                 )}
               </div>
-              {query.data && (
-                <ServerPagination
-                  page={page}
-                  pageSize={pageSize}
-                  total={query.data.total}
-                  disabled={showTableLoading}
-                  loading={showTableLoading}
-                  itemLabel='任务'
-                  onPageChange={(value) => {
-                    beginTableInteraction()
-                    updateRunsView({ page: value })
-                  }}
-                  onPageSizeChange={(value) => {
-                    beginTableInteraction()
-                    updateRunsView({ pageSize: value, page: 1 })
-                  }}
-                />
-              )}
             </>
           )}
-        </CardContent>
-      </Card>
+      </TablePanel>
       <ProbeDialog
         open={probeSelection != null}
         onOpenChange={(open) => {
@@ -1393,10 +1518,7 @@ export function RunsPage() {
       <Dialog
         open={detailId != null}
         onOpenChange={(open) => {
-          if (!open) {
-            detailScrollTopRef.current = 0
-            setDetailId(null)
-          }
+          if (!open) closeDetail()
         }}
       >
         <DialogContent
@@ -1405,8 +1527,11 @@ export function RunsPage() {
         >
           <DialogHeader className='shrink-0'>
             <DialogTitle>探针任务详情</DialogTitle>
-            <DialogDescription className='font-mono'>
-              {detailId}
+            <DialogDescription className='flex items-center gap-1 font-mono'>
+              <span className='min-w-0 break-all'>{detailId}</span>
+              {detailId ? (
+                <CopyButton value={detailId} className='size-6' />
+              ) : null}
             </DialogDescription>
           </DialogHeader>
           <div
@@ -1554,12 +1679,20 @@ const RunRow = memo(function RunRow({
         />
       </TableCell>
       <TableCell>
-        <div className='font-medium'>{accountLabel}</div>
-        <div
-          className='max-w-80 text-xs text-muted-foreground'
-          title={secondaryAccountLabel}
-        >
-          {secondaryAccountLabel}
+        <div className='flex items-start gap-1'>
+          <div className='min-w-0'>
+            <div className='font-medium'>{accountLabel}</div>
+            <div
+              className='max-w-80 text-xs text-muted-foreground'
+              title={secondaryAccountLabel}
+            >
+              {secondaryAccountLabel}
+            </div>
+          </div>
+          <CopyButton
+            value={run.account_email?.trim() || String(run.account_id)}
+            className='size-6'
+          />
         </div>
       </TableCell>
       <TableCell>
@@ -1602,12 +1735,7 @@ const RunRow = memo(function RunRow({
           </span>
           <span>{progress}%</span>
         </div>
-        <div className='mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted'>
-          <div
-            className='h-full rounded-full bg-primary'
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <ProgressBar value={progress} className='mt-1.5' />
         <RunDurationEstimate run={run} className='mt-1.5' />
       </TableCell>
       <TableCell>
@@ -1943,25 +2071,31 @@ function RunDetail({
   const probeStats = getRunProbeStats(run)
   return (
     <div className='space-y-5'>
-      <div className='grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(6,minmax(0,1fr))]'>
+      <div className='grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(7,minmax(0,1fr))]'>
         <Metric
           label='账号'
           value={
-            <div className='min-w-0'>
-              <div className='break-all'>
-                {run.account_name || run.account_id}
+            <div className='flex items-start gap-1'>
+              <div className='min-w-0'>
+                <div className='break-all'>
+                  {run.account_name || run.account_id}
+                </div>
+                <div className='mt-1 text-xs font-normal text-muted-foreground'>
+                  {formatAccountSecondaryLabel({
+                    id: run.account_id,
+                    email: run.account_email,
+                    createdAt: run.account_created_at,
+                    accountLabel:
+                      run.account_name ||
+                      run.account_email ||
+                      `账号 ${run.account_id}`,
+                  })}
+                </div>
               </div>
-              <div className='mt-1 text-xs font-normal text-muted-foreground'>
-                {formatAccountSecondaryLabel({
-                  id: run.account_id,
-                  email: run.account_email,
-                  createdAt: run.account_created_at,
-                  accountLabel:
-                    run.account_name ||
-                    run.account_email ||
-                    `账号 ${run.account_id}`,
-                })}
-              </div>
+              <CopyButton
+                value={run.account_email?.trim() || String(run.account_id)}
+                className='size-6'
+              />
             </div>
           }
           valueClassName='break-all'
@@ -1977,6 +2111,15 @@ function RunDetail({
         <Metric
           label='Worker'
           value={run.worker_id || (run.status === 'queued' ? '等待领取' : '—')}
+          valueClassName='font-mono text-xs'
+        />
+        <Metric
+          label='任务 ID'
+          value={
+            <CopyableText value={run.id} className='max-w-full'>
+              <span className='break-all'>{run.id}</span>
+            </CopyableText>
+          }
           valueClassName='font-mono text-xs'
         />
         <Metric

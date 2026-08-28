@@ -18,8 +18,8 @@ import {
 import {
   isWorkspaceTabPath,
   matchWorkspaceTabId,
+  workspaceTabLink,
   WORKSPACE_TAB_IDS,
-  WORKSPACE_TAB_PATHS,
   WORKSPACE_TAB_TITLES,
   type WorkspaceTabId,
 } from './workspace-tabs'
@@ -78,6 +78,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
 function WorkspaceKeepAlive() {
   const pathname = useLocation({ select: (location) => location.pathname })
+  const search = useLocation({ select: (location) => location.search })
   const currentId = matchWorkspaceTabId(pathname)
   const mounted = useWorkspaceTabsStore((state) => state.mounted)
   const visit = useWorkspaceTabsStore((state) => state.visit)
@@ -87,8 +88,12 @@ function WorkspaceKeepAlive() {
       : mounted
 
   useLayoutEffect(() => {
-    if (currentId) visit(currentId)
-  }, [currentId, visit])
+    if (!currentId) return
+    visit(currentId, {
+      pathname,
+      search: (search ?? {}) as Record<string, unknown>,
+    })
+  }, [currentId, pathname, search, visit])
 
   return (
     <>
@@ -153,16 +158,21 @@ function WorkspaceDock() {
   const mounted = useWorkspaceTabsStore((state) => state.mounted)
 
   const closeTab = async (id: WorkspaceTabId) => {
-    const remaining = useWorkspaceTabsStore
-      .getState()
-      .mounted.filter((item) => item !== id)
+    const state = useWorkspaceTabsStore.getState()
+    const remaining = state.mounted.filter((item) => item !== id)
     if (currentId === id) {
       const nextId = remaining[remaining.length - 1]
-      await navigate({
-        to: nextId ? WORKSPACE_TAB_PATHS[nextId] : '/',
-      })
+      if (nextId) {
+        const link = workspaceTabLink(nextId, state.lastLocations[nextId])
+        await navigate({
+          to: link.to,
+          search: link.search,
+        } as never)
+      } else {
+        await navigate({ to: '/' })
+      }
     }
-    useWorkspaceTabsStore.getState().close(id)
+    state.close(id)
   }
 
   return (
@@ -198,6 +208,10 @@ function WorkspaceDockItem({
 }) {
   const title = WORKSPACE_TAB_TITLES[id]
   const Icon = workspaceIcons[id]
+  const lastLocation = useWorkspaceTabsStore(
+    (state) => state.lastLocations[id]
+  )
+  const link = workspaceTabLink(id, lastLocation)
   const tooltip = active
     ? `${title}（当前页，已保持挂载）`
     : mounted
@@ -209,7 +223,8 @@ function WorkspaceDockItem({
       <Tooltip>
         <TooltipTrigger asChild>
           <Link
-            to={WORKSPACE_TAB_PATHS[id]}
+            to={link.to}
+            search={link.search as never}
             aria-current={active ? 'page' : undefined}
             className={cn(
               'inline-flex h-8 items-center gap-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors',

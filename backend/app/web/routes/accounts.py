@@ -179,6 +179,13 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             page_size=page_size,
         )
 
+    @router.get("/accounts/{account_id}/timeline")
+    def account_timeline(
+        account_id: int,
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> dict[str, Any]:
+        return service.timeline(account_id, limit)
+
     @router.post("/accounts/{account_id}/operator-notes")
     async def add_operator_note(
         account_id: int,

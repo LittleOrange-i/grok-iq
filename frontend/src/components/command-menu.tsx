@@ -29,11 +29,17 @@ export function CommandMenu() {
   )
 
   return (
-    <CommandDialog modal open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder='Type a command or search...' />
+    <CommandDialog
+      modal
+      open={open}
+      onOpenChange={setOpen}
+      title='命令面板'
+      description='搜索页面或命令'
+    >
+      <CommandInput placeholder='搜索页面或命令…' />
       <CommandList>
         <ScrollArea type='hover' className='h-72 pe-1'>
-          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandEmpty>没有匹配的页面</CommandEmpty>
           {sidebarData.navGroups.map((group) => (
             <CommandGroup key={group.title} heading={group.title}>
               {group.items.map((navItem, i) => {
@@ -41,7 +47,7 @@ export function CommandMenu() {
                   return (
                     <CommandItem
                       key={`${navItem.url}-${i}`}
-                      value={navItem.title}
+                      value={`${navItem.title} ${navItem.url}`}
                       onSelect={() => {
                         runCommand(() => navigate({ to: navItem.url }))
                       }}
@@ -56,7 +62,7 @@ export function CommandMenu() {
                 return navItem.items?.map((subItem, i) => (
                   <CommandItem
                     key={`${navItem.title}-${subItem.url}-${i}`}
-                    value={`${navItem.title}-${subItem.url}`}
+                    value={`${navItem.title} ${subItem.title} ${subItem.url}`}
                     onSelect={() => {
                       runCommand(() => navigate({ to: subItem.url }))
                     }}
@@ -71,17 +77,26 @@ export function CommandMenu() {
             </CommandGroup>
           ))}
           <CommandSeparator />
-          <CommandGroup heading='Theme'>
-            <CommandItem onSelect={() => runCommand(() => setTheme('light'))}>
-              <Sun /> <span>Light</span>
+          <CommandGroup heading='主题'>
+            <CommandItem
+              value='浅色 light'
+              onSelect={() => runCommand(() => setTheme('light'))}
+            >
+              <Sun /> <span>浅色</span>
             </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => setTheme('dark'))}>
+            <CommandItem
+              value='深色 dark'
+              onSelect={() => runCommand(() => setTheme('dark'))}
+            >
               <Moon className='scale-90' />
-              <span>Dark</span>
+              <span>深色</span>
             </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => setTheme('system'))}>
+            <CommandItem
+              value='跟随系统 system'
+              onSelect={() => runCommand(() => setTheme('system'))}
+            >
               <Laptop />
-              <span>System</span>
+              <span>跟随系统</span>
             </CommandItem>
           </CommandGroup>
         </ScrollArea>

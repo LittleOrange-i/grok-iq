@@ -82,7 +82,7 @@ export function SignIn() {
 
         <div className='relative max-w-lg'>
           <p className='text-xs font-medium tracking-[0.18em] text-sky-300 uppercase'>
-            Account intelligence
+            账号质量工作台
           </p>
           <h1 className='mt-4 text-4xl leading-tight font-semibold tracking-tight xl:text-[2.75rem]'>
             把账号探测、任务证据和风险处置放在一个清晰的工作台。

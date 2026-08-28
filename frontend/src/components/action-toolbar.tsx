@@ -24,7 +24,7 @@ export function ActionToolbar({
       role='toolbar'
       aria-label={label}
       className={cn(
-        'inline-flex max-w-full items-center gap-1 rounded-lg border bg-muted/30 p-1 shadow-xs',
+        'inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border bg-muted/40 p-1 shadow-xs',
         className
       )}
     >
@@ -65,7 +65,7 @@ export function ToolbarAction({
             size='icon'
             variant={active ? 'secondary' : 'ghost'}
             className={cn(
-              'size-8 shrink-0',
+              'size-7 shrink-0',
               destructive &&
                 'text-muted-foreground hover:bg-destructive/10 hover:text-destructive',
               className
@@ -81,5 +81,14 @@ export function ToolbarAction({
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+export function ToolbarSeparator() {
+  return (
+    <span
+      aria-hidden='true'
+      className='mx-0.5 h-4 w-px shrink-0 bg-border'
+    />
   )
 }

@@ -45,6 +45,7 @@ function SheetContent({
   className,
   children,
   side = 'right',
+  onOpenAutoFocus,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
@@ -54,6 +55,18 @@ function SheetContent({
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot='sheet-content'
+        onOpenAutoFocus={(event) => {
+          if (onOpenAutoFocus) {
+            onOpenAutoFocus(event)
+            return
+          }
+          event.preventDefault()
+          const root = event.currentTarget as HTMLElement
+          const field = root.querySelector<HTMLElement>(
+            'input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"])'
+          )
+          ;(field ?? root).focus({ preventScroll: true })
+        }}
         className={cn(
           'fixed z-50 flex min-h-0 [touch-action:pan-y] flex-col gap-4 overflow-hidden bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:animate-in data-[state=open]:duration-500',
           side === 'right' &&

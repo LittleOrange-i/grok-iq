@@ -1454,6 +1454,22 @@ class ProbeRepository:
     def account_history(self, account_id: int, limit: int = 200) -> dict[str, Any]:
         return self._run_reader.account_history(account_id, limit)
 
+    def list_samples_for_export(
+        self,
+        *,
+        account_id: int | None = None,
+        limit: int = 5000,
+    ) -> list[ProbeSample]:
+        capped = min(max(int(limit), 1), 5000)
+        with self.database.session() as session:
+            query = select(ProbeSample).order_by(
+                ProbeSample.created_at.desc(),
+                ProbeSample.id.desc(),
+            )
+            if account_id:
+                query = query.where(ProbeSample.account_id == int(account_id))
+            return list(session.scalars(query.limit(capped)).all())
+
     def account_samples(
         self,
         account_id: int,

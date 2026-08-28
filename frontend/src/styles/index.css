@@ -14,7 +14,7 @@
     @apply overflow-x-hidden;
   }
   body {
-    @apply min-h-svh w-full bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar;
+    @apply min-h-svh w-full bg-background text-foreground;
   }
 
   /* Keep the page behind a modal fixed; the modal body owns scrolling. */
@@ -112,5 +112,56 @@
   }
   to {
     height: 0;
+  }
+}
+
+@layer utilities {
+  .number {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .animate-rise {
+    animation: grokiq-rise 0.5s cubic-bezier(0.33, 1, 0.68, 1) both;
+    animation-delay: calc(var(--stagger, 0) * 45ms);
+  }
+
+  .animate-progress-indeterminate {
+    animation: grokiq-progress-indeterminate 1.2s ease-in-out infinite;
+  }
+
+  .surface-glow {
+    background: radial-gradient(
+      ellipse at top,
+      color-mix(in oklch, var(--primary) 16%, transparent),
+      transparent 70%
+    );
+  }
+}
+
+@keyframes grokiq-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes grokiq-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(520%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-progress-indeterminate {
+    animation: none !important;
   }
 }

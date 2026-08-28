@@ -184,14 +184,14 @@ function SettingsSplitTabs({
       orientation='vertical'
       className='gap-4 lg:flex-row lg:items-start'
     >
-      <TabsList className='h-auto w-full justify-start overflow-x-auto rounded-xl bg-muted/40 p-1 lg:w-52 lg:flex-col lg:items-stretch'>
+      <TabsList className='h-auto w-full justify-start overflow-x-auto rounded-lg bg-muted/40 p-1 lg:w-52 lg:flex-col lg:items-stretch'>
         {items.map((item) => {
           const Icon = item.icon
           return (
             <TabsTrigger
               key={item.value}
               value={item.value}
-              className='h-auto flex-none justify-start gap-2 px-3 py-2 text-left lg:w-full lg:whitespace-normal'
+              className='h-auto flex-none justify-start gap-2 rounded-md px-3 py-2 text-left lg:w-full lg:whitespace-normal'
             >
               <Icon className='size-4 shrink-0' />
               <span className='min-w-0'>

@@ -112,3 +112,40 @@ async def test_list_page_filters_client_key_name():
     by_search = await service.list_page(page=1, page_size=50, account="production")
     assert by_search["total"] == 1
     assert by_search["items"][0]["requestId"] == "req-prod"
+
+
+async def test_list_page_filters_exact_account_id():
+    now = utc_now()
+    repo = MagicMock()
+    repo.records_for_range.return_value = [
+        _record(
+            upstream_id="1",
+            request_id="req-12",
+            account_id=12,
+            account_name="alice",
+            created_at=now,
+        ),
+        _record(
+            upstream_id="2",
+            request_id="req-120",
+            account_id=120,
+            account_name="alice-120",
+            created_at=now - timedelta(seconds=1),
+        ),
+    ]
+    repo.verifications_for_audits.return_value = {}
+    client = MagicMock()
+    client.get_accounts_by_ids = AsyncMock(return_value=[])
+    service = RequestAuditService(
+        settings=Settings(_env_file=None),
+        client=client,
+        repository=repo,
+    )
+
+    page = await service.list_page(page=1, page_size=50, account_id=12)
+    assert page["total"] == 1
+    assert page["items"][0]["accountId"] == 12
+    assert page["items"][0]["requestId"] == "req-12"
+
+    by_search = await service.list_page(page=1, page_size=50, account="12")
+    assert {item["accountId"] for item in by_search["items"]} == {12, 120}

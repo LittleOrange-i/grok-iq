@@ -1,5 +1,6 @@
 import {
   useDeferredValue,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -10,7 +11,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate, useSearch } from '@tanstack/react-router'
 import {
   Activity,
   AlertTriangle,
@@ -54,9 +55,11 @@ import {
   YAxis,
 } from 'recharts'
 import { toast } from 'sonner'
+import { formatAccountSecondaryLabel } from '@/lib/account-label'
 import {
   api,
   type RequestAuditAccountRisk,
+  type UpstreamAccount,
   type RequestAuditActivity,
   type RequestAuditActivityLevel,
   type RequestAuditConfig,
@@ -120,7 +123,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
+import { ExportMenu } from '@/components/export-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { CopyableText } from '@/components/copy-button'
 import { InfoTooltip } from '@/components/info-tooltip'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
@@ -130,6 +135,16 @@ import { AuthStatusIndicator } from '@/features/monitor/components/account-state
 import { buildEgressNodeNameMap } from '@/features/monitor/components/egress-node-names'
 import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
+import {
+  isRequestAuditsPath,
+  pinnedAccountIdFromSearch,
+  readRequestAuditsSearch,
+  requestAuditPathForTab,
+  requestAuditTabFromPath,
+  type RequestAuditTab,
+  type RequestAuditsSearch,
+} from '@/features/monitor/pages/request-audits-search'
+import { runsSearchFromAccount } from '@/features/monitor/pages/runs-search'
 
 const riskVariant: Record<
   RequestAuditRiskLevel,
@@ -300,7 +315,6 @@ function clientKeyLabel(row: {
   return '—'
 }
 
-type MainView = 'overview' | 'workspace' | 'ledger' | 'schedule'
 type AuditBulkActionSource = 'risk' | 'ledger'
 
 type AuditProbeSelection = {
@@ -350,6 +364,61 @@ function upstreamAccountStatusText(account: UpstreamAccountSnapshot) {
         ? '启用'
         : '停用'
   return `${enabled} · ${upstreamAuthLabel(account.upstreamAuthStatus)}`
+}
+
+function PinnedAccountBar({
+  accountId,
+  detail,
+  risk,
+  onClear,
+  onViewSamples,
+}: {
+  accountId: number
+  detail?: UpstreamAccount
+  risk?: RequestAuditAccountRisk | null
+  onClear: () => void
+  onViewSamples?: () => void
+}) {
+  const name = detail?.name || risk?.accountName || `账号 ${accountId}`
+  const secondary = formatAccountSecondaryLabel({
+    id: accountId,
+    email: detail?.email,
+    createdAt: detail?.createdAt,
+    accountLabel: name,
+  })
+  return (
+    <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs sm:flex-row sm:items-center sm:justify-between'>
+      <div className='min-w-0'>
+        <div className='text-[11px] font-medium tracking-wide text-muted-foreground uppercase'>
+          已筛选账号
+        </div>
+        <div className='mt-0.5 truncate text-sm font-semibold'>{name}</div>
+        <p className='truncate text-xs text-muted-foreground' title={secondary}>
+          {secondary}
+        </p>
+        <p className='mt-1 text-[11px] text-muted-foreground'>
+          已按该账号过滤当前分析窗口的请求审计
+        </p>
+      </div>
+      <div className='flex min-w-0 flex-wrap items-center gap-2'>
+        {risk ? <StatusBadge value={risk.riskLevel} /> : null}
+        {risk ? <UpstreamAccountState account={risk} compact /> : null}
+        {onViewSamples ? (
+          <Button
+            type='button'
+            variant='outline'
+            className='h-8'
+            onClick={onViewSamples}
+          >
+            查看样本
+          </Button>
+        ) : null}
+        <Button type='button' variant='ghost' className='h-8' onClick={onClear}>
+          清除筛选
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 function UpstreamAccountState({
@@ -1176,16 +1245,27 @@ function AuditSchedulePanel({
 export function RequestAuditsPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const pathname = useLocation({ select: (location) => location.pathname })
+  const rawSearch = useSearch({ strict: false })
+  const isActive = isRequestAuditsPath(pathname)
+  const routeTab = requestAuditTabFromPath(pathname)
+  const search = isActive ? readRequestAuditsSearch(rawSearch) : {}
+  const accountFromUrl = search.account?.trim() ?? ''
+  const pinnedAccountId = pinnedAccountIdFromSearch(search)
+  const perspective: Perspective = search.view === 'nodes' ? 'nodes' : 'accounts'
+  const [cachedTab, setCachedTab] = useState<RequestAuditTab>(routeTab)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [riskPage, setRiskPage] = useState(1)
   const [riskPageSize, setRiskPageSize] = useState(25)
-  const [mainView, setMainView] = useState<MainView>('overview')
-  const [perspective, setPerspective] = useState<Perspective>('accounts')
-  const [workspaceSearch, setWorkspaceSearch] = useState('')
+  const [workspaceSearch, setWorkspaceSearch] = useState(
+    pinnedAccountId == null ? accountFromUrl : ''
+  )
   const [workspaceRisk, setWorkspaceRisk] =
     useState<WorkspaceRiskFilter>('risky')
-  const [auditSearch, setAuditSearch] = useState('')
+  const [auditSearch, setAuditSearch] = useState(
+    pinnedAccountId == null ? accountFromUrl : ''
+  )
   const [auditClientKey, setAuditClientKey] = useState('all')
   const [auditClientKeyQuery, setAuditClientKeyQuery] = useState('')
   const [auditRisk, setAuditRisk] = useState<AuditRiskFilter>('all')
@@ -1218,6 +1298,54 @@ export function RequestAuditsPage() {
   const [auditDetailOpen, setAuditDetailOpen] = useState(false)
   const [selectedAuditRecord, setSelectedAuditRecord] =
     useState<RequestAuditRecord | null>(null)
+
+  useEffect(() => {
+    if (isActive) setCachedTab(routeTab)
+  }, [isActive, routeTab])
+
+  const mainView = isActive ? routeTab : cachedTab
+
+  const goToTab = (
+    tab: RequestAuditTab,
+    patch: RequestAuditsSearch = {}
+  ) => {
+    const account = patch.account === undefined ? search.account : patch.account
+    const view = patch.view === undefined ? search.view : patch.view
+    void navigate({
+      to: requestAuditPathForTab(tab),
+      search: {
+        ...(account?.trim() ? { account: account.trim() } : {}),
+        ...(view && view !== 'accounts' ? { view } : {}),
+      },
+    } as never)
+  }
+
+  useEffect(() => {
+    if (!accountFromUrl) return
+    if (pinnedAccountId != null) {
+      setWorkspaceSearch('')
+      setAuditSearch('')
+      setAuditClientKey('all')
+      setAuditNode('all')
+      setPage(1)
+      setRiskPage(1)
+      return
+    }
+    setWorkspaceSearch(accountFromUrl)
+    setAuditSearch(accountFromUrl)
+    setPage(1)
+    setRiskPage(1)
+  }, [accountFromUrl, pinnedAccountId])
+
+  useEffect(() => {
+    if (isActive) return
+    setAuditDetailOpen(false)
+    setSelectedAuditRecord(null)
+    setBulkAction(null)
+    setProbeSelection(null)
+    setSampleAccount(null)
+    setCustomOpen(false)
+  }, [isActive])
 
   const deferredWorkspaceSearch = useDeferredValue(workspaceSearch)
   const deferredAuditSearch = useDeferredValue(auditSearch)
@@ -1297,6 +1425,12 @@ export function RequestAuditsPage() {
     refetchInterval: liveRefreshInterval,
     refetchIntervalInBackground: true,
   })
+  const pinnedAccountQuery = useQuery({
+    queryKey: ['account', pinnedAccountId],
+    queryFn: () => api.account(pinnedAccountId!, 1),
+    enabled: pinnedAccountId != null,
+    staleTime: 30_000,
+  })
   const recordsQuery = useQuery({
     queryKey: [
       'request-audits',
@@ -1308,6 +1442,7 @@ export function RequestAuditsPage() {
       deferredAuditClientKey,
       effectiveAuditRisk,
       auditNode,
+      pinnedAccountId,
     ],
     queryFn: () =>
       api.requestAudits({
@@ -1315,6 +1450,7 @@ export function RequestAuditsPage() {
         page,
         pageSize,
         account: deferredAuditSearch.trim(),
+        accountId: pinnedAccountId ?? undefined,
         clientKey:
           deferredAuditClientKey === 'all' ? '' : deferredAuditClientKey.trim(),
         risk: effectiveAuditRisk === 'all' ? '' : effectiveAuditRisk,
@@ -1509,6 +1645,9 @@ export function RequestAuditsPage() {
     null
 
   const visibleAccounts = useMemo(() => {
+    if (pinnedAccountId != null) {
+      return accounts.filter((item) => item.accountId === pinnedAccountId)
+    }
     const needle = deferredWorkspaceSearch.trim().toLowerCase()
     const effectiveRisk = config.riskEnabled ? workspaceRisk : 'all'
     return accounts.filter((item) => {
@@ -1525,7 +1664,7 @@ export function RequestAuditsPage() {
           : item.riskLevel === effectiveRisk)
       return matchesSearch && matchesRisk
     })
-  }, [accounts, config.riskEnabled, deferredWorkspaceSearch, workspaceRisk])
+  }, [accounts, config.riskEnabled, deferredWorkspaceSearch, pinnedAccountId, workspaceRisk])
   const riskPageCount = Math.max(
     1,
     Math.ceil(visibleAccounts.length / riskPageSize)
@@ -1541,6 +1680,11 @@ export function RequestAuditsPage() {
   )
 
   const visibleNodes = useMemo(() => {
+    if (pinnedAccountId != null) {
+      return nodes.filter((item) =>
+        item.accounts.some((account) => account.accountId === pinnedAccountId)
+      )
+    }
     const needle = deferredWorkspaceSearch.trim().toLowerCase()
     const effectiveRisk = config.riskEnabled ? workspaceRisk : 'all'
     return nodes.filter((item) => {
@@ -1561,12 +1705,23 @@ export function RequestAuditsPage() {
           : item.riskLevel === effectiveRisk)
       return matchesSearch && matchesRisk
     })
-  }, [config.riskEnabled, deferredWorkspaceSearch, nodes, workspaceRisk])
+  }, [config.riskEnabled, deferredWorkspaceSearch, nodes, pinnedAccountId, workspaceRisk])
 
   const selectedNode =
     visibleNodes.find((item) => item.key === selectedNodeKey) ??
     visibleNodes[0] ??
     null
+  const pinnedRiskAccount = useMemo(
+    () =>
+      accounts.find((item) => item.accountId === pinnedAccountId) ?? null,
+    [accounts, pinnedAccountId]
+  )
+  const pinnedAccountDetail = pinnedAccountQuery.data?.account
+  const pinnedAccountLabel =
+    pinnedAccountDetail?.name ||
+    pinnedAccountDetail?.email ||
+    pinnedRiskAccount?.accountName ||
+    (pinnedAccountId != null ? `账号 ${pinnedAccountId}` : '')
   const accountsById = useMemo(
     () =>
       new Map(
@@ -1855,11 +2010,19 @@ export function RequestAuditsPage() {
   }
 
   const viewAccountAudits = (account: RequestAuditAccountRisk) => {
-    setAuditSearch(String(account.accountId ?? account.accountName))
+    if (!account.accountId) {
+      setAuditSearch(account.accountName)
+      setAuditClientKey('all')
+      setAuditNode('all')
+      setPage(1)
+      goToTab('ledger')
+      return
+    }
+    setAuditSearch('')
     setAuditClientKey('all')
     setAuditNode('all')
     setPage(1)
-    setMainView('ledger')
+    goToTab('ledger', { account: String(account.accountId) })
   }
 
   const openAccountSamples = (account: RequestAuditAccountRisk) => {
@@ -1943,58 +2106,47 @@ export function RequestAuditsPage() {
         descriptionAsHint
         hintContentClassName='max-w-[28rem]'
         actions={
-          <>
-            <Button variant='outline' onClick={refreshLocal}>
-              <RefreshCw
-                className={cn(backgroundRefreshing && 'animate-spin')}
-              />
-              刷新本地视图
-            </Button>
-            {mainView === 'schedule' && (
-              <Button
-                variant='outline'
-                onClick={() =>
-                  void navigate({ to: '/settings/request-audit' })
-                }
-              >
-                <Settings2 />
-                运行配置
-              </Button>
-            )}
-            {mainView !== 'schedule' && (
-              <Button
-                variant='outline'
-                onClick={() => void navigate({ to: '/settings/risk' })}
-              >
-                <Settings2 />
-                风险设置
-              </Button>
-            )}
-            <Button
-              onClick={() => scanMutation.mutate()}
-              disabled={
-                scanMutation.isPending ||
-                !config.enabled ||
-                status?.configured === false
+          <ActionToolbar label='请求审计操作'>
+            <ToolbarAction
+              label='刷新本地视图'
+              pending={backgroundRefreshing}
+              onClick={refreshLocal}
+            >
+              <RefreshCw />
+            </ToolbarAction>
+            <ToolbarAction
+              label={mainView === 'schedule' ? '运行配置' : '风险设置'}
+              onClick={() =>
+                void navigate({
+                  to:
+                    mainView === 'schedule'
+                      ? '/settings/request-audit'
+                      : '/settings/risk',
+                })
               }
             >
-              {scanMutation.isPending ? (
-                <RefreshCw className='animate-spin' />
-              ) : (
-                <Zap />
-              )}
-              扫描当前窗口
-            </Button>
-          </>
+              <Settings2 />
+            </ToolbarAction>
+            <ToolbarAction
+              label='扫描当前窗口'
+              pending={scanMutation.isPending}
+              disabled={
+                !config.enabled || status?.configured === false
+              }
+              onClick={() => scanMutation.mutate()}
+            >
+              <Zap />
+            </ToolbarAction>
+          </ActionToolbar>
         }
       />
 
       <Tabs
         value={mainView}
-        onValueChange={(value) => setMainView(value as MainView)}
+        onValueChange={(value) => goToTab(value as RequestAuditTab)}
         className='gap-4'
       >
-        <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+        <TabsList className='h-8 w-full justify-start overflow-x-auto sm:w-fit'>
           <TabsTrigger value='overview'>
             <Activity />
             风险总览
@@ -2018,6 +2170,20 @@ export function RequestAuditsPage() {
             审计调度
           </TabsTrigger>
         </TabsList>
+
+        {pinnedAccountId != null ? (
+          <PinnedAccountBar
+            accountId={pinnedAccountId}
+            detail={pinnedAccountDetail}
+            risk={pinnedRiskAccount}
+            onClear={() => goToTab(mainView, { account: '' })}
+            onViewSamples={
+              pinnedRiskAccount
+                ? () => openAccountSamples(pinnedRiskAccount)
+                : undefined
+            }
+          />
+        ) : null}
 
         <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs lg:flex-row lg:items-center lg:justify-between'>
           <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
@@ -2373,8 +2539,7 @@ export function RequestAuditsPage() {
                       type='button'
                       className='flex min-h-14 w-full cursor-pointer items-center gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
                       onClick={() => {
-                        setMainView('workspace')
-                        setPerspective('nodes')
+                        goToTab('workspace', { view: 'nodes' })
                         setWorkspaceRisk('risky')
                         setSelectedNodeKey(node.key)
                       }}
@@ -2452,15 +2617,17 @@ export function RequestAuditsPage() {
               <Tabs
                 value={perspective}
                 onValueChange={(value) => {
-                  setPerspective(value as Perspective)
+                  goToTab('workspace', {
+                    view: value as Perspective,
+                  })
                   setRiskPage(1)
                 }}
                 className='gap-0'
               >
-                <div className='space-y-3 border-b bg-muted/10 p-3'>
+                <div className='space-y-2 border-b bg-muted/15 px-3 py-2'>
                   <div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
                     <div className='flex min-w-0 flex-1 flex-col gap-2 lg:flex-row lg:items-center'>
-                      <TabsList className='h-auto w-full justify-start sm:w-fit'>
+                      <TabsList className='h-8 w-full justify-start sm:w-fit'>
                         <TabsTrigger value='accounts'>
                           <UsersRound />
                           账号视角
@@ -2480,7 +2647,7 @@ export function RequestAuditsPage() {
                         <div className='relative min-w-0 flex-1'>
                           <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
                           <Input
-                            className='h-10 pr-3 pl-9'
+                            className='h-8 pr-3 pl-8'
                             placeholder='搜索账号、节点或最近探测 IP'
                             aria-label='搜索风险账号或代理节点'
                             value={workspaceSearch}
@@ -2494,7 +2661,7 @@ export function RequestAuditsPage() {
                           <PopoverTrigger asChild>
                             <Button
                               variant='outline'
-                              className='h-10 shrink-0 gap-2 px-3'
+                              className='h-8 shrink-0 gap-2 px-3'
                             >
                               <SlidersHorizontal className='size-4' />
                               筛选条件
@@ -2610,8 +2777,8 @@ export function RequestAuditsPage() {
                         >
                           <ListChecks />
                         </ToolbarAction>
-                      </ActionToolbar>
                       <SelectionToolbar
+                        wrap={false}
                         selectedCount={selectedRiskAccountIds.length}
                         entityLabel='账号'
                         disabled={bulkSelectionPending}
@@ -2662,13 +2829,22 @@ export function RequestAuditsPage() {
                           <LockKeyhole />
                         </ToolbarAction>
                       </SelectionToolbar>
+                      </ActionToolbar>
                     </div>
                   </div>
-                  {(workspaceFilterCount > 0 || workspaceSearch.trim()) && (
+                  {(workspaceFilterCount > 0 ||
+                    workspaceSearch.trim() ||
+                    pinnedAccountId != null) && (
                     <div className='flex flex-wrap items-center gap-1.5'>
                       <span className='mr-1 text-xs text-muted-foreground'>
                         当前条件
                       </span>
+                      {pinnedAccountId != null && (
+                        <FilterChip
+                          label={`账号：${pinnedAccountLabel}`}
+                          onClear={() => goToTab(mainView, { account: '' })}
+                        />
+                      )}
                       {workspaceSearch.trim() && (
                         <FilterChip
                           label={`搜索：${workspaceSearch.trim()}`}
@@ -2866,7 +3042,7 @@ export function RequestAuditsPage() {
                       if (!node.egressNodeId) return
                       setAuditNode(String(node.egressNodeId))
                       setPage(1)
-                      setMainView('ledger')
+                      goToTab('ledger')
                     }}
                   />
                 </TabsContent>
@@ -2885,13 +3061,13 @@ export function RequestAuditsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className='p-0'>
-              <div className='space-y-3 border-b bg-muted/10 p-3'>
+              <div className='space-y-2 border-b bg-muted/15 px-3 py-2'>
                 <div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
                   <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
                     <div className='relative min-w-0 flex-1'>
                       <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
                       <Input
-                        className='h-10 pr-3 pl-9'
+                        className='h-8 pr-3 pl-8'
                         placeholder='搜索账号名、账号 ID、请求 ID 或 Key 名称'
                         aria-label='搜索请求审计流水'
                         value={auditSearch}
@@ -2905,7 +3081,7 @@ export function RequestAuditsPage() {
                       <PopoverTrigger asChild>
                         <Button
                           variant='outline'
-                          className='h-10 shrink-0 gap-2 px-3'
+                          className='h-8 shrink-0 gap-2 px-3'
                         >
                           <SlidersHorizontal className='size-4' />
                           筛选条件
@@ -3118,8 +3294,29 @@ export function RequestAuditsPage() {
                       >
                         <ListChecks />
                       </ToolbarAction>
-                    </ActionToolbar>
+                    <ExportMenu
+                      label='导出流水'
+                      onExport={(format) =>
+                        api.exportRequestAudits({
+                          format,
+                          ...windowParams,
+                          account: deferredAuditSearch.trim(),
+                          accountId: pinnedAccountId ?? undefined,
+                          clientKey:
+                            deferredAuditClientKey === 'all'
+                              ? ''
+                              : deferredAuditClientKey.trim(),
+                          risk:
+                            effectiveAuditRisk === 'all'
+                              ? ''
+                              : effectiveAuditRisk,
+                          egressNodeId:
+                            auditNode === 'all' ? undefined : Number(auditNode),
+                        })
+                      }
+                    />
                     <SelectionToolbar
+                      wrap={false}
                       selectedCount={selectedLedgerRecords.length}
                       entityLabel='条请求'
                       countLabel={`已选 ${selectedLedgerRecords.length} 条 · ${selectedLedgerAccountIds.length} 个账号`}
@@ -3179,13 +3376,22 @@ export function RequestAuditsPage() {
                         <LockKeyhole />
                       </ToolbarAction>
                     </SelectionToolbar>
+                    </ActionToolbar>
                   </div>
                 </div>
-                {(ledgerFilterCount > 0 || auditSearch.trim()) && (
+                {(ledgerFilterCount > 0 ||
+                  auditSearch.trim() ||
+                  pinnedAccountId != null) && (
                   <div className='flex flex-wrap items-center gap-1.5'>
                     <span className='mr-1 text-xs text-muted-foreground'>
                       当前条件
                     </span>
+                    {pinnedAccountId != null && (
+                      <FilterChip
+                        label={`账号：${pinnedAccountLabel}`}
+                        onClear={() => goToTab(mainView, { account: '' })}
+                      />
+                    )}
                     {auditSearch.trim() && (
                       <FilterChip
                         label={`搜索：${auditSearch.trim()}`}
@@ -3752,11 +3958,22 @@ function AuditRecordDetailDialog({
                 label='请求 ID'
                 value={record.requestId || '—'}
                 mono
+                copyValue={record.requestId || undefined}
               />
-              <AuditDetailField label='审计 ID' value={record.id} mono />
+              <AuditDetailField
+                label='审计 ID'
+                value={record.id}
+                mono
+                copyValue={record.id}
+              />
               <AuditDetailField
                 label='账号'
                 value={`${record.accountName || `账号 ${record.accountId ?? '未知'}`} · ID ${record.accountId ?? '未知'}`}
+                copyValue={
+                  record.accountId != null
+                    ? String(record.accountId)
+                    : undefined
+                }
               />
               <AuditDetailField
                 label='客户端 Key'
@@ -4005,7 +4222,12 @@ function ProbeAuditSampleCard({
           {formatDate(sample.created_at)}
         </span>
         <Button asChild variant='ghost' size='sm'>
-          <Link to='/runs'>
+          <Link
+            to='/runs'
+            search={
+              runsSearchFromAccount(sample.account_id, run.id) as never
+            }
+          >
             <ExternalLink />
             任务中心
           </Link>
@@ -4138,10 +4360,12 @@ function AuditDetailField({
   label,
   value,
   mono = false,
+  copyValue,
 }: {
   label: string
   value: string
   mono?: boolean
+  copyValue?: string
 }) {
   return (
     <div className='min-w-0 rounded-lg border bg-background p-3'>
@@ -4152,7 +4376,13 @@ function AuditDetailField({
           mono && 'font-mono break-all tabular-nums'
         )}
       >
-        {value}
+        {copyValue ? (
+          <CopyableText value={copyValue} className='max-w-full'>
+            <span className='min-w-0 break-all'>{value}</span>
+          </CopyableText>
+        ) : (
+          value
+        )}
       </dd>
     </div>
   )
@@ -4819,12 +5049,17 @@ function AuditRow({
             </Badge>
           )}
         </div>
-        <div
-          className='max-w-64 font-mono text-[10px] break-all text-muted-foreground'
-          title={row.requestId}
+        <CopyableText
+          value={row.requestId || row.id}
+          className='max-w-full items-start'
         >
-          {row.requestId || row.id}
-        </div>
+          <span
+            className='max-w-64 font-mono text-[10px] break-all text-muted-foreground'
+            title={row.requestId}
+          >
+            {row.requestId || row.id}
+          </span>
+        </CopyableText>
       </TableCell>
       <TableCell className='align-middle !whitespace-normal'>
         <div

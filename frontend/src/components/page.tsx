@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode, type UIEvent } from 'react'
 import { Loader2, PackageOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Skeleton } from '@/components/ui/skeleton'
 import { InfoTooltip } from '@/components/info-tooltip'
 
 export function Page({
@@ -38,7 +39,7 @@ export function Page({
       data-auto-hide-scrollbar
       data-scrollbar-visible='false'
       onScroll={revealScrollbar}
-      className={`mx-auto h-full min-h-0 auto-hide-scrollbar w-full max-w-[1600px] space-y-6 overflow-y-auto p-4 md:p-6 ${className}`}
+      className={`mx-auto h-full min-h-0 auto-hide-scrollbar w-full max-w-[1600px] space-y-5 overflow-y-auto p-5 md:p-6 ${className}`}
     >
       {children}
     </div>
@@ -59,10 +60,12 @@ export function PageHeader({
   hintContentClassName?: string
 }) {
   return (
-    <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+    <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
       <div className='min-w-0'>
-        <div className='flex items-center gap-1.5'>
-          <h1 className='text-2xl font-semibold tracking-tight'>{title}</h1>
+        <div className='flex items-center gap-2'>
+          <h1 className='text-xl font-semibold tracking-tight sm:text-2xl'>
+            {title}
+          </h1>
           {descriptionAsHint && (
             <InfoTooltip
               label={title}
@@ -76,7 +79,7 @@ export function PageHeader({
         )}
       </div>
       {actions && (
-        <div className='flex max-w-full shrink-0 flex-wrap gap-2'>
+        <div className='flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5'>
           {actions}
         </div>
       )}
@@ -111,17 +114,19 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-xl border border-dashed text-center',
+        'flex flex-col items-center justify-center rounded-xl border border-dashed bg-muted/20 text-center',
         compact ? 'min-h-32 p-5' : 'min-h-48 p-8',
         className
       )}
     >
-      <Icon
+      <div
         className={cn(
-          'text-muted-foreground',
-          compact ? 'mb-2 size-6' : 'mb-3 size-8'
+          'flex items-center justify-center rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-300',
+          compact ? 'mb-2 size-10' : 'mb-3 size-12'
         )}
-      />
+      >
+        <Icon className={cn(compact ? 'size-5' : 'size-6')} />
+      </div>
       <div className='font-medium'>{title}</div>
       <p className='mt-1 max-w-md text-sm text-muted-foreground'>
         {description}
@@ -130,3 +135,20 @@ export function EmptyState({
     </div>
   )
 }
+
+export function PageSkeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn('space-y-4', className)}>
+      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+        {Array.from({ length: 4 }, (_, index) => (
+          <Skeleton key={index} className='h-32 rounded-2xl' />
+        ))}
+      </div>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]'>
+        <Skeleton className='h-72 rounded-2xl' />
+        <Skeleton className='h-72 rounded-2xl' />
+      </div>
+    </div>
+  )
+}
+

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import {
   Activity,
   BatteryFull,
@@ -8,10 +8,10 @@ import {
   BatteryMedium,
   BatteryWarning,
   CircleHelp,
-  Gauge,
   CircleX,
   Eye,
   Filter,
+  Gauge,
   KeyRound,
   ListChecks,
   Loader2,
@@ -50,7 +50,6 @@ import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -84,7 +83,11 @@ import {
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { ExportMenu } from '@/components/export-menu'
+import { InfoTooltip } from '@/components/info-tooltip'
+import { CopyButton } from '@/components/copy-button'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
+import { TablePanel } from '@/components/table-panel'
 import { PersistedViewNotice } from '@/components/persisted-view-notice'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import {
@@ -99,6 +102,11 @@ import {
   AuthStatusIndicator,
   EgressBindingIndicator,
 } from '@/features/monitor/components/account-state-indicators'
+import {
+  AccountTimeline,
+  timelineRangeLabel,
+} from '@/features/monitor/components/account-timeline'
+import { matchWorkspaceTabId } from '@/components/layout/workspace-tabs'
 import {
   ACCOUNT_UPSTREAM_STATUS_OPTIONS,
   type UpstreamStatusFilter,
@@ -160,6 +168,7 @@ const ssoRiskLabels: Record<SsoRiskFilter, string> = {
 export function AccountsPage() {
   const client = useQueryClient()
   const navigate = useNavigate()
+  const pathname = useLocation({ select: (location) => location.pathname })
   const accountsView = usePersistedViewState(
     ACCOUNTS_VIEW_STORAGE_KEY,
     defaultAccountsView
@@ -217,6 +226,18 @@ export function AccountsPage() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [sampleToDelete, setSampleToDelete] = useState<ProbeSample | null>(null)
+  useEffect(() => {
+    if (matchWorkspaceTabId(pathname) === 'accounts') return
+    setDetailOpen(false)
+    setProbeOpen(false)
+    setEgressBindingOpen(false)
+    setDeleteConfirmOpen(false)
+    setIsolateConfirmOpen(false)
+    setDetailIsolateOpen(false)
+    setSsoConfirmOpen(false)
+    setBatchAction(null)
+    setSampleToDelete(null)
+  }, [pathname])
   const tableQueryPending =
     tableQuery.page !== committedQuery.page ||
     tableQuery.pageSize !== committedQuery.pageSize ||
@@ -724,7 +745,6 @@ export function AccountsPage() {
         hintContentClassName='max-w-[28rem]'
         descriptionAsHint
         actions={
-          <>
             <ActionToolbar label='账号列表操作'>
               <ToolbarAction
                 label='刷新上游账号'
@@ -755,8 +775,12 @@ export function AccountsPage() {
               >
                 <ListChecks />
               </ToolbarAction>
-            </ActionToolbar>
+            <ExportMenu
+              label='导出高风险'
+              onExport={(format) => api.exportHighRisk(format)}
+            />
             <SelectionToolbar
+              wrap={false}
               selectedCount={selected.length}
               entityLabel='账号'
               disabled={selectionActionPending}
@@ -851,12 +875,12 @@ export function AccountsPage() {
                 <Trash2 />
               </ToolbarAction>
             </SelectionToolbar>
-          </>
+          </ActionToolbar>
         }
       />
-      <Card>
-        <CardContent className='p-4'>
-          <div className='mb-4 space-y-3' aria-busy={showTableLoading}>
+      <TablePanel
+        toolbar={
+          <div className='space-y-2' aria-busy={showTableLoading}>
             <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
               <div className='relative min-w-0 flex-1'>
                 <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
@@ -864,13 +888,13 @@ export function AccountsPage() {
                   value={search}
                   onChange={(event) => updateAccountsView({ search: event.target.value, page: 1 })}
                   placeholder='搜索名称、邮箱或账号 ID'
-                  className='h-10 pr-9 pl-9'
+                  className='h-8 pr-8 pl-8'
                 />
                 {showTableLoading && <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />}
               </div>
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant='outline' className='h-10 shrink-0 gap-2 px-3'>
+                  <Button variant='outline' className='h-8 shrink-0 gap-2 px-3'>
                     <SlidersHorizontal className='size-4' />
                     筛选条件
                     {activeFilterCount > 0 && <Badge variant='secondary' className='min-w-5 justify-center px-1.5'>{activeFilterCount}</Badge>}
@@ -925,7 +949,7 @@ export function AccountsPage() {
               </Popover>
             </div>
             {(activeFilterCount > 0 || search.trim()) && (
-              <div className='flex flex-wrap items-center gap-1.5 border-t pt-3'>
+              <div className='flex flex-wrap items-center gap-1.5'>
                 <span className='mr-1 text-xs text-muted-foreground'>当前条件</span>
                 {search.trim() && <FilterChip label={`搜索：${search.trim()}`} onClear={() => updateAccountsView({ search: '', page: 1 })} />}
                 {status !== 'all' && <FilterChip label={`判定：${accountMonitorStatusLabels[status]}`} onClear={() => updateAccountsView({ status: 'all', page: 1 })} />}
@@ -935,7 +959,6 @@ export function AccountsPage() {
                 {egressNodeId !== 'all' && <FilterChip label={`出口：${egressFilterLabel}`} onClear={() => updateAccountsView({ egressNodeId: 'all', page: 1 })} />}
               </div>
             )}
-          </div>
           {accountsView.active && (
             <PersistedViewNotice
               restored={accountsView.restored}
@@ -943,6 +966,29 @@ export function AccountsPage() {
               onClear={clearAccountsView}
             />
           )}
+          </div>
+        }
+        footer={
+          accounts.length ? (
+            <ServerPagination
+              page={page}
+              pageSize={pageSize}
+              total={query.data?.total ?? 0}
+              disabled={showTableLoading}
+              loading={showTableLoading}
+              itemLabel='账号'
+              onPageChange={(value) => {
+                beginTableInteraction()
+                updateAccountsView({ page: value })
+              }}
+              onPageSizeChange={(value) => {
+                beginTableInteraction()
+                updateAccountsView({ pageSize: value, page: 1 })
+              }}
+            />
+          ) : null
+        }
+      >
           {query.isLoading && !query.data ? (
             <LoadingState />
           ) : accounts.length ? (
@@ -965,28 +1011,20 @@ export function AccountsPage() {
                   />
                 )}
               </div>
-              <ServerPagination
-                page={page}
-                pageSize={pageSize}
-                total={query.data?.total ?? 0}
-                disabled={showTableLoading}
-                loading={showTableLoading}
-                itemLabel='账号'
-                onPageChange={(value) => {
-                  beginTableInteraction()
-                  updateAccountsView({ page: value })
-                }}
-                onPageSizeChange={(value) => {
-                  beginTableInteraction()
-                  updateAccountsView({ pageSize: value, page: 1 })
-                }}
-              />
             </>
           ) : (
             <div className='relative min-h-48' aria-busy={showTableLoading}>
               <EmptyState
                 title='未找到账号'
                 description='请检查 grok2api 管理 API 配置或调整筛选条件。'
+                action={
+                  <Button
+                    variant='outline'
+                    onClick={() => navigate({ to: '/settings/connection' })}
+                  >
+                    去连接设置
+                  </Button>
+                }
               />
               {showTableLoading && (
                 <ServerTableLoadingOverlay
@@ -997,8 +1035,7 @@ export function AccountsPage() {
               )}
             </div>
           )}
-        </CardContent>
-      </Card>
+      </TablePanel>
 
       <ProbeDialog
         open={probeOpen}
@@ -1292,7 +1329,18 @@ export function AccountsPage() {
           <DialogHeader className='shrink-0'>
             <DialogTitle className='flex items-center gap-2'>
               <UsersRound className='size-5 text-primary' />
-              {detail.data?.account?.name || `账号 ${detailId}`}
+              <span className='min-w-0 truncate'>
+                {detail.data?.account?.name || `账号 ${detailId}`}
+              </span>
+              {detail.data?.account ? (
+                <CopyButton
+                  value={
+                    detail.data.account.email?.trim() ||
+                    String(detail.data.account.id)
+                  }
+                  className='size-6'
+                />
+              ) : null}
             </DialogTitle>
             <DialogDescription>
               {detail.data?.account
@@ -1323,6 +1371,7 @@ export function AccountsPage() {
                       : null
                   }
                   onDeleteSample={setSampleToDelete}
+                  onNavigate={() => setDetailOpen(false)}
                 />
               )
             )}
@@ -1484,7 +1533,10 @@ const AccountsTable = memo(function AccountsTable({
 }: AccountsTableProps) {
   const selectedIdSet = useMemo(() => new Set(selected), [selected])
   return (
-    <Table rememberRowKey='monitor-accounts'>
+    <Table
+      rememberRowKey='monitor-accounts'
+      className='[&_td]:py-1.5 [&_th]:h-8'
+    >
       <TableHeader>
         <TableRow>
           <TableHead className='w-10'>
@@ -1533,6 +1585,47 @@ type AccountRowProps = {
   onDetail: () => void
 }
 
+function IconStat({
+  icon: Icon,
+  value,
+  label,
+  tone = 'muted',
+}: {
+  icon: typeof Activity
+  value: React.ReactNode
+  label: string
+  tone?: 'muted' | 'success' | 'warning' | 'danger'
+}) {
+  const color =
+    tone === 'success'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : tone === 'warning'
+        ? 'text-amber-600 dark:text-amber-400'
+        : tone === 'danger'
+          ? 'text-destructive'
+          : 'text-muted-foreground'
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            'inline-flex items-center gap-1 text-xs tabular-nums',
+            color
+          )}
+          tabIndex={0}
+          aria-label={`${label} ${typeof value === 'string' || typeof value === 'number' ? value : ''}`}
+        >
+          <span className='inline-flex size-5 items-center justify-center rounded-md bg-muted/70'>
+            <Icon className='size-3.5' />
+          </span>
+          {value}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
 function AccountPeriodStats({
   assessment,
 }: {
@@ -1545,53 +1638,44 @@ function AccountPeriodStats({
   const overridden = tpsOverridden(latestTps, latestUpstream)
   const hasTps = latestTps > 0
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className='flex items-center gap-2 text-xs tabular-nums'>
-          <span className='inline-flex items-center gap-1 text-muted-foreground'>
-            <Activity className='size-3.5' />
-            {samples}
-          </span>
-          <span
-            className={cn(
-              'inline-flex items-center gap-1',
-              anomalies > 0
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-muted-foreground'
-            )}
-          >
-            <TriangleAlert className='size-3.5' />
-            {anomalies}
-          </span>
-          {hasTps ? (
-            <span className='inline-flex items-center gap-1 text-muted-foreground'>
-              <Gauge className='size-3.5' />
-              <DualTpsValue
-                tps={latestTps}
-                upstreamTps={latestUpstream}
-                compact
-              />
-            </span>
-          ) : null}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent className='max-w-80'>
-        风险周期内 {samples} 个样本，{anomalies} 个降智信号。
-        {hasTps
-          ? ` TPS 显示最新一条可计量样本${
-              overridden
-                ? '：紫色为按生成窗口重算，灰色为上游被压低的原值'
-                : ''
-            }。周期最高 ${formatDualTps(
-              assessment.max_tps,
-              assessment.max_upstream_tps
-            )}，平均 ${formatDualTps(
-              assessment.avg_tps,
-              assessment.avg_upstream_tps
-            )}。`
-          : ' 当前周期还没有可计量 TPS。'}
-      </TooltipContent>
-    </Tooltip>
+    <div className='flex items-center gap-2.5'>
+      <IconStat icon={Activity} value={samples} label='周期样本' />
+      <IconStat
+        icon={TriangleAlert}
+        value={anomalies}
+        label='降智信号'
+        tone={anomalies > 0 ? 'warning' : 'muted'}
+      />
+      {hasTps ? (
+        <IconStat
+          icon={Gauge}
+          value={
+            <DualTpsValue
+              tps={latestTps}
+              upstreamTps={latestUpstream}
+              compact
+            />
+          }
+          label={
+            overridden
+              ? `最新 TPS，紫色为按生成窗口重算。周期最高 ${formatDualTps(
+                  assessment.max_tps,
+                  assessment.max_upstream_tps
+                )}，平均 ${formatDualTps(
+                  assessment.avg_tps,
+                  assessment.avg_upstream_tps
+                )}`
+              : `最新可计量 TPS。周期最高 ${formatDualTps(
+                  assessment.max_tps,
+                  assessment.max_upstream_tps
+                )}，平均 ${formatDualTps(
+                  assessment.avg_tps,
+                  assessment.avg_upstream_tps
+                )}`
+          }
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -1613,7 +1697,7 @@ const AccountRow = memo(function AccountRow({
   })
   return (
     <TableRow rowId={id}>
-      <TableCell>
+      <TableCell className='w-10'>
         <Checkbox
           checked={selected}
           disabled={
@@ -1624,49 +1708,64 @@ const AccountRow = memo(function AccountRow({
         />
       </TableCell>
       <TableCell>
-        <div className='font-medium'>{accountLabel}</div>
-        <div
-          className='max-w-80 text-xs text-muted-foreground'
-          title={secondaryAccountLabel}
-        >
-          {secondaryAccountLabel}
+        <div className='group/account flex max-w-[22rem] items-center gap-1'>
+          <div className='min-w-0 leading-tight'>
+            <button
+              type='button'
+              onClick={onDetail}
+              className='block max-w-full truncate text-left text-sm font-medium hover:text-primary hover:underline'
+              title={accountLabel}
+            >
+              {accountLabel}
+            </button>
+            <div
+              className='truncate text-[11px] text-muted-foreground'
+              title={secondaryAccountLabel}
+            >
+              {secondaryAccountLabel}
+            </div>
+          </div>
+          <CopyButton
+            value={account.email?.trim() || String(id)}
+            className='size-6 opacity-0 transition-opacity group-focus-within/account:opacity-100 group-hover/account:opacity-100'
+          />
         </div>
       </TableCell>
       <TableCell className='text-center'>
-        <div className='flex flex-col items-center gap-1'>
+        <div className='inline-flex items-center justify-center gap-0.5'>
           <SsoAvailabilityIndicator available={account.ssoAvailable} />
-          <AccountSsoRiskBadge account={account} />
+          <AccountSsoRiskIcon account={account} />
         </div>
       </TableCell>
       <TableCell>
-        <div className='flex items-center gap-2'>
+        <div className='flex items-center gap-1.5'>
           <span
-            className={`size-2 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
+            className={`size-1.5 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
           />
-          {account.enabled ? '启用' : '停用'}
-          <AuthStatusIndicator status={account.authStatus} />
-          {assessment.recovery_guarded && (
+          <span className='text-sm'>{account.enabled ? '启用' : '停用'}</span>
+          <AuthStatusIndicator status={account.authStatus} compact />
+          {assessment.recovery_guarded ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge
-                  variant='outline'
-                  className='gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                <span
+                  className='inline-flex size-6 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  tabIndex={0}
+                  aria-label='恢复保护'
                 >
-                  <ShieldCheck className='size-3' />
-                  恢复保护
-                </Badge>
+                  <ShieldCheck className='size-3.5' />
+                </span>
               </TooltipTrigger>
               <TooltipContent className='max-w-72'>
                 隔离到期后由系统恢复，恢复时已降至最低优先级；当前优先级为{' '}
                 {account.priority ?? '未知'}。
               </TooltipContent>
             </Tooltip>
-          )}
-          {!account.enabled && (
+          ) : null}
+          {!account.enabled ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span
-                  className='inline-flex size-6 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  className='inline-flex size-6 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400'
                   tabIndex={0}
                   aria-label='探针诊断激活'
                 >
@@ -1677,13 +1776,13 @@ const AccountRow = memo(function AccountRow({
                 探针请求前短时激活，单次请求后及任务结束时恢复原设置。
               </TooltipContent>
             </Tooltip>
-          )}
+          ) : null}
         </div>
       </TableCell>
       <TableCell>
-        <div className='flex items-center gap-2 whitespace-nowrap'>
+        <div className='flex items-center gap-1.5'>
           <StatusBadge value={assessment.monitor_status} />
-          <span className='text-xs text-muted-foreground tabular-nums'>
+          <span className='text-[11px] text-muted-foreground tabular-nums'>
             {formatNumber(assessment.risk_score)} 分
           </span>
         </div>
@@ -1707,8 +1806,9 @@ const AccountRow = memo(function AccountRow({
             <Button
               size='icon'
               variant='ghost'
+              className='size-7'
               onClick={onDetail}
-              aria-label='查看账号详情'
+              aria-label={`查看 ${accountLabel} 详情`}
             >
               <Eye />
             </Button>
@@ -1731,6 +1831,182 @@ function areAccountRowPropsEqual(
   )
 }
 
+function AccountSsoRiskIcon({ account }: { account: UpstreamAccount }) {
+  const recommendation = account.egressRecommendation
+  if (recommendation?.type === 'change_egress') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex size-6 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            tabIndex={0}
+            aria-label='建议更换出口'
+          >
+            <Network className='size-3.5' />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className='max-w-72'>
+          {recommendation.reason}
+          {recommendation.priority != null
+            ? `；当前降级优先级 ${recommendation.priority}`
+            : ''}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  const status =
+    account.ssoRiskStatus || (account.ssoAvailable ? 'unverified' : 'missing')
+  if (status === 'flagged') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex size-6 items-center justify-center rounded-md bg-destructive/10 text-destructive'
+            tabIndex={0}
+            aria-label='SSO 已标记'
+          >
+            <ShieldAlert className='size-3.5' />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>SSO 已标记</TooltipContent>
+      </Tooltip>
+    )
+  }
+  if (status === 'failed' || status === 'pending') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex size-6 items-center justify-center rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            tabIndex={0}
+            aria-label={status === 'pending' ? 'SSO 复检中' : 'SSO 复检失败'}
+          >
+            <ShieldAlert className='size-3.5' />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {status === 'pending' ? 'SSO 复检中' : 'SSO 复检失败'}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+  return null
+}
+
+function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
+  if (!quota || quota.type === 'unknown') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex h-6 items-center gap-1 text-xs text-muted-foreground'
+            tabIndex={0}
+            aria-label='额度尚未同步'
+          >
+            <CircleHelp className='size-3.5' />
+            待同步
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>grok2api 尚未提供可用的额度数据。</TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  const usagePercent = Math.min(100, Math.max(0, quota.usagePercent || 0))
+  const hasQuotaRange =
+    quota.limitKnown ||
+    quota.limit > 0 ||
+    quota.unit === 'percent' ||
+    quota.status !== 'active'
+
+  if (!hasQuotaRange) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className='inline-flex h-6 items-center gap-1 text-xs text-muted-foreground'
+            tabIndex={0}
+            aria-label='额度总量未知'
+          >
+            <CircleHelp className='size-3.5' />
+            未估算
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className='max-w-72'>
+          已观测使用 {formatQuotaAmount(quota.used, quota.unit)}
+          ，但上游未提供额度总量。
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  const remainingPercent =
+    quota.status === 'waitingReset' ? 0 : Math.max(0, 100 - usagePercent)
+  const approximate = !quota.limitKnown && quota.type === 'free'
+  const displayValue = `${approximate ? '≈' : ''}${formatNumber(remainingPercent, 0)}%`
+  const Icon =
+    remainingPercent <= 0
+      ? BatteryWarning
+      : remainingPercent <= 25
+        ? BatteryLow
+        : remainingPercent <= 60
+          ? BatteryMedium
+          : BatteryFull
+  const tone =
+    remainingPercent <= 0
+      ? 'text-destructive'
+      : remainingPercent <= 25
+        ? 'text-amber-600 dark:text-amber-400'
+        : remainingPercent <= 60
+          ? 'text-sky-600 dark:text-sky-400'
+          : 'text-emerald-600 dark:text-emerald-400'
+  const recoveryAt = quota.nextProbeAt || quota.periodEnd
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            'inline-flex h-6 items-center gap-1 text-xs font-medium tabular-nums',
+            tone
+          )}
+          tabIndex={0}
+          aria-label={`额度剩余 ${displayValue}`}
+        >
+          <Icon className='size-3.5' />
+          {displayValue}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className='max-w-72 space-y-1'>
+        <div>额度剩余 {displayValue}</div>
+        {quota.limit > 0 && quota.unit !== 'percent' && (
+          <div className='text-muted-foreground'>
+            {approximate ? '估算剩余' : '剩余'}{' '}
+            {formatQuotaAmount(quota.remaining, quota.unit)} / 总量{' '}
+            {formatQuotaAmount(quota.limit, quota.unit)}
+          </div>
+        )}
+        <div className='text-muted-foreground'>
+          已使用 {formatNumber(usagePercent)}%
+          {quota.confirmed
+            ? ' · 上游确认'
+            : quota.observed
+              ? ' · 本地观测'
+              : approximate
+                ? ' · 估算'
+                : ''}
+        </div>
+        {recoveryAt && (
+          <div className='text-muted-foreground'>
+            {quota.status === 'waitingReset' ? '预计恢复' : '周期结束'}{' '}
+            {formatDate(recoveryAt)}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function SsoAvailabilityIndicator({ available }: { available: boolean }) {
   const Icon = available ? KeyRound : CircleX
   return (
@@ -1741,8 +2017,8 @@ function SsoAvailabilityIndicator({ available }: { available: boolean }) {
             'inline-flex size-6 items-center justify-center rounded-md',
             'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
             available
-              ? 'text-emerald-600 dark:text-emerald-400'
-              : 'text-muted-foreground'
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+              : 'bg-muted/70 text-muted-foreground'
           )}
           tabIndex={0}
           aria-label={available ? '已保存 SSO' : '缺失 SSO'}
@@ -1814,17 +2090,26 @@ function AccountDetail({
   egressNodeNames,
   deletingSampleId,
   onDeleteSample,
+  onNavigate,
 }: {
   data: AccountDetailResponse
   egressNodeNames: EgressNodeNameMap
   deletingSampleId: string | null
   onDeleteSample: (sample: ProbeSample) => void
+  onNavigate?: () => void
 }) {
   const account = data.account
   const assessment = account.assessment
   const history = data.history
   const reasons: string[] = assessment.risk_reasons ?? []
   const byTarget = history.byTarget ?? []
+  const [timelineLimit, setTimelineLimit] = useState(50)
+  const timelineQuery = useQuery({
+    queryKey: ['account-timeline', account.id, timelineLimit],
+    queryFn: () => api.accountTimeline(Number(account.id), timelineLimit),
+  })
+  const timelineItems = timelineQuery.data?.items ?? []
+  const timelineRange = timelineRangeLabel(timelineItems)
   return (
     <div className='space-y-5'>
       <div className='grid gap-3 sm:grid-cols-3 lg:grid-cols-6'>
@@ -1933,6 +2218,41 @@ function AccountDetail({
         </div>
       </div>
       <div>
+        <h3 className='mb-1 flex items-center gap-1.5 text-sm font-semibold'>
+          账号时间线
+          <InfoTooltip
+            label='账号时间线'
+            content='按事件时间倒序，不是按自然日窗口。默认最近 50 条，混合探针样本、请求审计、隔离/恢复和备注。请求一多只保留最新的；点审计或任务中心会按该账号自动过滤对应页面。'
+          />
+        </h3>
+        <p className='mb-2 text-xs leading-5 text-muted-foreground'>
+          最近 {timelineItems.length} 条
+          {timelineRange ? `（${timelineRange}）` : ''}
+          {timelineQuery.data?.hasMore ? '，还有更早事件' : ''}
+          。不是按自然日窗口；点「查看请求审计」或「查看任务中心」会关掉这个弹框，并按该账号自动过滤对应页面。
+        </p>
+        <AccountTimeline
+          items={timelineItems}
+          isLoading={timelineQuery.isLoading}
+          isError={timelineQuery.isError}
+          errorMessage={getErrorMessage(timelineQuery.error)}
+          onNavigate={onNavigate}
+        />
+        {timelineQuery.data?.hasMore && timelineLimit < 200 ? (
+          <Button
+            type='button'
+            variant='outline'
+            className='mt-2 h-8'
+            disabled={timelineQuery.isFetching}
+            onClick={() =>
+              setTimelineLimit((current) => Math.min(200, current + 50))
+            }
+          >
+            再显示 50 条
+          </Button>
+        ) : null}
+      </div>
+      <div>
         <h3 className='mb-2 text-sm font-semibold'>最近样本</h3>
         <AccountSampleExplorer
           samples={history.samples.slice(0, 30)}
@@ -1942,120 +2262,6 @@ function AccountDetail({
         />
       </div>
     </div>
-  )
-}
-
-function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
-  if (!quota || quota.type === 'unknown') {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className='inline-flex h-7 w-20 items-center gap-1.5 text-xs text-muted-foreground'
-            tabIndex={0}
-            aria-label='额度尚未同步'
-          >
-            <CircleHelp className='size-4 shrink-0' />
-            待同步
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>grok2api 尚未提供可用的额度数据。</TooltipContent>
-      </Tooltip>
-    )
-  }
-
-  const usagePercent = Math.min(100, Math.max(0, quota.usagePercent || 0))
-  const hasQuotaRange =
-    quota.limitKnown ||
-    quota.limit > 0 ||
-    quota.unit === 'percent' ||
-    quota.status !== 'active'
-
-  if (!hasQuotaRange) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className='inline-flex h-7 w-20 items-center gap-1.5 text-xs text-muted-foreground'
-            tabIndex={0}
-            aria-label='额度总量未知'
-          >
-            <CircleHelp className='size-4 shrink-0' />
-            未估算
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className='max-w-72'>
-          已观测使用 {formatQuotaAmount(quota.used, quota.unit)}
-          ，但上游未提供额度总量。
-        </TooltipContent>
-      </Tooltip>
-    )
-  }
-
-  const remainingPercent =
-    quota.status === 'waitingReset' ? 0 : Math.max(0, 100 - usagePercent)
-  const approximate = !quota.limitKnown && quota.type === 'free'
-  const displayValue = `${approximate ? '≈' : ''}${formatNumber(remainingPercent, 0)}%`
-  const Icon =
-    remainingPercent <= 0
-      ? BatteryWarning
-      : remainingPercent <= 25
-        ? BatteryLow
-        : remainingPercent <= 60
-          ? BatteryMedium
-          : BatteryFull
-  const tone =
-    remainingPercent <= 0
-      ? 'text-destructive'
-      : remainingPercent <= 25
-        ? 'text-amber-600 dark:text-amber-400'
-        : remainingPercent <= 60
-          ? 'text-sky-600 dark:text-sky-400'
-          : 'text-emerald-600 dark:text-emerald-400'
-  const recoveryAt = quota.nextProbeAt || quota.periodEnd
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'inline-flex h-7 w-20 items-center gap-1.5 text-xs font-medium tabular-nums',
-            tone
-          )}
-          tabIndex={0}
-          aria-label={`额度剩余 ${displayValue}`}
-        >
-          <Icon className='size-4 shrink-0' />
-          {displayValue}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent className='max-w-72 space-y-1'>
-        <div>额度剩余 {displayValue}</div>
-        {quota.limit > 0 && quota.unit !== 'percent' && (
-          <div className='text-muted-foreground'>
-            {approximate ? '估算剩余' : '剩余'}{' '}
-            {formatQuotaAmount(quota.remaining, quota.unit)} / 总量{' '}
-            {formatQuotaAmount(quota.limit, quota.unit)}
-          </div>
-        )}
-        <div className='text-muted-foreground'>
-          已使用 {formatNumber(usagePercent)}%
-          {quota.confirmed
-            ? ' · 上游确认'
-            : quota.observed
-              ? ' · 本地观测'
-              : approximate
-                ? ' · 估算'
-                : ''}
-        </div>
-        {recoveryAt && (
-          <div className='text-muted-foreground'>
-            {quota.status === 'waitingReset' ? '预计恢复' : '周期结束'}{' '}
-            {formatDate(recoveryAt)}
-          </div>
-        )}
-      </TooltipContent>
-    </Tooltip>
   )
 }
 

@@ -14,6 +14,7 @@ from app.persistence.probe_repository import ProbeRepository
 from app.persistence.register_event_repository import RegisterEventRepository
 from app.persistence.request_audit_repository import RequestAuditRepository
 from app.persistence.sso_report_repository import SsoReportRepository
+from app.services.account_timeline import build_account_timeline
 from app.services.isolation_stats import compute_isolation_stats, resolve_stats_range
 
 QUARANTINE_RECOVERY_PRIORITY = -2_000_000_000
@@ -174,6 +175,13 @@ class AccountService:
             account_id,
             page=page,
             page_size=page_size,
+        )
+
+    def timeline(self, account_id: int, limit: int = 50) -> dict[str, Any]:
+        return build_account_timeline(
+            self.accounts.database,
+            account_id=account_id,
+            limit=limit,
         )
 
     async def select_account_ids(
@@ -337,9 +345,14 @@ class AccountService:
             {int(item["account_id"]) for item in assessments}
         )
         labels_by_id = {int(item.get("id") or 0): item for item in labels}
+        workers = {
+            **(metrics.get("workers") or {}),
+            **self.probes.worker_queue_stats(),
+        }
         return {
             "upstream": upstream.get("providers", {}).get("grok_build", {}),
             **metrics,
+            "workers": workers,
             "riskyAccounts": [
                 self._overlay(
                     labels_by_id.get(

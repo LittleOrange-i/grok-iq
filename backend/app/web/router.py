@@ -10,6 +10,7 @@ from app.services.account_service import AccountService
 from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.egress_service import EgressService
+from app.services.export_service import ExportService
 from app.services.probe_manager import ProbeManager
 from app.services.register_integration import RegisterIntegrationService
 from app.services.request_audit_service import RequestAuditService
@@ -24,6 +25,7 @@ from .routes.accounts import build_accounts_router
 from .routes.auth import build_auth_router
 from .routes.chat import build_chat_router
 from .routes.egress import build_egress_router
+from .routes.exports import build_exports_router
 from .routes.health import build_health_router
 from .routes.integrations import (
     build_integrations_router,
@@ -76,6 +78,16 @@ def build_router(
     )
 
     protected.include_router(build_accounts_router(account_service))
+    protected.include_router(
+        build_exports_router(
+            ExportService(
+                accounts=account_repository,
+                probes=probe_repository,
+                account_service=account_service,
+                request_audits=request_audits,
+            )
+        )
+    )
     protected.include_router(build_egress_router(client, egress_service))
     protected.include_router(
         build_probes_router(

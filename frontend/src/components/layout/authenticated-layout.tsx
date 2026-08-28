@@ -33,7 +33,7 @@ export function AuthenticatedLayout({
                 GrokIQ
               </span>
               <span className='block truncate text-[11px] text-muted-foreground'>
-                Account intelligence
+                账号质量工作台
               </span>
             </span>
           </Link>
@@ -56,8 +56,8 @@ export function AuthenticatedLayout({
           <AppSidebar />
           <SidebarInset
             className={cn(
-              '@container/content h-[calc(100svh-var(--app-header-height,3.5rem))] min-h-0 overflow-hidden',
-              'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,3.5rem)-(var(--spacing)*4))]'
+              '@container/content h-[calc(100svh-var(--app-header-height,3rem))] min-h-0 overflow-hidden',
+              'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,3rem)-(var(--spacing)*4))]'
             )}
           >
             <WorkspaceShell>{children ?? <Outlet />}</WorkspaceShell>

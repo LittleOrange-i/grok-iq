@@ -293,4 +293,4 @@ def _median(values: list[float]) -> float | None:
 
 
 def _round(value: float | None) -> float | None:
-    return None if value is None else round(value, 1)
+    return None if value is None else round(value, 3)

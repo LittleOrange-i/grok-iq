@@ -1663,6 +1663,7 @@ class RequestAuditService:
         page: int,
         page_size: int,
         account: str = "",
+        account_id: int | None = None,
         risk: str = "",
         client_key: str = "",
         egress_node_id: int | None = None,
@@ -1684,6 +1685,13 @@ class RequestAuditService:
         # preceding samples that established its streak.
         evaluations = self._audit_risk_evaluations(window_items)
         all_items = window_items
+        pinned_account_id = _positive_int(account_id)
+        if pinned_account_id is not None:
+            all_items = [
+                item
+                for item in all_items
+                if item.get("account_id") == pinned_account_id
+            ]
         account_needle = account.strip().casefold()
         if account_needle:
             try:

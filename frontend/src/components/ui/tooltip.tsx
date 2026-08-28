@@ -5,7 +5,7 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import { cn } from '@/lib/utils'
 
 function TooltipProvider({
-  delayDuration = 0,
+  delayDuration = 200,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return (
@@ -28,9 +28,21 @@ function Tooltip({
 }
 
 function TooltipTrigger({
+  onFocus,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot='tooltip-trigger' {...props} />
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot='tooltip-trigger'
+      {...props}
+      onFocus={(event) => {
+        if (!event.currentTarget.matches(':focus-visible')) {
+          event.preventDefault()
+        }
+        onFocus?.(event)
+      }}
+    />
+  )
 }
 
 function TooltipContent({

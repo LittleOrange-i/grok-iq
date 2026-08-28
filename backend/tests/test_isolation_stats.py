@@ -94,3 +94,37 @@ def test_compute_isolation_stats_counts_register_funnel_and_sources():
     assert stats["isolated"]["total"] == 1
     assert stats["timing"]["sampleCount"] == 1
     assert stats["timing"]["medianHours"] == 1.0
+
+
+def test_compute_isolation_stats_keeps_sub_hour_timing():
+    now = utc_now()
+    start = now - timedelta(hours=2)
+    end = now + timedelta(hours=1)
+    stats = compute_isolation_stats(
+        assessments=[
+            {
+                "account_id": 1,
+                "monitor_status": "quarantined",
+                "quarantine_until": None,
+                "disposition": {
+                    "source": "probe",
+                    "at": app_isoformat(now - timedelta(minutes=1)),
+                },
+            }
+        ],
+        register_events=[
+            {
+                "event_id": "a",
+                "email": "alpha@example.test",
+                "status": "completed",
+                "grok2api_account_id": 1,
+                "created_at": app_isoformat(now - timedelta(minutes=13)),
+            }
+        ],
+        start=start,
+        end=end,
+    )
+
+    assert stats["timing"]["sampleCount"] == 1
+    assert stats["timing"]["medianHours"] == 0.2
+    assert stats["timing"]["avgHours"] == 0.2

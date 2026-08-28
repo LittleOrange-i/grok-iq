@@ -19,7 +19,7 @@ from app.analyzer import (
     risk_status,
     rule_metadata,
 )
-from app.core.clock import app_isoformat, ensure_utc, utc_now
+from app.core.clock import app_isoformat, ensure_utc, parse_optional_datetime, utc_now
 from app.core.disposition import (
     build_disposition,
     infer_disposition_source,
@@ -36,6 +36,7 @@ from .models import (
     ProbeProfile,
     ProbeRun,
     ProbeSample,
+    RegisterWebhookEvent,
     model_dict,
 )
 
@@ -46,6 +47,8 @@ HARD_ANOMALY_NAMES = {
     if ((metadata := rule_metadata(name)) is not None and bool(metadata.hard))
 }
 PROMOTED_REASONING_ZERO_SEVERITY = 4
+DASHBOARD_EXECUTING_STATUSES = ("running", "cancel_requested", "recovering")
+DASHBOARD_STALE_HEARTBEAT = timedelta(minutes=2)
 FIXED_EGRESS_RISK_MIGRATION_KEY = "fixed_egress_risk_formula_v1"
 ALL_EGRESS_RISK_MIGRATION_KEY = "all_egress_risk_formula_v1"
 MAX_OPERATOR_NOTES = 50
@@ -113,6 +116,86 @@ def _persistable_operator_notes(notes: list[dict[str, Any]]) -> list[dict[str, A
     return _sort_operator_notes(persisted)
 
 
+def _register_event_account_id(grok2api_account_id: Any, resolved_account_id: Any) -> int | None:
+    for value in (grok2api_account_id, resolved_account_id):
+        try:
+            account_id = int(value or 0)
+        except (TypeError, ValueError):
+            account_id = 0
+        if account_id > 0:
+            return account_id
+    return None
+
+
+def _register_event_identity(
+    *,
+    event_id: str,
+    email: str,
+    grok2api_account_id: Any,
+    resolved_account_id: Any,
+) -> str:
+    account_id = _register_event_account_id(grok2api_account_id, resolved_account_id)
+    if account_id is not None:
+        return f"account:{account_id}"
+    normalized_email = str(email or "").strip().lower()
+    if normalized_email:
+        return f"email:{normalized_email}"
+    return f"event:{event_id}"
+
+
+def _dashboard_register_counts(rows: list[Any]) -> dict[str, int]:
+    grouped: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        identity = _register_event_identity(
+            event_id=str(getattr(row, "event_id", "") or ""),
+            email=str(getattr(row, "email", "") or ""),
+            grok2api_account_id=getattr(row, "grok2api_account_id", None),
+            resolved_account_id=getattr(row, "resolved_account_id", None),
+        )
+        grouped[identity].add(str(getattr(row, "status", "") or ""))
+    completed = 0
+    failed = 0
+    pending = 0
+    for statuses in grouped.values():
+        if "completed" in statuses:
+            completed += 1
+        elif statuses and statuses <= {"failed"}:
+            failed += 1
+        else:
+            pending += 1
+    return {
+        "total": len(grouped),
+        "completed": completed,
+        "failed": failed,
+        "pending": pending,
+    }
+
+
+def _dashboard_isolated_counts(
+    rows: list[AccountAssessment], cutoff: datetime
+) -> dict[str, int]:
+    in_range = 0
+    for row in rows:
+        payload = row.disposition if isinstance(row.disposition, dict) else {}
+        isolated_at = parse_optional_datetime(payload.get("at")) or ensure_utc(row.updated_at)
+        if isolated_at is not None and isolated_at >= cutoff:
+            in_range += 1
+    return {"zoneTotal": len(rows), "inRange": in_range}
+
+
+def _dashboard_probe_run_counts(status_counts: dict[str, int]) -> dict[str, Any]:
+    completed = int(status_counts.get("completed") or 0)
+    failed = int(status_counts.get("failed") or 0)
+    completed_with_errors = int(status_counts.get("completed_with_errors") or 0)
+    finished = completed + failed + completed_with_errors
+    return {
+        "completed": completed,
+        "failed": failed,
+        "completedWithErrors": completed_with_errors,
+        "successRate": round(completed / finished, 4) if finished else 0.0,
+    }
+
+
 def _hydrated_disposition(payload: dict[str, Any]) -> dict[str, Any]:
     current = public_disposition(payload.get("disposition"))
     if current:
@@ -166,6 +249,27 @@ class AccountRepository:
                 select(AccountAssessment)
                 .order_by(AccountAssessment.risk_score.desc(), AccountAssessment.updated_at.desc())
                 .limit(limit)
+            ).all()
+            return [_assessment_dict(value) for value in values]
+
+    def list_by_monitor_status(
+        self,
+        status: str,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        normalized = str(status or "").strip()
+        if not normalized:
+            return []
+        capped = min(max(int(limit), 1), 5000)
+        with self.database.session() as session:
+            values = session.scalars(
+                select(AccountAssessment)
+                .where(AccountAssessment.monitor_status == normalized)
+                .order_by(
+                    AccountAssessment.risk_score.desc(),
+                    AccountAssessment.updated_at.desc(),
+                )
+                .limit(capped)
             ).all()
             return [_assessment_dict(value) for value in values]
 
@@ -856,7 +960,8 @@ class AccountRepository:
             return [model_dict(value) for value in values]
 
     def dashboard_metrics(self, hours: int) -> dict[str, Any]:
-        cutoff = utc_now() - timedelta(hours=hours)
+        now = utc_now()
+        cutoff = now - timedelta(hours=hours)
         with self.database.session() as session:
             assessment_rows = session.execute(
                 select(
@@ -928,20 +1033,28 @@ class AccountRepository:
                     select(
                         func.date(ProbeSample.created_at).label("day"),
                         func.count(ProbeSample.id).label("samples"),
-                func.avg(ProbeSample.tps).filter(ProbeSample.tps > 0).label("avg_tps"),
-                func.max(ProbeSample.tps).label("max_tps"),
-                func.avg(
-                    case(
-                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
-                        else_=ProbeSample.tps,
-                    )
-                ).label("avg_upstream_tps"),
-                func.max(
-                    case(
-                        (ProbeSample.upstream_tps.is_not(None), ProbeSample.upstream_tps),
-                        else_=ProbeSample.tps,
-                    )
-                ).label("max_upstream_tps"),
+                        func.avg(ProbeSample.tps)
+                        .filter(ProbeSample.tps > 0)
+                        .label("avg_tps"),
+                        func.max(ProbeSample.tps).label("max_tps"),
+                        func.avg(
+                            case(
+                                (
+                                    ProbeSample.upstream_tps.is_not(None),
+                                    ProbeSample.upstream_tps,
+                                ),
+                                else_=ProbeSample.tps,
+                            )
+                        ).label("avg_upstream_tps"),
+                        func.max(
+                            case(
+                                (
+                                    ProbeSample.upstream_tps.is_not(None),
+                                    ProbeSample.upstream_tps,
+                                ),
+                                else_=ProbeSample.tps,
+                            )
+                        ).label("max_upstream_tps"),
                         func.sum(
                             case(
                                 (
@@ -967,7 +1080,66 @@ class AccountRepository:
                     .order_by(func.date(ProbeSample.created_at))
                 )
             ]
+            isolated_rows = session.scalars(
+                select(AccountAssessment).where(
+                    AccountAssessment.monitor_status == "quarantined",
+                    AccountAssessment.quarantine_until.is_(None),
+                )
+            ).all()
+            register_rows = session.execute(
+                select(
+                    RegisterWebhookEvent.event_id,
+                    RegisterWebhookEvent.email,
+                    RegisterWebhookEvent.grok2api_account_id,
+                    RegisterWebhookEvent.resolved_account_id,
+                    RegisterWebhookEvent.status,
+                ).where(RegisterWebhookEvent.created_at >= cutoff)
+            ).all()
+            run_status_counts = {
+                str(status): int(count)
+                for status, count in session.execute(
+                    select(ProbeRun.status, func.count(ProbeRun.id))
+                    .where(ProbeRun.created_at >= cutoff)
+                    .group_by(ProbeRun.status)
+                ).all()
+            }
+            live_status_counts = {
+                str(status): int(count)
+                for status, count in session.execute(
+                    select(ProbeRun.status, func.count(ProbeRun.id)).group_by(ProbeRun.status)
+                ).all()
+            }
+            stale_cutoff = now - DASHBOARD_STALE_HEARTBEAT
+            stale = int(
+                session.scalar(
+                    select(func.count(ProbeRun.id)).where(
+                        ProbeRun.status.in_(DASHBOARD_EXECUTING_STATUSES),
+                        or_(
+                            ProbeRun.heartbeat_at.is_(None),
+                            ProbeRun.heartbeat_at < stale_cutoff,
+                        ),
+                    )
+                )
+                or 0
+            )
+            oldest_queued_at = session.scalar(
+                select(func.min(ProbeRun.queued_at)).where(ProbeRun.status == "queued")
+            )
+        oldest_wait = (
+            max(0, int((now - ensure_utc(oldest_queued_at)).total_seconds()))
+            if oldest_queued_at is not None
+            else 0
+        )
+        queued = int(live_status_counts.get("queued") or 0)
+        running = sum(
+            int(live_status_counts.get(status) or 0) for status in DASHBOARD_EXECUTING_STATUSES
+        )
         return {
+            "window": {
+                "hours": hours,
+                "from": app_isoformat(cutoff),
+                "to": app_isoformat(now),
+            },
             "assessments": {
                 "total": assessment_rows[0] or 0,
                 "risky": assessment_rows[1] or 0,
@@ -981,6 +1153,15 @@ class AccountRepository:
                 "maxTps": round(sample_rows[3] or 0, 1),
                 "avgUpstreamTps": round(sample_rows[4] or 0, 1),
                 "maxUpstreamTps": round(sample_rows[5] or 0, 1),
+            },
+            "registered": _dashboard_register_counts(register_rows),
+            "isolated": _dashboard_isolated_counts(isolated_rows, cutoff),
+            "probeRuns": _dashboard_probe_run_counts(run_status_counts),
+            "workers": {
+                "queued": queued,
+                "running": running,
+                "stale": stale,
+                "oldestQueueWaitSeconds": oldest_wait,
             },
             "statusCounts": status_counts,
             "trend": trend,

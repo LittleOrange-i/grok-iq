@@ -18,8 +18,9 @@ import {
   type PublicUpstreamAccountSummary,
   type PublicUpstreamProvider,
 } from '@/lib/api'
-import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { ProgressBar } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -27,6 +28,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { StatCard } from '@/components/stat-card'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 const providerMeta: Record<
@@ -175,53 +177,58 @@ export function PublicUpstreamStatusPage() {
         )}
 
         <section className='grid gap-4 sm:grid-cols-2 xl:grid-cols-5'>
-          <MetricCard
+          <StatCard
             label='账号总数'
-            value={ready ? data.total : '—'}
+            value={ready ? formatNumber(data.total, 0) : '—'}
             detail={
               ready
                 ? `${formatNumber(data.available, 0)} 个当前可调度`
                 : '读取中'
             }
             icon={UsersRound}
-            tone='text-sky-600 bg-sky-500/10'
-            raw={!ready}
+            tone='sky'
+            loading={query.isLoading && !hasData}
+            index={0}
           />
-          <MetricCard
+          <StatCard
             label='恢复中'
-            value={ready ? data.recovering : '—'}
+            value={ready ? formatNumber(data.recovering, 0) : '—'}
             detail='冷却、待重置或检测中'
             icon={TimerReset}
-            tone='text-amber-600 bg-amber-500/10'
-            raw={!ready}
+            tone='amber'
+            loading={query.isLoading && !hasData}
+            index={1}
           />
-          <MetricCard
+          <StatCard
             label='需关注'
-            value={ready ? data.attention : '—'}
+            value={ready ? formatNumber(data.attention, 0) : '—'}
             detail={
               ready
                 ? `${formatNumber(data.issues.disabled, 0)} 停用 · ${formatNumber(data.issues.reauthRequired, 0)} 失效`
                 : '读取中'
             }
             icon={AlertTriangle}
-            tone='text-orange-600 bg-orange-500/10'
-            raw={!ready}
+            tone='amber'
+            loading={query.isLoading && !hasData}
+            index={2}
           />
-          <MetricCard
+          <StatCard
             label='风险标记'
-            value={ready ? data.risk : '—'}
+            value={ready ? formatNumber(data.risk, 0) : '—'}
             detail='上游机器人风险账号'
             icon={ShieldAlert}
-            tone='text-red-600 bg-red-500/10'
-            raw={!ready}
+            tone='red'
+            loading={query.isLoading && !hasData}
+            index={3}
           />
-          <MetricCard
+          <StatCard
             label='可调度占比'
             value={ready ? percent(data.available, data.total) : '—'}
             detail='可调度 / 总数'
             icon={Activity}
-            tone='text-emerald-600 bg-emerald-500/10'
-            raw
+            tone='emerald'
+            loading={query.isLoading && !hasData}
+            index={4}
           />
         </section>
 
@@ -316,46 +323,6 @@ function StatusBadge({
   return <Badge variant='success'>上游正常</Badge>
 }
 
-function MetricCard({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  tone,
-  raw = false,
-}: {
-  label: string
-  value: number | string
-  detail: string
-  icon: typeof UsersRound
-  tone: string
-  raw?: boolean
-}) {
-  return (
-    <Card>
-      <CardContent className='flex items-start gap-3 p-5'>
-        <div
-          className={cn(
-            'flex size-10 shrink-0 items-center justify-center rounded-xl',
-            tone
-          )}
-        >
-          <Icon className='size-5' />
-        </div>
-        <div className='min-w-0'>
-          <p className='text-xs text-muted-foreground'>{label}</p>
-          <p className='number mt-1 text-2xl font-semibold'>
-            {raw ? value : formatNumber(Number(value), 0)}
-          </p>
-          <p className='mt-1 truncate text-xs text-muted-foreground'>
-            {detail}
-          </p>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function ProviderCard({
   provider,
   counts,
@@ -383,12 +350,10 @@ function ProviderCard({
             {ready ? percent(counts.available, counts.total) : '—'}
           </Badge>
         </div>
-        <div className='h-2 overflow-hidden rounded-full bg-muted'>
-          <div
-            className='h-full rounded-full bg-primary'
-            style={{ width: ready ? `${Math.round(ratio * 100)}%` : '0%' }}
-          />
-        </div>
+        <ProgressBar
+          className='h-2'
+          value={ready ? Math.round(ratio * 100) : 0}
+        />
         <div className='flex items-center justify-between text-sm'>
           <span className='text-muted-foreground'>可调度</span>
           <span className='tabular-nums'>

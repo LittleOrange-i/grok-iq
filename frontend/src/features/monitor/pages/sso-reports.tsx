@@ -30,6 +30,7 @@ import {
 } from '@/lib/api'
 import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { ProgressBar } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -338,7 +339,7 @@ function ReportCard({
                 {report.completed_count} / {report.total}
               </span>
             </div>
-            <ProgressBar value={report.progress_percent} active />
+            <ProgressBar className='h-2' value={report.progress_percent} active />
           </div>
         )}
         {failed && report.error && (
@@ -404,31 +405,6 @@ function ReportStatusBadge({ report }: { report: SsoReportItem }) {
   const abnormal = report.mismatched + report.invalid + report.errors
   if (abnormal) return <Badge variant='destructive'>{abnormal} 个异常</Badge>
   return <Badge variant='success'>全部正常</Badge>
-}
-
-function ProgressBar({
-  value,
-  active = false,
-}: {
-  value: number
-  active?: boolean
-}) {
-  const normalized = Math.min(100, Math.max(0, Number(value) || 0))
-  const indeterminate = active && normalized === 0
-  return (
-    <div
-      className='h-2 overflow-hidden rounded-full bg-muted'
-      role='progressbar'
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={normalized}
-    >
-      <div
-        className='h-full rounded-full bg-primary transition-[width] duration-500'
-        style={{ width: indeterminate ? '16.6667%' : normalized + '%' }}
-      />
-    </div>
-  )
 }
 
 function Metric({
@@ -787,7 +763,7 @@ function ReportDetailDialog({
                         {report.progress_percent}%）
                       </div>
                     </div>
-                    <ProgressBar value={report.progress_percent} active />
+                    <ProgressBar className='h-2' value={report.progress_percent} active />
                   </CardContent>
                 </Card>
               )}

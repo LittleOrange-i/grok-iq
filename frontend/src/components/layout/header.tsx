@@ -15,7 +15,7 @@ export function Header({
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 h-[var(--app-header-height,3rem)] w-full shrink-0 border-b bg-background/90 backdrop-blur',
+        'sticky top-0 z-40 h-[var(--app-header-height,3rem)] w-full shrink-0 border-b border-border/70 bg-background',
         className
       )}
       {...props}

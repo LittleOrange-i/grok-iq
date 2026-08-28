@@ -24,6 +24,7 @@ import { formatDate, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { CopyButton } from '@/components/copy-button'
 import { MarkdownView } from '@/components/formatted-content'
 import { EmptyState, LoadingState } from '@/components/page'
 import { SettingsCard } from './settings-components'
@@ -149,8 +150,11 @@ export function SettingsVersionTab() {
               <GitBranch className='mt-0.5 size-4 text-primary' />
               <div>
                 <div className='text-xs text-muted-foreground'>当前版本</div>
-                <div className='mt-1 font-mono text-sm font-semibold'>
-                  {info.currentVersion}
+                <div className='mt-1 flex items-center gap-1'>
+                  <div className='font-mono text-sm font-semibold'>
+                    {info.currentVersion}
+                  </div>
+                  <CopyButton value={info.currentVersion} className='size-6' />
                 </div>
               </div>
             </CardContent>

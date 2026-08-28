@@ -13,6 +13,7 @@ type SelectionToolbarProps = {
   clearLabel?: string
   disabled?: boolean
   className?: string
+  wrap?: boolean
 }
 
 export function SelectionToolbar({
@@ -24,17 +25,18 @@ export function SelectionToolbar({
   clearLabel = '清除选择',
   disabled = false,
   className,
+  wrap = true,
 }: SelectionToolbarProps) {
   if (selectedCount <= 0) return null
 
-  return (
-    <ActionToolbar
-      label={`已选择 ${selectedCount} 个${entityLabel}的批量操作`}
-      className={cn(className)}
-    >
+  const body = (
+    <>
+      {!wrap ? (
+        <span aria-hidden='true' className='mx-0.5 h-4 w-px shrink-0 bg-border' />
+      ) : null}
       <Badge
         variant='secondary'
-        className='h-8 shrink-0 border-0 bg-background px-2.5 tabular-nums'
+        className='h-7 shrink-0 border-0 bg-background px-2 text-[11px] tabular-nums'
       >
         {countLabel ?? `已选 ${selectedCount}`}
       </Badge>
@@ -42,6 +44,17 @@ export function SelectionToolbar({
       <ToolbarAction label={clearLabel} disabled={disabled} onClick={onClear}>
         <X />
       </ToolbarAction>
+    </>
+  )
+
+  if (!wrap) return body
+
+  return (
+    <ActionToolbar
+      label={`已选择 ${selectedCount} 个${entityLabel}的批量操作`}
+      className={cn(className)}
+    >
+      {body}
     </ActionToolbar>
   )
 }

@@ -468,6 +468,45 @@ export type AccountDetailResponse = {
   }
 }
 
+export type TimelineItemType =
+  | 'sample'
+  | 'audit'
+  | 'isolate'
+  | 'restore'
+  | 'note'
+
+export type TimelineItemHref =
+  | '/runs'
+  | '/request-audits'
+  | '/request-audits/ledger'
+  | '/request-audits/workspace'
+  | '/request-audits/schedule'
+  | '/quarantine'
+
+export type TimelineItemSearch = {
+  account?: string
+  run?: string
+  view?: 'accounts' | 'nodes'
+}
+
+export type TimelineItem = {
+  id: string
+  type: TimelineItemType
+  at: string
+  title: string
+  detail: string
+  href: TimelineItemHref | null
+  search?: TimelineItemSearch
+  meta?: Record<string, unknown>
+}
+
+export type AccountTimelineResponse = {
+  accountId: number
+  items: TimelineItem[]
+  limit: number
+  hasMore: boolean
+}
+
 export type EgressNode = {
   id: string
   name: string
@@ -1894,8 +1933,14 @@ export type ProbeRunBatchResult = {
 }
 
 export type DashboardResponse = {
+  window?: { hours?: number; from?: string; to?: string }
   upstream?: { total?: number; available?: number }
-  assessments?: { risky?: number; quarantined?: number }
+  assessments?: {
+    total?: number
+    risky?: number
+    quarantined?: number
+    avgRisk?: number
+  }
   samples?: {
     total?: number
     anomalies?: number
@@ -1903,6 +1948,28 @@ export type DashboardResponse = {
     avgTps?: number
     maxUpstreamTps?: number
     avgUpstreamTps?: number
+  }
+  registered?: {
+    total?: number
+    completed?: number
+    failed?: number
+    pending?: number
+  }
+  isolated?: { zoneTotal?: number; inRange?: number }
+  probeRuns?: {
+    completed?: number
+    failed?: number
+    completedWithErrors?: number
+    successRate?: number
+  }
+  workers?: {
+    queued?: number
+    running?: number
+    stale?: number
+    oldestQueueWaitSeconds?: number
+    eligible?: number
+    blockedSameAccount?: number
+    blockedRestore?: number
   }
   queue?: { queued?: number; running?: number }
   trend?: Record<string, string | number | null>[]
@@ -1969,6 +2036,71 @@ export type ChatProviderInput = {
   models: string[]
   enabled: boolean
   isDefault: boolean
+}
+
+function parseContentDispositionFilename(header: string | null) {
+  if (!header) return ''
+  const utfMatch = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utfMatch?.[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1].trim().replace(/^"(.*)"$/, '$1'))
+    } catch {
+      return utfMatch[1]
+    }
+  }
+  const basicMatch = header.match(/filename="?([^"]+)"?/i)
+  return basicMatch?.[1]?.trim() ?? ''
+}
+
+async function downloadExport(path: string): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: authorizationHeaders(),
+  })
+  if (!response.ok) {
+    const text = await response.text()
+    let payload: {
+      detail?: unknown
+      error?: { message?: unknown } | unknown
+      code?: string
+      setupRequired?: boolean
+    } = {}
+    try {
+      payload = JSON.parse(text) as typeof payload
+    } catch {
+      payload = {}
+    }
+    const detail =
+      payload.detail ??
+      (typeof payload.error === 'object' && payload.error
+        ? (payload.error as { message?: unknown }).message
+        : payload.error)
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : detail == null
+          ? text || `HTTP ${response.status}`
+          : JSON.stringify(detail)
+    if (response.status === 401 && isAuthenticationRequiredCode(payload.code)) {
+      notifyAuthenticationRequired(Boolean(payload.setupRequired))
+    }
+    throw new ApiError(message, response.status, {
+      code: payload.code,
+      setupRequired: payload.setupRequired,
+    })
+  }
+  const blob = await response.blob()
+  const filename =
+    parseContentDispositionFilename(
+      response.headers.get('content-disposition')
+    ) || 'grokiq-export'
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  document.body.append(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(objectUrl)
 }
 
 async function request<T>(
@@ -2571,6 +2703,10 @@ export const api = {
     id: number,
     params: { page?: number; pageSize?: number } = {}
   ) => request<Page<ProbeSample>>(`/accounts/${id}/samples${query(params)}`),
+  accountTimeline: (id: number, limit = 50) =>
+    request<AccountTimelineResponse>(
+      `/accounts/${id}/timeline${query({ limit })}`
+    ),
   accountUpstream: (id: number) =>
     request<{
       accountId: number
@@ -2873,5 +3009,25 @@ export const api = {
     }),
   chatModels: (providerId = '') =>
     request<ChatModel[]>(`/chat/models${query({ providerId })}`),
+  exportQuarantine: (format: 'csv' | 'json' = 'csv') =>
+    downloadExport(`/exports/quarantine${query({ format })}`),
+  exportHighRisk: (format: 'csv' | 'json' = 'csv') =>
+    downloadExport(`/exports/high-risk${query({ format })}`),
+  exportRequestAudits: (
+    params: {
+      format?: 'csv' | 'json'
+      account?: string
+      accountId?: number
+      risk?: string
+      clientKey?: string
+      egressNodeId?: number
+      window?: string
+      startAt?: string
+      endAt?: string
+    } = {}
+  ) => downloadExport(`/exports/request-audits${query(params)}`),
+  exportProbeSamples: (
+    params: { format?: 'csv' | 'json'; accountId?: number } = {}
+  ) => downloadExport(`/exports/probe-samples${query(params)}`),
   chatUrl: `${API_BASE}/responses`,
 }

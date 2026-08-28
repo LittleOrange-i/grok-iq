@@ -17,13 +17,14 @@ import {
   YAxis,
 } from 'recharts'
 import { api, type IsolationStatsResponse } from '@/lib/api'
-import { cn, formatNumber, getErrorMessage } from '@/lib/utils'
+import { formatNumber, getErrorMessage } from '@/lib/utils'
+import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { InfoTooltip } from '@/components/info-tooltip'
-import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
+import { SegmentedControl } from '@/components/segmented-control'
+import { MetricStrip } from '@/components/stat-card'
 
 type StatsPreset = 'today' | '24h' | '7d' | '30d' | 'custom'
 
@@ -34,8 +35,12 @@ const defaultStatsView = {
   to: '',
 }
 
-const PRESETS: Array<{ value: StatsPreset; label: string }> = [
-  { value: 'today', label: '今天' },
+const PRESETS: Array<{
+  value: Exclude<StatsPreset, 'custom'>
+  label: string
+  icon?: typeof CalendarDays
+}> = [
+  { value: 'today', label: '今天', icon: CalendarDays },
   { value: '24h', label: '近 24 小时' },
   { value: '7d', label: '近 7 天' },
   { value: '30d', label: '近 30 天' },
@@ -60,11 +65,13 @@ export function QuarantineStatsBoard() {
   const invalidRange = Boolean(fromIso && toIso && fromIso > toIso)
 
   return (
-    <Card>
-      <CardHeader className='gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(20rem,auto)]'>
+    <Card className='overflow-hidden py-0 shadow-xs'>
+      <CardHeader className='gap-4 border-b py-4 sm:grid-cols-[minmax(0,1fr)_minmax(20rem,auto)]'>
         <div className='min-w-0'>
-          <CardTitle className='flex items-center gap-1.5 text-base'>
-            <ShieldBan className='size-4 text-primary' />
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <span className='flex size-8 items-center justify-center rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-300'>
+              <ShieldBan className='size-4' />
+            </span>
             隔离看板
             <InfoTooltip
               label='隔离看板'
@@ -76,28 +83,19 @@ export function QuarantineStatsBoard() {
           </p>
         </div>
         <div className='flex min-w-0 flex-col gap-2 sm:items-end'>
-          <div className='flex flex-wrap gap-2'>
-            {PRESETS.map((item) => (
-              <Button
-                key={item.value}
-                type='button'
-                size='sm'
-                variant={preset === item.value ? 'secondary' : 'outline'}
-                className='h-8'
-                onClick={() => {
-                  const next = rangeForPreset(item.value, '', '')
-                  view.setValue({
-                    preset: item.value,
-                    from: next.from,
-                    to: next.to,
-                  })
-                }}
-              >
-                {item.value === 'today' ? <CalendarDays /> : null}
-                {item.label}
-              </Button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel='隔离看板时间范围'
+            value={preset}
+            onChange={(next) => {
+              const rangeNext = rangeForPreset(next, '', '')
+              view.setValue({
+                preset: next,
+                from: rangeNext.from,
+                to: rangeNext.to,
+              })
+            }}
+            options={PRESETS}
+          />
           <div className='grid w-full gap-2 sm:w-auto sm:grid-cols-2'>
             <label className='grid gap-1'>
               <span className='text-[11px] text-muted-foreground'>开始</span>
@@ -112,7 +110,7 @@ export function QuarantineStatsBoard() {
                     to: range.to,
                   })
                 }
-                className='h-9 text-xs'
+                className='h-9 rounded-xl text-xs'
                 aria-label='统计开始时间'
               />
             </label>
@@ -129,14 +127,14 @@ export function QuarantineStatsBoard() {
                     to: event.target.value,
                   })
                 }
-                className='h-9 text-xs'
+                className='h-9 rounded-xl text-xs'
                 aria-label='统计结束时间'
               />
             </label>
           </div>
         </div>
       </CardHeader>
-      <CardContent className='space-y-4'>
+      <CardContent className='space-y-4 py-4'>
         {invalidRange ? (
           <p className='text-sm text-destructive'>结束时间不能早于开始时间</p>
         ) : query.isError ? (
@@ -145,45 +143,43 @@ export function QuarantineStatsBoard() {
           </p>
         ) : (
           <>
-            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-              <MetricCard
-                icon={ShieldBan}
-                tone='text-red-600 bg-red-500/10'
-                label='当前隔离'
-                value={data?.zone.total}
-                detail={`区间内新隔离 ${formatNumber(data?.zone.isolatedInRange ?? 0, 0)}`}
-                hint='当前还在隔离区的账号。区间内新隔离只统计进入时间落在所选范围内、且现在仍在隔离区的账号。'
-                loading={query.isLoading}
-              />
-              <MetricCard
-                icon={UserPlus}
-                tone='text-sky-600 bg-sky-500/10'
-                label='区间注册'
-                value={data?.registered.total}
-                detail={`完成 ${formatNumber(data?.registered.completed ?? 0, 0)} · 失败 ${formatNumber(data?.registered.failed ?? 0, 0)}`}
-                hint='本系统在该时间范围内收到的注册联动账号，按邮箱或上游账号去重。'
-                loading={query.isLoading}
-              />
-              <MetricCard
-                icon={TimerReset}
-                tone='text-amber-600 bg-amber-500/10'
-                label='注册后隔离'
-                value={data?.registered.isolated}
-                detail={`隔离率 ${formatPercent(data?.registered.isolationRate)} · 同期隔离 ${formatNumber(data?.registered.isolatedInRange ?? 0, 0)}`}
-                hint='区间内注册、现在仍在隔离区的账号。同期隔离表示注册和进入隔离区都发生在该范围内。'
-                loading={query.isLoading}
-              />
-              <MetricCard
-                icon={Clock3}
-                tone='text-violet-600 bg-violet-500/10'
-                label='入隔耗时'
-                value={formatDurationHours(data?.timing.medianHours)}
-                raw
-                detail={`平均 ${formatDurationHours(data?.timing.avgHours)} · ${formatNumber(data?.timing.sampleCount ?? 0, 0)} 个样本`}
-                hint='从注册联动入库到进入隔离区的中位耗时，只统计两边时间都有的账号。'
-                loading={query.isLoading}
-              />
-            </div>
+            <MetricStrip
+              loading={query.isLoading}
+              items={[
+                {
+                  icon: ShieldBan,
+                  tone: 'rose',
+                  label: '当前隔离',
+                  value: formatNumber(data?.zone.total ?? 0, 0),
+                  detail: `区间内新隔离 ${formatNumber(data?.zone.isolatedInRange ?? 0, 0)}`,
+                  hint: '当前还在隔离区的账号。区间内新隔离只统计进入时间落在所选范围内、且现在仍在隔离区的账号。',
+                },
+                {
+                  icon: UserPlus,
+                  tone: 'sky',
+                  label: '区间注册',
+                  value: formatNumber(data?.registered.total ?? 0, 0),
+                  detail: `完成 ${formatNumber(data?.registered.completed ?? 0, 0)} · 失败 ${formatNumber(data?.registered.failed ?? 0, 0)}`,
+                  hint: '本系统在该时间范围内收到的注册联动账号，按邮箱或上游账号去重。',
+                },
+                {
+                  icon: TimerReset,
+                  tone: 'amber',
+                  label: '注册后隔离',
+                  value: formatNumber(data?.registered.isolated ?? 0, 0),
+                  detail: `隔离率 ${formatPercent(data?.registered.isolationRate)} · 同期隔离 ${formatNumber(data?.registered.isolatedInRange ?? 0, 0)}`,
+                  hint: '区间内注册、现在仍在隔离区的账号。同期隔离表示注册和进入隔离区都发生在该范围内。',
+                },
+                {
+                  icon: Clock3,
+                  tone: 'violet',
+                  label: '入隔耗时',
+                  value: formatDurationHours(data?.timing.medianHours),
+                  detail: `平均 ${formatDurationHours(data?.timing.avgHours)} · ${formatNumber(data?.timing.sampleCount ?? 0, 0)} 个样本`,
+                  hint: '从注册联动入库到进入隔离区的中位耗时，只统计两边时间都有的账号。',
+                },
+              ]}
+            />
             <SourceRow
               label='当前隔离来源'
               items={data?.zone.bySource ?? []}
@@ -196,51 +192,6 @@ export function QuarantineStatsBoard() {
         )}
       </CardContent>
     </Card>
-  )
-}
-
-function MetricCard({
-  icon: Icon,
-  tone,
-  label,
-  value,
-  detail,
-  hint,
-  loading,
-  raw = false,
-}: {
-  icon: typeof ShieldBan
-  tone: string
-  label: string
-  value: string | number | null | undefined
-  detail: string
-  hint: string
-  loading: boolean
-  raw?: boolean
-}) {
-  return (
-    <div className='rounded-xl border bg-muted/15 p-4'>
-      <div className='flex items-start gap-3'>
-        <div
-          className={cn(
-            'flex size-9 shrink-0 items-center justify-center rounded-lg',
-            tone
-          )}
-        >
-          <Icon className='size-4' />
-        </div>
-        <div className='min-w-0 flex-1'>
-          <div className='flex items-center gap-1'>
-            <p className='text-xs text-muted-foreground'>{label}</p>
-            <InfoTooltip label={label} content={hint} />
-          </div>
-          <p className='number mt-1 text-2xl font-semibold'>
-            {loading ? '…' : raw ? (value ?? '—') : formatNumber(Number(value ?? 0), 0)}
-          </p>
-          <p className='mt-1 truncate text-xs text-muted-foreground'>{detail}</p>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -262,7 +213,11 @@ function SourceRow({
         <span className='text-xs text-muted-foreground'>暂无</span>
       ) : (
         items.map((item) => (
-          <Badge key={item.source} variant='outline' className='gap-1.5'>
+          <Badge
+            key={item.source}
+            variant='outline'
+            className='gap-1.5 rounded-full bg-background/70 px-2.5 py-1'
+          >
             {item.label}
             <span className='tabular-nums text-foreground'>{item.count}</span>
           </Badge>
@@ -278,7 +233,7 @@ function TrendChart({
   data: IsolationStatsResponse['trend']
 }) {
   return (
-    <div className='h-56'>
+    <div className='h-56 rounded-2xl border bg-muted/20 p-3'>
       <ResponsiveContainer width='100%' height='100%'>
         <AreaChart data={data} margin={{ left: -20, right: 8, top: 8 }}>
           <CartesianGrid
@@ -376,9 +331,20 @@ function formatPercent(rate: number | null | undefined) {
 }
 
 function formatDurationHours(hours: number | null | undefined) {
-  if (hours == null || Number.isNaN(hours)) return '—'
-  if (hours <= 0) return '刚刚'
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} 分钟`
-  if (hours < 48) return `${hours.toFixed(1)} 小时`
-  return `${(hours / 24).toFixed(1)} 天`
+  if (hours == null || Number.isNaN(hours) || hours < 0) return '—'
+  const minutes = hours * 60
+  if (minutes < 1) return '不到 1 分钟'
+  if (minutes < 60) return `${Math.round(minutes)} 分钟`
+  if (hours < 24) {
+    const rounded = Math.round(hours * 10) / 10
+    return Number.isInteger(rounded)
+      ? `${rounded} 小时`
+      : `${rounded.toFixed(1)} 小时`
+  }
+  const days = hours / 24
+  const roundedDays = Math.round(days * 10) / 10
+  return Number.isInteger(roundedDays)
+    ? `${roundedDays} 天`
+    : `${roundedDays.toFixed(1)} 天`
 }
+

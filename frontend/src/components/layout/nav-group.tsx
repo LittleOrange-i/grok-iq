@@ -37,7 +37,7 @@ export function NavGroup({ title, items }: NavGroupProps) {
   const { state, isMobile } = useSidebar()
   const href = useLocation({ select: (location) => location.href })
   return (
-    <SidebarGroup className='px-2 py-1'>
+    <SidebarGroup className='px-3 py-1'>
       <SidebarGroupLabel className='px-2 text-[11px] font-medium tracking-wider text-muted-foreground/70 uppercase'>
         {title}
       </SidebarGroupLabel>
