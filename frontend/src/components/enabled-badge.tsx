@@ -21,21 +21,8 @@ export function EnabledBadge({
   return (
     <Badge
       variant={isUnknown ? 'outline' : on ? 'success' : 'secondary'}
-      className={cn(
-        'h-5 gap-1 px-1.5 text-[11px] font-medium',
-        className
-      )}
+      className={cn('h-5 px-1.5 text-[11px] font-medium', className)}
     >
-      <span
-        className={cn(
-          'size-1.5 rounded-full',
-          isUnknown
-            ? 'bg-muted-foreground/50'
-            : on
-              ? 'bg-emerald-500'
-              : 'bg-zinc-400'
-        )}
-      />
       {label}
     </Badge>
   )
