@@ -41,7 +41,7 @@ import {
   type UpstreamAccount,
   type UpstreamQuota,
 } from '@/lib/api'
-import { StatusBadge } from '@/lib/status'
+import { MonitorStatusCell, StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { formatDualTps, tpsOverridden } from '@/lib/tps'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -1778,12 +1778,10 @@ const AccountRow = memo(function AccountRow({
         </div>
       </TableCell>
       <TableCell>
-        <div className='flex items-center gap-1.5'>
-          <StatusBadge value={assessment.monitor_status} />
-          <span className='text-[11px] text-muted-foreground tabular-nums'>
-            {formatNumber(assessment.risk_score)} 分
-          </span>
-        </div>
+        <MonitorStatusCell
+          status={assessment.monitor_status}
+          score={assessment.risk_score}
+        />
       </TableCell>
       <TableCell>
         <AccountPeriodStats assessment={assessment} />

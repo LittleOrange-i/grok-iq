@@ -36,7 +36,7 @@ import {
   type UpstreamAccount,
 } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
-import { StatusBadge } from '@/lib/status'
+import { MonitorStatusCell } from '@/lib/status'
 import { cn, formatDate, formatNumber, formatRelativeTime, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
@@ -1826,7 +1826,10 @@ function QuarantineTable({
 }) {
   const selectedIdSet = useMemo(() => new Set(selected), [selected])
   return (
-    <Table rememberRowKey='monitor-quarantine'>
+    <Table
+      rememberRowKey='monitor-quarantine'
+      className='[&_td]:py-1.5 [&_th]:h-8'
+    >
       <TableHeader>
         <TableRow>
           <TableHead className='w-10'>
@@ -1837,7 +1840,7 @@ function QuarantineTable({
             />
           </TableHead>
           <TableHead>账号</TableHead>
-          <TableHead>判定</TableHead>
+          <TableHead>监控判定</TableHead>
           <TableHead>上游启用状态</TableHead>
           <TableHead>样本数</TableHead>
           <TableHead>最近样本时间</TableHead>
@@ -1924,7 +1927,10 @@ function QuarantineRow({
         </div>
       </TableCell>
       <TableCell>
-        <StatusBadge value={assessment?.monitor_status} />
+        <MonitorStatusCell
+          status={assessment?.monitor_status}
+          score={assessment?.risk_score}
+        />
       </TableCell>
       <TableCell>
         {account.missingUpstream ? (
@@ -2020,7 +2026,10 @@ function QuarantineSampleDetail({
     <div className='space-y-4'>
       {account && (
         <div className='flex flex-wrap items-center gap-2'>
-          <StatusBadge value={account.assessment?.monitor_status} />
+          <MonitorStatusCell
+            status={account.assessment?.monitor_status}
+            score={account.assessment?.risk_score}
+          />
           {account.missingUpstream ? (
             <Badge variant='outline'>上游缺失</Badge>
           ) : (
