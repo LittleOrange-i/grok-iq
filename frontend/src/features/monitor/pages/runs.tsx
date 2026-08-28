@@ -139,6 +139,7 @@ import { EgressNodeReference } from '@/features/monitor/components/egress-node-r
 import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
 import { DualTpsValue, SampleTpsDetail } from '@/features/monitor/components/tps-display'
+import { AccountProbeDetailDialog } from '@/features/monitor/components/account-probe-detail-dialog'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 import {
   isRunsPath,
@@ -218,10 +219,12 @@ function PinnedAccountBar({
   accountId,
   detail,
   onClear,
+  onOpenDetail,
 }: {
   accountId: number
   detail?: UpstreamAccount
   onClear: () => void
+  onOpenDetail: () => void
 }) {
   const name = detail?.name || `账号 ${accountId}`
   const secondary = formatAccountSecondaryLabel({
@@ -236,7 +239,13 @@ function PinnedAccountBar({
         <div className='text-[11px] font-medium tracking-wide text-muted-foreground uppercase'>
           已筛选账号
         </div>
-        <div className='mt-0.5 truncate text-sm font-semibold'>{name}</div>
+        <button
+          type='button'
+          onClick={onOpenDetail}
+          className='mt-0.5 block max-w-full truncate text-left text-sm font-semibold hover:text-primary hover:underline'
+        >
+          {name}
+        </button>
         <p className='truncate text-xs text-muted-foreground' title={secondary}>
           {secondary}
         </p>
@@ -304,6 +313,7 @@ export function RunsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollTopRef = useRef(0)
   const openDetail = useCallback((id: string) => {
@@ -971,6 +981,7 @@ export function RunsPage() {
           accountId={pinnedAccountId}
           detail={pinnedAccountDetail}
           onClear={clearPinnedAccount}
+          onOpenDetail={() => setAccountDetailId(pinnedAccountId)}
         />
       ) : null}
       <TablePanel
@@ -1240,6 +1251,7 @@ export function RunsPage() {
                     onToggleCurrentPage={toggleCurrentPageSelection}
                     onToggleRun={toggleRunSelection}
                     onDetail={openDetail}
+                    onAccountDetail={setAccountDetailId}
                     onAction={handleRunAction}
                   />
                 ) : (
@@ -1273,6 +1285,14 @@ export function RunsPage() {
             </>
           )}
       </TablePanel>
+      <AccountProbeDetailDialog
+        accountId={accountDetailId}
+        open={accountDetailId != null}
+        onOpenChange={(open) => {
+          if (!open) setAccountDetailId(null)
+        }}
+        egressNodeNames={egressNodeNames}
+      />
       <ProbeDialog
         open={probeSelection != null}
         onOpenChange={(open) => {
@@ -1577,6 +1597,7 @@ type RunsTableProps = {
   onToggleCurrentPage: (checked: boolean) => void
   onToggleRun: (run: ProbeRun, checked: boolean) => void
   onDetail: (id: string) => void
+  onAccountDetail: (id: number) => void
   onAction: (
     action: 'cancel' | 'retry' | 'delete' | 'restore',
     id: string
@@ -1594,6 +1615,7 @@ const RunsTable = memo(function RunsTable({
   onToggleCurrentPage,
   onToggleRun,
   onDetail,
+  onAccountDetail,
   onAction,
 }: RunsTableProps) {
   return (
@@ -1631,6 +1653,10 @@ const RunsTable = memo(function RunsTable({
             selectable={runSelectionAction(run) != null}
             onSelectedChange={(checked) => onToggleRun(run, checked)}
             onDetail={() => onDetail(run.id)}
+            onAccountDetail={() => {
+              const id = Number(run.account_id)
+              if (id > 0) onAccountDetail(id)
+            }}
             onAction={(action) => onAction(action, run.id)}
             pending={actionPending}
           />
@@ -1647,6 +1673,7 @@ type RunRowProps = {
   selectable: boolean
   onSelectedChange: (checked: boolean) => void
   onDetail: () => void
+  onAccountDetail: () => void
   onAction: (action: 'cancel' | 'retry' | 'delete' | 'restore') => void
   pending: boolean
 }
@@ -1658,6 +1685,7 @@ const RunRow = memo(function RunRow({
   selectable,
   onSelectedChange,
   onDetail,
+  onAccountDetail,
   onAction,
   pending,
 }: RunRowProps) {
@@ -1686,7 +1714,14 @@ const RunRow = memo(function RunRow({
       <TableCell>
         <div className='flex items-start gap-1'>
           <div className='min-w-0'>
-            <div className='font-medium'>{accountLabel}</div>
+            <button
+              type='button'
+              onClick={onAccountDetail}
+              className='block max-w-full truncate text-left text-sm font-medium hover:text-primary hover:underline'
+              title={accountLabel}
+            >
+              {accountLabel}
+            </button>
             <div
               className='max-w-80 text-xs text-muted-foreground'
               title={secondaryAccountLabel}
