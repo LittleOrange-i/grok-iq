@@ -177,6 +177,42 @@ export function SourceCodeView({
   )
 }
 
+function SourceCopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false)
+  const resetTimerRef = useRef<number | undefined>(undefined)
+  const canCopy = Boolean(content)
+
+  const handleCopy = () => {
+    if (!canCopy) return
+    void copyText(content)
+      .then(() => {
+        setCopied(true)
+        toast.success('源码已复制')
+        if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = window.setTimeout(() => {
+          setCopied(false)
+          resetTimerRef.current = undefined
+        }, 1800)
+      })
+      .catch((error) => toast.error(getErrorMessage(error)))
+  }
+
+  return (
+    <Button
+      type='button'
+      size='sm'
+      variant='secondary'
+      className='h-8 gap-1.5 border border-white/10 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 hover:text-white'
+      onClick={handleCopy}
+      disabled={!canCopy}
+      aria-label='复制源码'
+    >
+      {copied ? <Check /> : <Copy />}
+      {copied ? '已复制' : '复制源码'}
+    </Button>
+  )
+}
+
 function openHtmlDocument(htmlDocument: string) {
   const escaped = htmlDocument
     .replace(/&/g, '&amp;')
@@ -437,6 +473,9 @@ function FormattedContentPreviewDialog({
                 value='source'
                 className='absolute inset-0 m-0 overflow-auto bg-zinc-950'
               >
+                <div className='sticky top-0 z-10 flex justify-end border-b border-white/10 bg-zinc-950/90 px-3 py-2 backdrop-blur-sm'>
+                  <SourceCopyButton content={source} />
+                </div>
                 <SourceCodeView content={source} className='min-h-full' />
               </TabsContent>
             </div>
