@@ -34,7 +34,8 @@ import {
 import { cn, formatDate, getErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { IconBadge } from '@/components/ui/icon-badge'
 import {
   Dialog,
   DialogContent,
@@ -51,6 +52,7 @@ import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { CopyButton } from '@/components/copy-button'
 import { SourceCodeView } from '@/components/formatted-content'
 import { InfoTooltip } from '@/components/info-tooltip'
+import { TitledCard } from '@/components/titled-card'
 import {
   EmptyState,
   LoadingState,
@@ -258,28 +260,23 @@ function WorkerDashboard({
       </div>
 
       <div className='grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]'>
-        <Card>
-          <CardHeader>
-            <div className='flex flex-wrap items-center justify-between gap-3'>
-              <CardTitle className='flex items-center gap-1.5'>
-                执行实例
-                <InfoTooltip
-                  label='执行实例'
-                  content='不同账号可并行；同一账号始终由一个 Worker 顺序处理。'
-                />
-              </CardTitle>
-              <Badge
-                variant={data.started && !data.stopping ? 'success' : 'outline'}
-              >
-                {data.stopping
-                  ? '进程停止中'
-                  : data.started
-                    ? '运行中'
-                    : '未启动'}
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
+        <TitledCard
+          icon={<Server />}
+          iconTone='indigo'
+          title='执行实例'
+          hint='不同账号可并行；同一账号始终由一个 Worker 顺序处理。'
+          action={
+            <Badge
+              variant={data.started && !data.stopping ? 'success' : 'outline'}
+            >
+              {data.stopping
+                ? '进程停止中'
+                : data.started
+                  ? '运行中'
+                  : '未启动'}
+            </Badge>
+          }
+        >
             <div className='grid gap-3 lg:grid-cols-2'>
               {data.workers.map((worker) => (
                 <WorkerCard
@@ -297,21 +294,16 @@ function WorkerDashboard({
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+        </TitledCard>
 
         <div className='space-y-4'>
-          <Card>
-            <CardHeader>
-              <CardTitle className='flex items-center gap-1.5'>
-                队列分布
-                <InfoTooltip
-                  label='队列分布'
-                  content='仅可领取任务会分配给当前空闲 Worker。'
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-3'>
+          <TitledCard
+            icon={<ListChecks />}
+            iconTone='sky'
+            title='队列分布'
+            hint='仅可领取任务会分配给当前空闲 Worker。'
+            contentClassName='space-y-3'
+          >
               <QueueRow label='全部排队' value={data.queue.queued} />
               <QueueRow label='当前可领取' value={data.queue.eligible} />
               <QueueRow label='正在执行' value={data.queue.running} />
@@ -325,20 +317,15 @@ function WorkerDashboard({
                 value={data.queue.blockedRestore}
                 warning={data.queue.blockedRestore > 0}
               />
-            </CardContent>
-          </Card>
+          </TitledCard>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className='flex items-center gap-1.5'>
-                运行策略
-                <InfoTooltip
-                  label='运行策略'
-                  content='展示账号共享状态的并发边界和日志轮转策略。'
-                />
-              </CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-3 text-sm'>
+          <TitledCard
+            icon={<Cpu />}
+            iconTone='violet'
+            title='运行策略'
+            hint='展示账号共享状态的并发边界和日志轮转策略。'
+            contentClassName='space-y-3 text-sm'
+          >
               <div className='flex items-center justify-between gap-3'>
                 <span className='text-muted-foreground'>同账号任务</span>
                 <Badge variant='outline'>串行</Badge>
@@ -370,8 +357,7 @@ function WorkerDashboard({
                   {data.log.fileName}
                 </div>
               </div>
-            </CardContent>
-          </Card>
+          </TitledCard>
         </div>
       </div>
     </>
@@ -394,14 +380,9 @@ function OverviewCard({
   return (
     <Card className={cn(warning && 'border-amber-500/30')}>
       <CardContent className='flex items-start gap-4 p-5'>
-        <div
-          className={cn(
-            'flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary',
-            warning && 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-          )}
-        >
-          <Icon className='size-5' />
-        </div>
+        <IconBadge tone={warning ? 'warning' : 'primary'} size='lg'>
+          <Icon />
+        </IconBadge>
         <div className='min-w-0'>
           <div className='text-xs text-muted-foreground'>{label}</div>
           <div className='mt-1 truncate text-xl font-semibold tabular-nums'>
@@ -428,15 +409,11 @@ function LiveMetricsCard({
   items: { label: string; value: ReactNode; warning?: boolean }[]
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className='flex items-center gap-2'>
-          <Icon className='size-4 text-primary' />
-          {title}
-          <InfoTooltip label={title} content={description} />
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
+    <TitledCard
+      icon={<Icon />}
+      title={title}
+      hint={description}
+    >
         <div className='grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-5'>
           {items.map((item) => (
             <div key={item.label} className='min-w-0 bg-background px-3 py-3'>
@@ -454,8 +431,7 @@ function LiveMetricsCard({
             </div>
           ))}
         </div>
-      </CardContent>
-    </Card>
+    </TitledCard>
   )
 }
 

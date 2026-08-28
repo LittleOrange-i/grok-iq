@@ -231,7 +231,7 @@ function PinnedAccountBar({
     accountLabel: name,
   })
   return (
-    <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs sm:flex-row sm:items-center sm:justify-between'>
+    <div className='flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
       <div className='min-w-0'>
         <div className='text-[11px] font-medium tracking-wide text-muted-foreground uppercase'>
           已筛选账号

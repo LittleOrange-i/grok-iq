@@ -433,7 +433,7 @@ export function Composer({
       onSubmit={onSubmit}
       className='shrink-0 border-t bg-background/95 p-3 backdrop-blur'
     >
-      <div className='mx-auto w-full max-w-4xl overflow-hidden rounded-lg border bg-card shadow-xs'>
+      <div className='mx-auto w-full max-w-4xl overflow-hidden rounded-xl border bg-card'>
         <Textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}

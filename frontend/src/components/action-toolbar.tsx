@@ -24,7 +24,7 @@ export function ActionToolbar({
       role='toolbar'
       aria-label={label}
       className={cn(
-        'inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border bg-muted/40 p-1 shadow-xs',
+        'inline-flex max-w-full flex-wrap items-center gap-0.5',
         className
       )}
     >

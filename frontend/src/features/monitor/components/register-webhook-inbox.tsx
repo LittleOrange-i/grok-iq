@@ -22,7 +22,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { TitledCard } from '@/components/titled-card'
 import {
   Dialog,
   DialogContent,
@@ -131,36 +131,29 @@ export function RegisterWebhookInbox() {
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-            <div>
-              <CardTitle className='flex items-center gap-2'>
-                <Inbox className='size-4 text-primary' />
-                Webhook 持久收件箱
-              </CardTitle>
-              <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-                Webhook 返回 202
-                后先保存在这里；完成账号匹配与稳定等待后，生成的探针任务会进入任务中心。
-              </p>
-            </div>
-            <Button
-              type='button'
-              size='sm'
-              variant='outline'
-              disabled={query.isFetching}
-              onClick={() => void query.refetch()}
-            >
-              {query.isFetching ? (
-                <Loader2 className='animate-spin' />
-              ) : (
-                <RefreshCw />
-              )}
-              刷新
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
+      <TitledCard
+        icon={<Inbox />}
+        iconTone='sky'
+        title='Webhook 持久收件箱'
+        description='Webhook 返回 202 后先保存在这里；完成账号匹配与稳定等待后，生成的探针任务会进入任务中心。'
+        action={
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            disabled={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            {query.isFetching ? (
+              <Loader2 className='animate-spin' />
+            ) : (
+              <RefreshCw />
+            )}
+            刷新
+          </Button>
+        }
+        contentClassName='space-y-4'
+      >
           {query.error && !query.data ? (
             <div className='rounded-lg border border-destructive/30 p-4 text-sm text-destructive'>
               收件箱读取失败：{getErrorMessage(query.error)}
@@ -314,8 +307,7 @@ export function RegisterWebhookInbox() {
               )}
             </>
           )}
-        </CardContent>
-      </Card>
+      </TitledCard>
 
       <RegisterEventDetailDialog
         event={selectedEvent}

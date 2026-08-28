@@ -82,11 +82,11 @@ export function PublicUpstreamStatusPage() {
   const ready = hasData && data.reachable && !query.isError
 
   return (
-    <div className='min-h-svh bg-muted/30'>
+    <div className='min-h-svh bg-background'>
       <header className='border-b bg-background/80 backdrop-blur-sm'>
         <div className='mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4'>
           <div className='flex min-w-0 items-center gap-2.5'>
-            <span className='flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs'>
+            <span className='flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground'>
               <ShieldCheck className='size-4' />
             </span>
             <span className='min-w-0'>
@@ -104,7 +104,7 @@ export function PublicUpstreamStatusPage() {
                 <Button
                   variant='ghost'
                   size='icon'
-                  className='bg-foreground text-background shadow-xs hover:bg-foreground/85 hover:text-background'
+                  className='text-muted-foreground'
                   asChild
                 >
                   <a

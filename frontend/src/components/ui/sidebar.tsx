@@ -476,11 +476,11 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-full px-3 py-2 text-start text-sm outline-hidden ring-sidebar-ring transition-[width,height,padding] hover:bg-sky-50 hover:text-sky-950 focus-visible:ring-2 active:bg-sky-100 active:text-sky-950 disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sky-100 data-[active=true]:font-medium data-[active=true]:text-sky-950 data-[active=true]:hover:bg-sky-100 data-[state=open]:hover:bg-sky-50 data-[state=open]:hover:text-sky-950 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! dark:hover:bg-sky-500/10 dark:hover:text-sky-100 dark:active:bg-sky-500/20 dark:data-[active=true]:bg-sky-500/20 dark:data-[active=true]:text-sky-50 dark:data-[active=true]:hover:bg-sky-500/20 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-full px-3 py-2 text-start text-sm outline-hidden ring-sidebar-ring transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[active=true]:hover:bg-sidebar-accent data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
-        default: 'hover:bg-sky-50 hover:text-sky-950 dark:hover:bg-sky-500/10 dark:hover:text-sky-100',
+        default: 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
         outline:
           'bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]',
       },

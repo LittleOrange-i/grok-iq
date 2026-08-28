@@ -112,7 +112,7 @@ export function MetricStrip({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-2xl border bg-card',
+        'overflow-hidden rounded-xl border bg-card',
         className
       )}
     >
@@ -190,7 +190,7 @@ export function StatCard({
     <div
       style={{ '--stagger': String(index) } as CSSProperties}
       className={cn(
-        'animate-rise group relative flex h-full flex-col justify-between rounded-2xl border bg-card',
+        'animate-rise group relative flex h-full flex-col justify-between rounded-xl border bg-card',
         compact ? 'min-h-0 p-3.5' : 'min-h-[8.5rem] p-4',
         to && 'cursor-pointer transition-colors hover:bg-muted/20',
         className
@@ -263,7 +263,7 @@ export function StatCard({
     <Link
       to={to}
       aria-label={`${label}，前往详情`}
-      className='block h-full rounded-2xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+      className='block h-full rounded-xl focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
     >
       {content}
     </Link>

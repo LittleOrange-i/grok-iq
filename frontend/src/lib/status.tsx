@@ -1,4 +1,4 @@
-import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 
 const labels: Record<string, string> = {
   healthy: '正常',
@@ -31,22 +31,67 @@ function statusLabel(value?: string | null) {
   return labels[value || ''] || value || '未知'
 }
 
-export function StatusBadge({ value }: { value?: string | null }) {
-  const variant =
-    value === 'healthy' || value === 'normal' || value === 'completed'
-      ? 'success'
-      : value === 'watch' ||
-          value === 'queued' ||
-          value === 'buffered_soft' ||
-          value === 'elevated' ||
-          value === 'reasoning_zero' ||
-          value === 'reasoning_zero_observe' ||
-          value === 'insufficient'
-        ? 'warning'
-        : value === 'running' || value === 'recovering'
-          ? 'info'
-          : value === 'cancelled'
-            ? 'secondary'
-            : 'destructive'
-  return <Badge variant={variant}>{statusLabel(value)}</Badge>
+function statusTone(value?: string | null) {
+  if (
+    value === 'healthy' ||
+    value === 'normal' ||
+    value === 'completed'
+  ) {
+    return 'success'
+  }
+  if (
+    value === 'watch' ||
+    value === 'queued' ||
+    value === 'buffered_soft' ||
+    value === 'elevated' ||
+    value === 'reasoning_zero' ||
+    value === 'reasoning_zero_observe' ||
+    value === 'insufficient'
+  ) {
+    return 'warning'
+  }
+  if (value === 'running' || value === 'recovering') {
+    return 'info'
+  }
+  if (value === 'cancelled') {
+    return 'neutral'
+  }
+  return 'danger'
+}
+
+const toneClass: Record<string, { dot: string; text: string }> = {
+  success: {
+    dot: 'bg-emerald-500',
+    text: 'text-emerald-700 dark:text-emerald-300',
+  },
+  warning: {
+    dot: 'bg-amber-500',
+    text: 'text-amber-700 dark:text-amber-300',
+  },
+  info: { dot: 'bg-sky-500', text: 'text-sky-700 dark:text-sky-300' },
+  neutral: { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
+  danger: { dot: 'bg-destructive', text: 'text-destructive' },
+}
+
+export function StatusBadge({
+  value,
+  className,
+}: {
+  value?: string | null
+  className?: string
+}) {
+  const tone = statusTone(value)
+  const styles = toneClass[tone]
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium',
+        styles.text,
+        className
+      )}
+    >
+      <span className={cn('size-1.5 shrink-0 rounded-full', styles.dot)} />
+      {statusLabel(value)}
+    </span>
+  )
 }

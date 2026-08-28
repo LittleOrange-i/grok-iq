@@ -118,7 +118,7 @@ export function SettingsIntegrationTab({
               href={GROK_REGISTER_REPOSITORY_URL}
               target='_blank'
               rel='noopener noreferrer'
-              className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+              className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
               aria-label='在 GitHub 新标签页打开 grok-register 项目'
             >
               <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background'>
@@ -161,7 +161,7 @@ export function SettingsIntegrationTab({
             label='Webhook 接收地址'
             hint='复制完整地址到注册机；请求头：x-grokiq-token'
           >
-            <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3 shadow-xs'>
+            <div className='flex h-9 min-w-0 items-center rounded-md border bg-muted/25 pl-3'>
               <code
                 className='min-w-0 flex-1 truncate text-xs text-muted-foreground'
                 title={webhookUrl}

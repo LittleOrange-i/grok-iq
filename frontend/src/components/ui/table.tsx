@@ -51,7 +51,7 @@ function Table({ className, rememberRowKey, ...props }: TableProps) {
       >
         <table
           data-slot='table'
-          className={cn('w-full caption-bottom text-sm', className)}
+          className={cn('w-full caption-bottom text-sm tabular-nums', className)}
           {...props}
         />
       </div>

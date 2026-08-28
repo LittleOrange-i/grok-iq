@@ -18,9 +18,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card'
 import {
   Dialog,
@@ -39,6 +36,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { InfoTooltip } from '@/components/info-tooltip'
+import { TitledCard } from '@/components/titled-card'
 import {
   REGISTER_WEBHOOK_MINIMAL_BODY,
   REGISTER_WEBHOOK_RECOMMENDED_BODY,
@@ -61,19 +59,15 @@ export function SettingsCard({
   children: ReactNode
 }) {
   return (
-    <Card className={className}>
-      <CardHeader className={descriptionAsHint ? 'pb-0' : undefined}>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <Icon className='size-4 text-primary' />
-          {title}
-          {descriptionAsHint && (
-            <InfoTooltip label={title} content={description} />
-          )}
-        </CardTitle>
-        {!descriptionAsHint && <CardDescription>{description}</CardDescription>}
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+    <TitledCard
+      className={className}
+      icon={<Icon />}
+      title={title}
+      description={descriptionAsHint ? undefined : description}
+      hint={descriptionAsHint ? description : undefined}
+    >
+      {children}
+    </TitledCard>
   )
 }
 
@@ -167,7 +161,7 @@ export function WebhookContractDialog() {
       <DialogTrigger asChild>
         <button
           type='button'
-          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start shadow-xs transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
           aria-label='查看 grok-register 请求协议'
         >
           <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
@@ -364,7 +358,7 @@ export function IntegrationPanel({
   return (
     <section className='rounded-xl border bg-background p-4 md:p-5'>
       <div className='mb-4 flex items-start gap-3 border-b pb-4'>
-        <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-primary'>
+        <div className='flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary'>
           <Icon className='size-4' />
         </div>
         <div className='min-w-0'>
@@ -390,7 +384,7 @@ export function FixedProbeSetting({
 }) {
   return (
     <div className='flex min-h-20 min-w-0 items-center gap-3 rounded-lg bg-muted/20 px-4 py-3'>
-      <div className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-background text-muted-foreground shadow-xs ring-1 ring-border'>
+      <div className='flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground'>
         <Icon className='size-4' />
       </div>
       <div className='min-w-0'>

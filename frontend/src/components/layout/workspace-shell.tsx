@@ -180,7 +180,7 @@ function WorkspaceDock() {
       aria-label='工作区页面'
       className='pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3'
     >
-      <div className='pointer-events-auto inline-flex items-center gap-0.5 rounded-full border bg-muted/80 p-1 shadow-lg shadow-black/10 ring-1 ring-black/5 backdrop-blur-md dark:bg-background/80 dark:shadow-black/40 dark:ring-white/10'>
+      <div className='pointer-events-auto inline-flex items-center gap-0.5 rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur-md'>
         {WORKSPACE_TAB_IDS.map((id) => (
           <WorkspaceDockItem
             key={id}

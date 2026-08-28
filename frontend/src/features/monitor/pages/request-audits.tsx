@@ -387,7 +387,7 @@ function PinnedAccountBar({
     accountLabel: name,
   })
   return (
-    <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs sm:flex-row sm:items-center sm:justify-between'>
+    <div className='flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
       <div className='min-w-0'>
         <div className='text-[11px] font-medium tracking-wide text-muted-foreground uppercase'>
           已筛选账号
@@ -2185,7 +2185,7 @@ export function RequestAuditsPage() {
           />
         ) : null}
 
-        <div className='flex flex-col gap-3 rounded-lg border bg-card px-3 py-3 shadow-xs lg:flex-row lg:items-center lg:justify-between'>
+        <div className='flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 lg:flex-row lg:items-center lg:justify-between'>
           <div className='flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
             <div className='flex shrink-0 items-center gap-2'>
               <CalendarRange className='size-4 text-muted-foreground' />

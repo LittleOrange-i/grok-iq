@@ -30,13 +30,13 @@ import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { Badge } from '@/components/ui/badge'
 import { ProgressBar } from '@/components/ui/progress'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
-import { InfoTooltip } from '@/components/info-tooltip'
 import { EmptyState, Page, PageHeader } from '@/components/page'
 import { SegmentedControl } from '@/components/segmented-control'
 import { StatCard, type StatTone } from '@/components/stat-card'
+import { TitledCard } from '@/components/titled-card'
 
 type DashboardRange = 'today' | '24h' | '7d' | '30d'
 type DashboardPath = '/accounts' | '/quarantine' | '/runs' | '/workers'
@@ -234,8 +234,7 @@ export function DashboardPage() {
   ]
 
   return (
-    <Page className='relative'>
-      <div className='surface-glow pointer-events-none absolute inset-x-0 -top-6 h-44' />
+    <Page>
       <PageHeader
         title='监控概览'
         description='直接读取 grok2api 当前账号状态，本地聚合风险周期内固定出口和临时切换出口的多轮探针结果。'
@@ -274,20 +273,13 @@ export function DashboardPage() {
       </div>
 
       <div className='grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]'>
-        <Card className='overflow-hidden py-0 shadow-xs'>
-          <CardHeader className='border-b py-4'>
-            <CardTitle className='flex items-center gap-1.5'>
-              <span className='flex size-8 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-300'>
-                <Gauge className='size-4' />
-              </span>
-              TPS 趋势
-              <InfoTooltip
-                label='TPS 趋势'
-                content={`${rangeLabel}实际探针流的平均与最高输出速度。`}
-              />
-            </CardTitle>
-          </CardHeader>
-          <CardContent className='h-80 py-4'>
+        <TitledCard
+          icon={<Gauge />}
+          iconTone='amber'
+          title='TPS 趋势'
+          hint={`${rangeLabel}实际探针流的平均与最高输出速度。`}
+          contentClassName='h-80'
+        >
             {loading ? (
               <Skeleton className='h-full w-full rounded-xl' />
             ) : (data.trend ?? []).length ? (
@@ -361,18 +353,13 @@ export function DashboardPage() {
                 className='h-full border-0 bg-transparent'
               />
             )}
-          </CardContent>
-        </Card>
-        <Card className='overflow-hidden py-0 shadow-xs'>
-          <CardHeader className='border-b py-4'>
-            <CardTitle className='flex items-center gap-1.5'>
-              <span className='flex size-8 items-center justify-center rounded-full bg-red-500/10 text-red-600 dark:text-red-300'>
-                <ShieldAlert className='size-4' />
-              </span>
-              风险排行
-            </CardTitle>
-          </CardHeader>
-          <CardContent className='space-y-2 py-4'>
+        </TitledCard>
+        <TitledCard
+          icon={<ShieldAlert />}
+          iconTone='rose'
+          title='风险排行'
+          contentClassName='space-y-2'
+        >
             {loading ? (
               Array.from({ length: 5 }, (_, index) => (
                 <div
@@ -388,9 +375,9 @@ export function DashboardPage() {
                 <Link
                   key={account.id}
                   to='/accounts'
-                  className='flex items-center gap-3 rounded-xl border bg-background/50 p-3 transition-all hover:border-red-500/30 hover:bg-red-500/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-safe:hover:-translate-y-0.5'
+                  className='flex items-center gap-3 rounded-xl border p-3 transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
                 >
-                  <div className='flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-red-500/20 to-red-500/5 text-xs font-semibold text-red-700 ring-1 ring-red-500/20 dark:text-red-300'>
+                  <div className='flex size-8 shrink-0 items-center justify-center rounded-full bg-rose-500/10 text-xs font-semibold text-rose-700 dark:text-rose-300'>
                     {String(account.name || account.id)
                       .slice(0, 2)
                       .toUpperCase()}
@@ -430,27 +417,19 @@ export function DashboardPage() {
                 className='min-h-44 border-0 bg-transparent'
               />
             )}
-          </CardContent>
-        </Card>
+        </TitledCard>
       </div>
 
-      <Card className='overflow-hidden py-0 shadow-xs'>
-        <CardHeader className='border-b py-4'>
-          <CardTitle className='flex items-center gap-1.5'>
-            <span className='flex size-8 items-center justify-center rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-300'>
-              <TimerReset className='size-4' />
-            </span>
-            最近任务
-            <InfoTooltip
-              label='最近任务'
-              content='手动、注册联动与 Cron 触发的任务使用同一持久队列。'
-            />
-          </CardTitle>
-        </CardHeader>
-        <CardContent className='grid gap-3 py-4 md:grid-cols-2 xl:grid-cols-4'>
+      <TitledCard
+        icon={<TimerReset />}
+        iconTone='cyan'
+        title='最近任务'
+        hint='手动、注册联动与 Cron 触发的任务使用同一持久队列。'
+        contentClassName='grid gap-3 md:grid-cols-2 xl:grid-cols-4'
+      >
           {loading ? (
             Array.from({ length: 4 }, (_, index) => (
-              <div key={index} className='rounded-2xl border p-3'>
+              <div key={index} className='rounded-xl border p-3'>
                 <div className='flex items-center justify-between gap-2'>
                   <Skeleton className='h-4 w-28' />
                   <Skeleton className='h-5 w-14' />
@@ -468,7 +447,7 @@ export function DashboardPage() {
                 key={run.id}
                 to='/runs'
                 style={{ '--stagger': String(index) } as CSSProperties}
-                className='animate-rise rounded-2xl border bg-background/50 p-3 transition-all hover:border-cyan-500/30 hover:bg-cyan-500/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-safe:hover:-translate-y-0.5'
+                className='animate-rise rounded-xl border p-3 transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
               >
                 <div className='flex items-center justify-between gap-2'>
                   <div className='truncate text-sm font-medium'>
@@ -501,8 +480,7 @@ export function DashboardPage() {
               className='md:col-span-2 xl:col-span-4'
             />
           )}
-        </CardContent>
-      </Card>
+      </TitledCard>
     </Page>
   )
 }

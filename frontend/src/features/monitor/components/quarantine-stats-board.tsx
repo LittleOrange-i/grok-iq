@@ -20,11 +20,10 @@ import { api, type IsolationStatsResponse } from '@/lib/api'
 import { formatNumber, getErrorMessage } from '@/lib/utils'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { InfoTooltip } from '@/components/info-tooltip'
 import { SegmentedControl } from '@/components/segmented-control'
 import { MetricStrip } from '@/components/stat-card'
+import { TitledCard } from '@/components/titled-card'
 
 type StatsPreset = 'today' | '24h' | '7d' | '30d' | 'custom'
 
@@ -65,23 +64,13 @@ export function QuarantineStatsBoard() {
   const invalidRange = Boolean(fromIso && toIso && fromIso > toIso)
 
   return (
-    <Card className='overflow-hidden py-0 shadow-xs'>
-      <CardHeader className='gap-4 border-b py-4 sm:grid-cols-[minmax(0,1fr)_minmax(20rem,auto)]'>
-        <div className='min-w-0'>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <span className='flex size-8 items-center justify-center rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-300'>
-              <ShieldBan className='size-4' />
-            </span>
-            隔离看板
-            <InfoTooltip
-              label='隔离看板'
-              content='按所选时间统计注册联动入库，以及当前隔离区里的进入时间。恢复出隔离区的账号不会再计入库存；注册数来自本系统收到的注册联动事件，不是 grok2api 全部账号。'
-            />
-          </CardTitle>
-          <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-            看今天注册了多少账号、其中多少已被隔离，以及隔离区现有库存。
-          </p>
-        </div>
+    <TitledCard
+      icon={<ShieldBan />}
+      iconTone='rose'
+      title='隔离看板'
+      description='看今天注册了多少账号、其中多少已被隔离，以及隔离区现有库存。'
+      hint='按所选时间统计注册联动入库，以及当前隔离区里的进入时间。恢复出隔离区的账号不会再计入库存；注册数来自本系统收到的注册联动事件，不是 grok2api 全部账号。'
+      action={
         <div className='flex min-w-0 flex-col gap-2 sm:items-end'>
           <SegmentedControl
             ariaLabel='隔离看板时间范围'
@@ -110,7 +99,7 @@ export function QuarantineStatsBoard() {
                     to: range.to,
                   })
                 }
-                className='h-9 rounded-xl text-xs'
+                className='h-8 rounded-lg text-xs'
                 aria-label='统计开始时间'
               />
             </label>
@@ -127,14 +116,15 @@ export function QuarantineStatsBoard() {
                     to: event.target.value,
                   })
                 }
-                className='h-9 rounded-xl text-xs'
+                className='h-8 rounded-lg text-xs'
                 aria-label='统计结束时间'
               />
             </label>
           </div>
         </div>
-      </CardHeader>
-      <CardContent className='space-y-4 py-4'>
+      }
+      contentClassName='space-y-4'
+    >
         {invalidRange ? (
           <p className='text-sm text-destructive'>结束时间不能早于开始时间</p>
         ) : query.isError ? (
@@ -190,8 +180,7 @@ export function QuarantineStatsBoard() {
             ) : null}
           </>
         )}
-      </CardContent>
-    </Card>
+    </TitledCard>
   )
 }
 
@@ -233,7 +222,7 @@ function TrendChart({
   data: IsolationStatsResponse['trend']
 }) {
   return (
-    <div className='h-56 rounded-2xl border bg-muted/20 p-3'>
+    <div className='h-56 rounded-xl border p-3'>
       <ResponsiveContainer width='100%' height='100%'>
         <AreaChart data={data} margin={{ left: -20, right: 8, top: 8 }}>
           <CartesianGrid
