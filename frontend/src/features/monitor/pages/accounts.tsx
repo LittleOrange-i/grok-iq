@@ -41,7 +41,6 @@ import {
   type UpstreamAccount,
   type UpstreamQuota,
 } from '@/lib/api'
-import { MonitorStatusCell, StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { formatDualTps, tpsOverridden } from '@/lib/tps'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
@@ -49,6 +48,7 @@ import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
 import { EnabledBadge } from '@/components/enabled-badge'
+import { MonitorStatusBadge, MonitorStatusCell } from '@/components/monitor-status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -1903,7 +1903,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
             待同步
           </span>
         </TooltipTrigger>
-        <TooltipContent className='max-w-80 text-left'>grok2api 尚未提供可用的额度数据。</TooltipContent>
+        <TooltipContent className='max-w-80 text-left [&_.text-muted-foreground]:text-primary-foreground/80'>grok2api 尚未提供可用的额度数据。</TooltipContent>
       </Tooltip>
     )
   }
@@ -1928,7 +1928,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
             未估算
           </span>
         </TooltipTrigger>
-        <TooltipContent className='max-w-80 space-y-1.5 text-left'>
+        <TooltipContent className='max-w-80 space-y-1.5 text-left [&_.text-muted-foreground]:text-primary-foreground/80'>
           已观测使用 {formatQuotaAmount(quota.used, quota.unit)}
           ，但上游未提供额度总量。
         </TooltipContent>
@@ -1973,7 +1973,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
           {displayValue}
         </span>
       </TooltipTrigger>
-      <TooltipContent className='max-w-80 space-y-1.5 text-left'>
+      <TooltipContent className='max-w-80 space-y-1.5 text-left [&_.text-muted-foreground]:text-primary-foreground/80'>
         <div>额度剩余 {displayValue}</div>
         {quota.limit > 0 && quota.unit !== 'percent' && (
           <div className='text-muted-foreground'>
@@ -2130,7 +2130,7 @@ function AccountDetail({
         />
         <Metric
           label='判定'
-          value={<StatusBadge value={assessment.monitor_status} />}
+          value={<MonitorStatusBadge status={assessment.monitor_status} />}
         />
         <Metric
           label='SSO 风控'

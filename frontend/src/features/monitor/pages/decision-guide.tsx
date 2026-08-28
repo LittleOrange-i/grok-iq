@@ -28,6 +28,7 @@ import {
 import { api, type RuntimeSettings } from '@/lib/api'
 import { autoIsolationMinStatusLabel } from '../components/settings-model'
 import { StatusBadge } from '@/lib/status'
+import { MonitorStatusBadge } from '@/components/monitor-status-badge'
 import { EnabledBadge } from '@/components/enabled-badge'
 import { TitledCard } from '@/components/titled-card'
 import { Badge } from '@/components/ui/badge'
@@ -300,7 +301,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
         <RuleCard
           icon={CheckCircle2}
           title='正常'
-          badge={<StatusBadge value='healthy' />}
+          badge={<MonitorStatusBadge status='healthy' />}
           summary='窗口内没有记录到降智信号。'
           conditions={['降智信号数为 0', '风险分通常为 0']}
           tone='success'
@@ -308,7 +309,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
         <RuleCard
           icon={AlertTriangle}
           title='观察'
-          badge={<StatusBadge value='watch' />}
+          badge={<MonitorStatusBadge status='watch' />}
           summary='已经记录到降智信号，但次数尚未达到疑似降智条件。'
           conditions={[
             '降智信号数大于 0',
@@ -319,7 +320,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
         <RuleCard
           icon={ShieldAlert}
           title='疑似降智'
-          badge={<StatusBadge value='suspect' />}
+          badge={<MonitorStatusBadge status='suspect' />}
           summary='风险周期内降智信号已经重复出现，但强证据还不足。'
           conditions={[
             repeated,
@@ -330,7 +331,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
         <RuleCard
           icon={Zap}
           title='高风险'
-          badge={<StatusBadge value='high_risk' />}
+          badge={<MonitorStatusBadge status='high_risk' />}
           summary={`风险周期内重复异常，并且已经出现至少 ${thresholds.highRiskHardCount} 次强降智信号。`}
           conditions={[
             repeated,
@@ -341,7 +342,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
         <RuleCard
           icon={Ban}
           title='已停用'
-          badge={<StatusBadge value='quarantined' />}
+          badge={<MonitorStatusBadge status='quarantined' />}
           summary='由人工暂时停用，或高风险命中到期停用策略后进入；到期后可自动恢复。'
           conditions={[
             thresholds.autoQuarantine

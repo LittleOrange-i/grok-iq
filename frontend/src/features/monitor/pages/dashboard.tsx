@@ -26,6 +26,7 @@ import {
 } from 'recharts'
 import { api, type ProbeRun, type UpstreamAccount } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
+import { MonitorStatusBadge } from '@/components/monitor-status-badge'
 import { formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { Badge } from '@/components/ui/badge'
@@ -391,7 +392,7 @@ export function DashboardPage() {
                     </div>
                   </div>
                   <div className='text-right'>
-                    <StatusBadge value={account.assessment?.monitor_status} />
+                    <MonitorStatusBadge status={account.assessment?.monitor_status} />
                     {account.ssoRiskStatus === 'flagged' && (
                       <Badge variant='destructive' className='mt-1 ml-1'>
                         SSO 已标记

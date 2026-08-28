@@ -1,4 +1,4 @@
-import { cn, formatNumber } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 
 const labels: Record<string, string> = {
   healthy: '正常',
@@ -95,23 +95,3 @@ export function StatusBadge({
     </span>
   )
 }
-
-export function MonitorStatusCell({
-  status,
-  score,
-  className,
-}: {
-  status?: string | null
-  score?: number | null
-  className?: string
-}) {
-  return (
-    <div className={cn('flex items-center gap-1.5', className)}>
-      <StatusBadge value={status} />
-      <span className='text-[11px] text-muted-foreground tabular-nums'>
-        {formatNumber(score)} 分
-      </span>
-    </div>
-  )
-}
-

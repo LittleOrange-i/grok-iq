@@ -37,7 +37,7 @@ export function EgressNodeReference({
       </TooltipTrigger>
       <TooltipContent className='max-w-72'>
         <div className='font-medium'>{name || `出口节点 ${id}`}</div>
-        <div className='mt-0.5 text-background/75'>
+        <div className='mt-0.5 text-primary-foreground/80'>
           Node ID：{id}
           {!name ? ' · 节点名称暂未获取' : ''}
         </div>

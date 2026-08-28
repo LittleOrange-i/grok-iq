@@ -36,7 +36,7 @@ import {
   type UpstreamAccount,
 } from '@/lib/api'
 import { copyText } from '@/lib/clipboard'
-import { MonitorStatusCell } from '@/lib/status'
+import { MonitorStatusCell } from '@/components/monitor-status-badge'
 import { cn, formatDate, formatNumber, formatRelativeTime, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
