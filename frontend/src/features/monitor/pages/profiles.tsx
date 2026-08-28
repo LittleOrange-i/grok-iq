@@ -5,6 +5,7 @@ import {
   Edit3,
   Eye,
   FileText,
+  FlaskConical,
   Image,
   ListChecks,
   Plus,
@@ -47,13 +48,10 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { EnabledBadge } from '@/components/enabled-badge'
 import {
   FormattedContentPreviewButton,
   FormattedContentRenderer,
@@ -230,13 +228,13 @@ export function ProbeProfilesPage() {
         onValueChange={changeProfileView}
         className='gap-4'
       >
-        <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+        <TabsList className='w-full justify-start overflow-x-auto sm:w-fit'>
           <TabsTrigger value='built-in'>
             <ShieldCheck />
             系统内置
             <Badge
               variant='secondary'
-              className='h-5 min-w-5 border-0 px-1.5 tabular-nums'
+              className='h-5 min-w-5 border-0 px-1.5 text-[11px] tabular-nums'
             >
               {builtInProfiles.length}
             </Badge>
@@ -246,7 +244,7 @@ export function ProbeProfilesPage() {
             用户自定义
             <Badge
               variant='secondary'
-              className='h-5 min-w-5 border-0 px-1.5 tabular-nums'
+              className='h-5 min-w-5 border-0 px-1.5 text-[11px] tabular-nums'
             >
               {customProfiles.length}
             </Badge>
@@ -356,7 +354,7 @@ function ProfileGrid({
   }
 
   return (
-    <div className='grid gap-4 lg:grid-cols-2'>
+    <div className='grid gap-3 lg:grid-cols-2'>
       {profiles.map((profile) => (
         <ProfileCard
           key={profile.id}
@@ -390,35 +388,39 @@ function ProfileCard({
   return (
     <Card
       className={cn(
-        'transition-colors',
+        'gap-3 py-3 transition-colors',
         selected && 'border-primary/40 bg-primary/[0.025]'
       )}
     >
-      <CardHeader>
-        <div className='flex items-start justify-between gap-3'>
+      <CardHeader className='px-4'>
+        <div className='flex items-start gap-3'>
           <Checkbox
             checked={selected}
             disabled={pending}
             onCheckedChange={(value) => onSelectedChange(value === true)}
             aria-label={`选择方案 ${profile.name}`}
-            className='mt-1'
+            className='mt-2'
           />
+          <IconBadge tone={profile.built_in ? 'sky' : 'violet'}>
+            {profile.built_in ? <ShieldCheck /> : <FlaskConical />}
+          </IconBadge>
           <div className='min-w-0 flex-1'>
-            <CardTitle className='flex flex-wrap items-center gap-2'>
-              <span className='truncate'>{profile.name}</span>
-              <Badge variant={profile.built_in ? 'info' : 'outline'}>
+            <div className='flex flex-wrap items-center gap-1.5'>
+              <CardTitle className='truncate text-sm'>{profile.name}</CardTitle>
+              <Badge
+                variant={profile.built_in ? 'info' : 'outline'}
+                className='h-5 px-1.5 text-[11px]'
+              >
                 {profile.built_in ? '系统内置' : '用户自定义'}
               </Badge>
-              <Badge variant={profile.enabled ? 'success' : 'secondary'}>
-                {profile.enabled ? '启用' : '停用'}
-              </Badge>
-            </CardTitle>
-            <CardDescription className='mt-2'>
+              <EnabledBadge enabled={profile.enabled} />
+            </div>
+            <CardDescription className='mt-1 line-clamp-1 text-xs'>
               {profile.description || '未填写说明'}
             </CardDescription>
           </div>
-          <div className='flex shrink-0 items-center gap-1'>
-            {profile.expected_output && (
+          <ActionToolbar label={`${profile.name} 操作`}>
+            {profile.expected_output ? (
               <FormattedContentPreviewButton
                 content={profile.expected_output}
                 expectedImageUrl={profile.expected_image_url}
@@ -426,64 +428,55 @@ function ProfileCard({
                 title={`${profile.name} · 预期结果`}
                 iconOnly
                 variant='ghost'
+                className='size-7'
               />
-            )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size='icon'
-                  variant='ghost'
-                  disabled={pending}
-                  onClick={onEdit}
-                  aria-label={`编辑方案 ${profile.name}`}
-                >
-                  <Edit3 />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>编辑方案</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size='icon'
-                  variant='ghost'
-                  className='text-destructive hover:text-destructive'
-                  disabled={pending}
-                  onClick={onDelete}
-                  aria-label={`删除方案 ${profile.name}`}
-                >
-                  <Trash2 />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>删除方案</TooltipContent>
-            </Tooltip>
-          </div>
+            ) : null}
+            <ToolbarAction
+              label='编辑方案'
+              disabled={pending}
+              onClick={onEdit}
+            >
+              <Edit3 />
+            </ToolbarAction>
+            <ToolbarAction
+              label='删除方案'
+              destructive
+              disabled={pending}
+              onClick={onDelete}
+            >
+              <Trash2 />
+            </ToolbarAction>
+          </ActionToolbar>
         </div>
       </CardHeader>
-      <CardContent>
-        <div className='rounded-lg bg-muted/40 p-3 text-sm'>
-          <div className='font-mono text-xs text-primary'>{profile.model}</div>
-          <div className='mt-2 line-clamp-3 whitespace-pre-wrap'>
+      <CardContent className='space-y-3 px-4'>
+        <div className='rounded-lg border bg-muted/20 px-3 py-2 text-sm'>
+          <div className='font-mono text-[11px] text-primary'>
+            {profile.model}
+          </div>
+          <div className='mt-1.5 line-clamp-3 whitespace-pre-wrap text-xs leading-5'>
             {profile.prompt}
           </div>
         </div>
-        <div className='mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground'>
-          <Badge variant='outline'>
+        <div className='flex flex-wrap gap-1.5'>
+          <Badge variant='outline' className='h-5 px-1.5 text-[11px]'>
             {profile.max_output_tokens > 0
               ? `max ${profile.max_output_tokens} tokens`
               : '跟随上游'}
           </Badge>
           {profile.expected_text && (
-            <Badge variant='outline'>校验 {profile.expected_text}</Badge>
+            <Badge variant='outline' className='h-5 px-1.5 text-[11px]'>
+              校验 {profile.expected_text}
+            </Badge>
           )}
           {profile.expected_output && (
-            <Badge variant='info'>
+            <Badge variant='info' className='h-5 px-1.5 text-[11px]'>
               <FileText className='size-3' />
               预期结果
             </Badge>
           )}
           {profile.expected_image_url && (
-            <Badge variant='info'>
+            <Badge variant='info' className='h-5 px-1.5 text-[11px]'>
               <Image className='size-3' />
               预期图片
             </Badge>
@@ -821,12 +814,12 @@ function ProfileDialog({
                 }
               />
             </Field>
-            <label className='flex items-center gap-3 rounded-lg border p-3 text-sm sm:col-span-2'>
+            <label className='flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm sm:col-span-2'>
               <Switch
                 checked={form.enabled}
                 onCheckedChange={(value) => set('enabled', value)}
               />
-              启用方案
+              <EnabledBadge enabled={form.enabled} />
             </label>
           </div>
           <DialogFooter>

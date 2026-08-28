@@ -28,14 +28,11 @@ import {
 import { api, type RuntimeSettings } from '@/lib/api'
 import { autoIsolationMinStatusLabel } from '../components/settings-model'
 import { StatusBadge } from '@/lib/status'
+import { EnabledBadge } from '@/components/enabled-badge'
+import { TitledCard } from '@/components/titled-card'
 import { Badge } from '@/components/ui/badge'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { Page, PageHeader } from '@/components/page'
@@ -110,12 +107,15 @@ const defaultThresholds: Thresholds = {
   quarantineMinutes: 30,
 }
 
-const toneClasses = {
-  default: 'bg-muted/40 text-muted-foreground',
-  success: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-300',
-  danger: 'bg-destructive/10 text-destructive',
-  info: 'bg-sky-500/10 text-sky-700 dark:text-sky-300',
+const ruleIconTone: Record<
+  NonNullable<RuleCardProps['tone']>,
+  IconBadgeTone
+> = {
+  default: 'muted',
+  success: 'success',
+  warning: 'warning',
+  danger: 'destructive',
+  info: 'info',
 }
 
 export function DecisionGuidePage() {
@@ -152,38 +152,38 @@ export function DecisionGuidePage() {
         }
       />
 
-      <Card className='overflow-hidden'>
-        <CardContent className='p-4 sm:p-6'>
-          <div className='grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:items-center'>
-            <FlowStep
-              icon={Activity}
-              title='发起探针'
-              description='固定账号并请求上游'
-            />
-            <FlowArrow />
-            <FlowStep
-              icon={Network}
-              title='核验审计'
-              description='确认实际账号与出口'
-            />
-            <FlowArrow />
-            <FlowStep
-              icon={Gauge}
-              title='分类样本'
-              description='计算 TPS 与缓冲特征'
-            />
-            <FlowArrow />
-            <FlowStep
-              icon={ShieldCheck}
-              title='聚合账号'
-              description='生成风险分与状态'
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <div className='grid gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] md:items-center'>
+        <FlowStep
+          icon={Activity}
+          tone='primary'
+          title='发起探针'
+          description='固定账号并请求上游'
+        />
+        <FlowArrow />
+        <FlowStep
+          icon={Network}
+          tone='sky'
+          title='核验审计'
+          description='确认实际账号与出口'
+        />
+        <FlowArrow />
+        <FlowStep
+          icon={Gauge}
+          tone='amber'
+          title='分类样本'
+          description='计算 TPS 与缓冲特征'
+        />
+        <FlowArrow />
+        <FlowStep
+          icon={ShieldCheck}
+          tone='emerald'
+          title='聚合账号'
+          description='生成风险分与状态'
+        />
+      </div>
 
       <Tabs defaultValue='account' className='space-y-4'>
-        <TabsList className='grid h-auto w-full grid-cols-2 lg:w-fit lg:grid-cols-4'>
+        <TabsList className='grid w-full grid-cols-2 rounded-md lg:inline-grid lg:w-fit lg:grid-cols-4'>
           <TabsTrigger value='account'>
             <ShieldCheck />
             账号判定
@@ -261,27 +261,27 @@ function ThresholdOverview({ thresholds }: { thresholds: Thresholds }) {
   ]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>当前判定阈值</CardTitle>
-        <CardDescription>
-          数值来自系统设置；服务未连接时展示后端默认值。
-        </CardDescription>
-      </CardHeader>
-      <CardContent className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6'>
+    <TitledCard
+      icon={<Gauge />}
+      iconTone='primary'
+      title='当前判定阈值'
+      description='数值来自系统设置；服务未连接时展示后端默认值。'
+      contentClassName='p-0 sm:p-0'
+    >
+      <div className='grid grid-cols-2 gap-px bg-border md:grid-cols-3 xl:grid-cols-6'>
         {values.map(({ icon: Icon, label, value }) => (
-          <div key={label} className='rounded-lg border bg-muted/20 p-3'>
-            <div className='flex items-center gap-2 text-xs text-muted-foreground'>
+          <div key={label} className='bg-background px-4 py-3.5'>
+            <div className='flex items-center gap-1.5 text-xs text-muted-foreground'>
               <Icon className='size-3.5' />
               {label}
             </div>
-            <div className='mt-2 font-mono text-sm font-semibold tabular-nums'>
+            <div className='mt-2 text-xl font-semibold tracking-tight tabular-nums'>
               {value}
             </div>
           </div>
         ))}
-      </CardContent>
-    </Card>
+      </div>
+    </TitledCard>
   )
 }
 
@@ -290,12 +290,12 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
   const repeated = `风险周期连续信号达到 ${thresholds.consecutiveAnomalies} 次，或累计至少 ${thresholds.consecutiveAnomalies} 次且占可测样本 ${anomalyRate} 以上`
 
   return (
-    <section className='space-y-3'>
-      <SectionHeading
-        icon={ShieldCheck}
-        title='账号监控状态'
-        description='聚合风险周期内账号当前固定出口、临时切换出口及上游调度诊断产生的有效样本。'
-      />
+    <TitledCard
+      icon={<ShieldCheck />}
+      iconTone='emerald'
+      title='账号监控状态'
+      description='聚合风险周期内账号当前固定出口、临时切换出口及上游调度诊断产生的有效样本。'
+    >
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         <RuleCard
           icon={CheckCircle2}
@@ -376,7 +376,7 @@ function AccountStatusRules({ thresholds }: { thresholds: Thresholds }) {
           tone='info'
         />
       </div>
-    </section>
+    </TitledCard>
   )
 }
 
@@ -410,80 +410,63 @@ function RiskFormula({ thresholds }: { thresholds: Thresholds }) {
   ]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className='flex items-center gap-2'>
-          <Calculator className='size-4 text-primary' />
-          风险分公式
-        </CardTitle>
-        <CardDescription>
-          各项相加后封顶 {formatNumber(thresholds.riskScoreCap)}{' '}
-          分；“观察”最低显示 {formatNumber(thresholds.riskWatchFloor)}{' '}
-          分，“疑似降智”最低显示 {formatNumber(thresholds.riskSuspectFloor)}{' '}
-          分，“高风险”最低显示 {formatNumber(thresholds.riskHighFloor)}{' '}
-          分。公式因子来自系统设置，周期内固定出口和临时切换出口样本均参与计算。
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className='grid gap-2 md:grid-cols-2 xl:grid-cols-3'>
-          {rows.map(([label, formula, cap]) => (
-            <div key={label} className='rounded-lg border p-3'>
-              <div className='flex items-center justify-between gap-2'>
-                <span className='text-sm font-medium'>{label}</span>
-                <Badge variant='secondary'>{cap}</Badge>
-              </div>
-              <div className='mt-2 font-mono text-xs text-muted-foreground'>
-                {formula}
-              </div>
+    <TitledCard
+      icon={<Calculator />}
+      iconTone='violet'
+      title='风险分公式'
+      description={`各项相加后封顶 ${formatNumber(thresholds.riskScoreCap)} 分；“观察”最低显示 ${formatNumber(thresholds.riskWatchFloor)} 分，“疑似降智”最低显示 ${formatNumber(thresholds.riskSuspectFloor)} 分，“高风险”最低显示 ${formatNumber(thresholds.riskHighFloor)} 分。公式因子来自系统设置，周期内固定出口和临时切换出口样本均参与计算。`}
+    >
+      <div className='grid gap-2 md:grid-cols-2 xl:grid-cols-3'>
+        {rows.map(([label, formula, cap]) => (
+          <div key={label} className='rounded-lg border px-3 py-2.5'>
+            <div className='flex items-center justify-between gap-2'>
+              <span className='text-sm font-medium'>{label}</span>
+              <Badge variant='secondary'>{cap}</Badge>
             </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+            <div className='mt-1.5 font-mono text-xs text-muted-foreground'>
+              {formula}
+            </div>
+          </div>
+        ))}
+      </div>
+    </TitledCard>
   )
 }
 
 function SampleMetricRules({ thresholds }: { thresholds: Thresholds }) {
   return (
     <div className='grid gap-4 lg:grid-cols-2'>
-      <Card>
-        <CardHeader>
-          <CardTitle className='flex items-center gap-2'>
-            <Gauge className='size-4 text-primary' />
-            TPS 计算
-          </CardTitle>
-          <CardDescription>只计算首 Token 到达后的生成阶段。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className='rounded-lg bg-muted/50 p-4 font-mono text-sm'>
-            TPS = output_tokens × 1000 ÷ (duration_ms − first_token_ms)
-          </div>
-          <p className='mt-3 text-xs leading-5 text-muted-foreground'>
-            output_tokens 包含上游 usage 返回的推理
-            Token；因此长时间等待后集中返回大量 Token
-            会产生很高的计算值，这正是缓冲型降智信号要捕获的特征。
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className='flex items-center gap-2'>
-            <Timer className='size-4 text-primary' />
-            缓冲特征
-          </CardTitle>
-          <CardDescription>满足任意一项即认为存在集中吐出。</CardDescription>
-        </CardHeader>
-        <CardContent className='space-y-2'>
-          <ConditionLine
-            icon={Clock3}
-            text={`首 Token 耗时 ÷ 总耗时 ≥ ${formatPercent(thresholds.bufferFirstTokenShare)}`}
-          />
-          <ConditionLine
-            icon={Zap}
-            text={`首 Token 后的生成阶段 < ${thresholds.minGenerationMs} ms`}
-          />
-        </CardContent>
-      </Card>
+      <TitledCard
+        icon={<Gauge />}
+        iconTone='sky'
+        title='TPS 计算'
+        description='只计算首 Token 到达后的生成阶段。'
+      >
+        <div className='rounded-lg bg-muted/50 px-3 py-3 font-mono text-sm'>
+          TPS = output_tokens × 1000 ÷ (duration_ms − first_token_ms)
+        </div>
+        <p className='mt-3 text-xs leading-5 text-muted-foreground'>
+          output_tokens 包含上游 usage 返回的推理
+          Token；因此长时间等待后集中返回大量 Token
+          会产生很高的计算值，这正是缓冲型降智信号要捕获的特征。
+        </p>
+      </TitledCard>
+      <TitledCard
+        icon={<Timer />}
+        iconTone='amber'
+        title='缓冲特征'
+        description='满足任意一项即认为存在集中吐出。'
+        contentClassName='space-y-2'
+      >
+        <ConditionLine
+          icon={Clock3}
+          text={`首 Token 耗时 ÷ 总耗时 ≥ ${formatPercent(thresholds.bufferFirstTokenShare)}`}
+        />
+        <ConditionLine
+          icon={Zap}
+          text={`首 Token 后的生成阶段 < ${thresholds.minGenerationMs} ms`}
+        />
+      </TitledCard>
     </div>
   )
 }
@@ -530,7 +513,8 @@ function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
       icon: Activity,
       title: '思考输出为 0',
       badge: <StatusBadge value='reasoning_zero' />,
-      summary: '仅在模型能力策略适用、字段明确上报且输出达到策略下限时检查 reasoning Token。',
+      summary:
+        '仅在模型能力策略适用、字段明确上报且输出达到策略下限时检查 reasoning Token。',
       conditions: thresholds.reasoningZeroRiskEnabled
         ? [
             '单次为 0 先记录观察信号',
@@ -582,18 +566,18 @@ function SampleClassificationRules({ thresholds }: { thresholds: Thresholds }) {
   ]
 
   return (
-    <section className='space-y-3'>
-      <SectionHeading
-        icon={Gauge}
-        title='单次样本分类'
-        description='规则按以下优先级依次判断，命中后不再继续向下分类。'
-      />
+    <TitledCard
+      icon={<Gauge />}
+      iconTone='primary'
+      title='单次样本分类'
+      description='规则按以下优先级依次判断，命中后不再继续向下分类。'
+    >
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         {rules.map((rule) => (
           <RuleCard key={rule.title} {...rule} />
         ))}
       </div>
-    </section>
+    </TitledCard>
   )
 }
 
@@ -668,18 +652,18 @@ function TaskStatusRules() {
   ]
 
   return (
-    <section className='space-y-3'>
-      <SectionHeading
-        icon={Activity}
-        title='任务状态'
-        description='任务状态描述队列和执行生命周期，不等于样本质量分类。'
-      />
+    <TitledCard
+      icon={<Activity />}
+      iconTone='indigo'
+      title='任务状态'
+      description='任务状态描述队列和执行生命周期，不等于样本质量分类。'
+    >
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-4'>
         {rules.map((rule) => (
           <RuleCard key={rule.title} {...rule} />
         ))}
       </div>
-    </section>
+    </TitledCard>
   )
 }
 
@@ -736,34 +720,39 @@ function RestoreStatusRules() {
   ]
 
   return (
-    <section className='space-y-3'>
-      <SectionHeading
-        icon={Undo2}
-        title='账号设置恢复状态'
-        description='这是任务对 grok2api 临时修改的补偿状态，与账号风险判定相互独立。'
-      />
+    <TitledCard
+      icon={<Undo2 />}
+      iconTone='cyan'
+      title='账号设置恢复状态'
+      description='这是任务对 grok2api 临时修改的补偿状态，与账号风险判定相互独立。'
+    >
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         {rules.map((rule) => (
           <RuleCard key={rule.title} {...rule} />
         ))}
       </div>
-    </section>
+    </TitledCard>
   )
 }
 
 function UpstreamStatusRules() {
   return (
-    <section className='space-y-3'>
-      <SectionHeading
-        icon={KeyRound}
-        title='grok2api 上游字段'
-        description='这些字段来自实时账号列表，各自表达不同维度，不应合并理解。'
-      />
+    <TitledCard
+      icon={<KeyRound />}
+      iconTone='blue'
+      title='grok2api 上游字段'
+      description='这些字段来自实时账号列表，各自表达不同维度，不应合并理解。'
+    >
       <div className='grid gap-3 lg:grid-cols-2 xl:grid-cols-3'>
         <RuleCard
           icon={Activity}
           title='enabled'
-          badge={<Badge variant='outline'>启用 / 停用</Badge>}
+          badge={
+            <span className='flex items-center gap-1'>
+              <EnabledBadge enabled />
+              <EnabledBadge enabled={false} />
+            </span>
+          }
           summary='表示账号是否参与 grok2api 正常调度，不表示凭据有效或模型质量正常。'
           conditions={[
             '正常定检只巡检已启用账号，不会修改启停状态',
@@ -863,7 +852,7 @@ function UpstreamStatusRules() {
           tone='danger'
         />
       </div>
-    </section>
+    </TitledCard>
   )
 }
 
@@ -871,16 +860,18 @@ function FlowStep({
   icon: Icon,
   title,
   description,
+  tone = 'primary',
 }: {
   icon: ElementType
   title: string
   description: string
+  tone?: IconBadgeTone
 }) {
   return (
-    <div className='flex items-center gap-3 rounded-lg border bg-muted/20 p-3'>
-      <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-        <Icon className='size-4' />
-      </div>
+    <div className='flex items-center gap-3 rounded-lg border px-3 py-2.5'>
+      <IconBadge tone={tone} size='md'>
+        <Icon />
+      </IconBadge>
       <div className='min-w-0'>
         <div className='text-sm font-medium'>{title}</div>
         <div className='truncate text-xs text-muted-foreground'>
@@ -897,28 +888,6 @@ function FlowArrow() {
   )
 }
 
-function SectionHeading({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: ElementType
-  title: string
-  description: string
-}) {
-  return (
-    <div className='flex items-start gap-3'>
-      <div className='mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-        <Icon className='size-4' />
-      </div>
-      <div>
-        <h2 className='font-semibold'>{title}</h2>
-        <p className='mt-0.5 text-sm text-muted-foreground'>{description}</p>
-      </div>
-    </div>
-  )
-}
-
 function RuleCard({
   icon: Icon,
   title,
@@ -928,27 +897,25 @@ function RuleCard({
   tone = 'default',
 }: RuleCardProps) {
   return (
-    <Card className='gap-4 py-4 shadow-none'>
-      <CardHeader className='px-4'>
+    <Card className='gap-3 py-3 shadow-none'>
+      <CardHeader className='px-3.5 py-0'>
         <div className='flex items-start justify-between gap-3'>
-          <div className='flex min-w-0 items-center gap-2'>
-            <span
-              className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${toneClasses[tone]}`}
-            >
-              <Icon className='size-4' />
-            </span>
+          <div className='flex min-w-0 items-center gap-2.5'>
+            <IconBadge tone={ruleIconTone[tone]} size='sm'>
+              <Icon />
+            </IconBadge>
             <CardTitle className='truncate text-sm'>{title}</CardTitle>
           </div>
           {badge}
         </div>
       </CardHeader>
-      <CardContent className='px-4'>
+      <CardContent className='px-3.5'>
         <p className='text-sm leading-6 text-muted-foreground'>{summary}</p>
         {conditions.length > 0 && (
-          <ul className='mt-3 space-y-2'>
+          <ul className='mt-2.5 space-y-1.5'>
             {conditions.map((condition) => (
               <li key={condition} className='flex gap-2 text-xs leading-5'>
-                <span className='mt-2 size-1 shrink-0 rounded-full bg-primary' />
+                <span className='mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/40' />
                 <span>{condition}</span>
               </li>
             ))}
@@ -967,8 +934,10 @@ function ConditionLine({
   text: string
 }) {
   return (
-    <div className='flex items-center gap-3 rounded-lg border p-3 text-sm'>
-      <Icon className='size-4 shrink-0 text-primary' />
+    <div className='flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm'>
+      <IconBadge tone='primary' size='sm'>
+        <Icon />
+      </IconBadge>
       <span>{text}</span>
     </div>
   )

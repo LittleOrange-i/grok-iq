@@ -48,6 +48,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -1739,10 +1740,7 @@ const AccountRow = memo(function AccountRow({
       </TableCell>
       <TableCell>
         <div className='flex items-center gap-1.5'>
-          <span
-            className={`size-1.5 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
-          />
-          <span className='text-sm'>{account.enabled ? '启用' : '停用'}</span>
+          <EnabledBadge enabled={account.enabled} />
           <AuthStatusIndicator status={account.authStatus} compact />
           {assessment.recovery_guarded ? (
             <Tooltip>
@@ -1907,7 +1905,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
             待同步
           </span>
         </TooltipTrigger>
-        <TooltipContent>grok2api 尚未提供可用的额度数据。</TooltipContent>
+        <TooltipContent className='max-w-80 text-left'>grok2api 尚未提供可用的额度数据。</TooltipContent>
       </Tooltip>
     )
   }
@@ -1932,7 +1930,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
             未估算
           </span>
         </TooltipTrigger>
-        <TooltipContent className='max-w-72'>
+        <TooltipContent className='max-w-80 space-y-1.5 text-left'>
           已观测使用 {formatQuotaAmount(quota.used, quota.unit)}
           ，但上游未提供额度总量。
         </TooltipContent>
@@ -1977,7 +1975,7 @@ function QuotaRemainingIndicator({ quota }: { quota?: UpstreamQuota }) {
           {displayValue}
         </span>
       </TooltipTrigger>
-      <TooltipContent className='max-w-72 space-y-1'>
+      <TooltipContent className='max-w-80 space-y-1.5 text-left'>
         <div>额度剩余 {displayValue}</div>
         {quota.limit > 0 && quota.unit !== 'percent' && (
           <div className='text-muted-foreground'>
@@ -2113,7 +2111,7 @@ function AccountDetail({
   return (
     <div className='space-y-5'>
       <div className='grid gap-3 sm:grid-cols-3 lg:grid-cols-6'>
-        <Metric label='上游' value={account.enabled ? '启用' : '停用'} />
+        <Metric label='上游' value={<EnabledBadge enabled={account.enabled} />} />
         <Metric
           label='鉴权'
           value={<AuthStatusIndicator status={account.authStatus} />}

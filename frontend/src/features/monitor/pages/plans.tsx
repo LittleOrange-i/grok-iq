@@ -63,11 +63,23 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { InfoTooltip } from '@/components/info-tooltip'
 import { Page, PageHeader, LoadingState, EmptyState } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
+import { TablePanel } from '@/components/table-panel'
+import { TitledCard } from '@/components/titled-card'
 import { AccountMultiSelect } from '@/features/monitor/components/account-multi-select'
 import { ProfileMultiSelect } from '@/features/monitor/components/profile-multi-select'
 
@@ -500,11 +512,16 @@ export function PlansPage() {
         onValueChange={(value) => setActiveView(value as CronView)}
         className='gap-4'
       >
-        <TabsList className='h-auto w-full justify-start overflow-x-auto sm:w-fit'>
+        <TabsList className='w-full justify-start overflow-x-auto sm:w-fit'>
           <TabsTrigger value='plans'>
             <CalendarClock />
             计划
-            <Badge variant='secondary'>{planItems.length}</Badge>
+            <Badge
+              variant='secondary'
+              className='h-5 min-w-5 border-0 px-1.5 text-[11px] tabular-nums'
+            >
+              {planItems.length}
+            </Badge>
           </TabsTrigger>
           <TabsTrigger value='system'>
             <Clock3 />
@@ -513,12 +530,17 @@ export function PlansPage() {
           <TabsTrigger value='history'>
             <History />
             调用记录
-            <Badge variant='secondary'>{executions.length}</Badge>
+            <Badge
+              variant='secondary'
+              className='h-5 min-w-5 border-0 px-1.5 text-[11px] tabular-nums'
+            >
+              {executions.length}
+            </Badge>
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value='plans' className='mt-0'>
-          <div className='grid gap-4 lg:grid-cols-2'>
+          <div className='grid gap-3 lg:grid-cols-2'>
             {plans.data?.map((plan) => (
               <PlanCard
                 key={plan.id}
@@ -739,39 +761,42 @@ function SystemCronPanel({
 
   return (
     <div className='space-y-4'>
-      <section className='overflow-hidden rounded-lg border'>
-        <div className='flex flex-wrap items-start justify-between gap-3 border-b bg-muted/20 px-4 py-3'>
-          <div>
-            <div className='flex items-center gap-1.5'>
-              <h2 className='text-sm font-semibold'>Scheduler 运行状态</h2>
-              <InfoTooltip
-                label='Scheduler 运行状态'
-                content='周期计划与隔离恢复独立启停，共用当前调度器。'
-              />
-            </div>
-          </div>
-          <Badge variant={running ? 'success' : 'destructive'}>
+      <TitledCard
+        icon={<Clock3 />}
+        iconTone={running ? 'emerald' : 'rose'}
+        title='Scheduler 运行状态'
+        hint='周期计划与隔离恢复独立启停，共用当前调度器。'
+        action={
+          <Badge
+            variant={running ? 'success' : 'destructive'}
+            className='h-5 px-1.5 text-[11px]'
+          >
             {running ? '运行中' : '未运行'}
           </Badge>
-        </div>
-        <div className='grid gap-3 p-4 sm:grid-cols-3'>
-          <Info label='周期计划' value={plansEnabled ? '启用' : '暂停'} />
+        }
+        contentClassName='space-y-3'
+      >
+        <div className='grid gap-2 sm:grid-cols-3'>
+          <Info
+            label='周期计划'
+            value={<EnabledBadge enabled={plansEnabled} />}
+          />
           <Info label='默认时区' value={form.schedulerTimezone || '—'} />
           <Info
             label='隔离恢复'
-            value={systemRecoveryEnabled ? '启用' : '暂停'}
+            value={<EnabledBadge enabled={systemRecoveryEnabled} />}
           />
         </div>
-        <div className='divide-y border-t'>
+        <div className='overflow-hidden rounded-lg border'>
           {jobs.length ? (
             jobs.map((job) => (
               <div
                 key={job.id}
-                className='flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm'
+                className='flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-3 py-2.5 text-sm last:border-b-0'
               >
                 <div className='min-w-48 flex-1'>
                   <div className='font-medium'>{job.name}</div>
-                  <div className='mt-0.5 font-mono text-xs text-muted-foreground'>
+                  <div className='mt-0.5 font-mono text-[11px] text-muted-foreground'>
                     {job.id}
                   </div>
                 </div>
@@ -781,35 +806,33 @@ function SystemCronPanel({
               </div>
             ))
           ) : (
-            <div className='px-4 py-3 text-sm text-muted-foreground'>
+            <div className='px-3 py-3 text-sm text-muted-foreground'>
               {systemRecoveryEnabled
                 ? '隔离恢复检查尚未注册，请刷新状态或检查调度器运行情况。'
                 : '隔离恢复检查已暂停，当前没有系统 Cron Job。'}
             </div>
           )}
         </div>
-      </section>
+      </TitledCard>
 
-      <section className='rounded-lg border p-4'>
-        <div className='mb-4'>
-          <div className='flex items-center gap-1.5'>
-            <h2 className='text-sm font-semibold'>系统 Cron 设置</h2>
-            <InfoTooltip
-              label='系统 Cron 设置'
-              content='隔离恢复仅处理到期的临时隔离账号，不会启用人工停用的账号。'
-            />
-          </div>
-        </div>
-        <div className='space-y-4'>
-          <div className='grid overflow-hidden rounded-lg border lg:grid-cols-2 lg:divide-x'>
-            <div className='flex items-center justify-between gap-4 px-3 py-3'>
-              <div className='flex items-center gap-1.5'>
-                <div className='text-sm font-medium'>周期计划</div>
-                <InfoTooltip
-                  label='周期计划'
-                  content='全局控制用户 Cron 计划。关闭后单个计划保留启用状态，但不会定时触发；手动运行不受影响。'
-                />
-              </div>
+      <TitledCard
+        icon={<CalendarClock />}
+        iconTone='sky'
+        title='系统 Cron 设置'
+        hint='隔离恢复仅处理到期的临时隔离账号，不会启用人工停用的账号。'
+        contentClassName='space-y-4'
+      >
+        <div className='grid overflow-hidden rounded-lg border lg:grid-cols-2 lg:divide-x'>
+          <div className='flex items-center justify-between gap-4 px-3 py-2.5'>
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <div className='text-sm font-medium'>周期计划</div>
+              <InfoTooltip
+                label='周期计划'
+                content='全局控制用户 Cron 计划。关闭后单个计划保留启用状态，但不会定时触发；手动运行不受影响。'
+              />
+            </div>
+            <div className='flex items-center gap-2'>
+              <EnabledBadge enabled={form.schedulerEnabled} />
               <Switch
                 checked={form.schedulerEnabled}
                 disabled={disabled}
@@ -817,14 +840,17 @@ function SystemCronPanel({
                 aria-label='启用周期探针计划'
               />
             </div>
-            <div className='flex items-center justify-between gap-4 border-t px-3 py-3 lg:border-t-0'>
-              <div className='flex items-center gap-1.5'>
-                <div className='text-sm font-medium'>隔离恢复</div>
-                <InfoTooltip
-                  label='隔离恢复'
-                  content='自动启用隔离期已结束的账号，是临时隔离的恢复保护。关闭后，到期账号不会自动启用。'
-                />
-              </div>
+          </div>
+          <div className='flex items-center justify-between gap-4 border-t px-3 py-2.5 lg:border-t-0'>
+            <div className='flex min-w-0 items-center gap-1.5'>
+              <div className='text-sm font-medium'>隔离恢复</div>
+              <InfoTooltip
+                label='隔离恢复'
+                content='自动启用隔离期已结束的账号，是临时隔离的恢复保护。关闭后，到期账号不会自动启用。'
+              />
+            </div>
+            <div className='flex items-center gap-2'>
+              <EnabledBadge enabled={form.quarantineRecoveryEnabled} />
               <Switch
                 checked={form.quarantineRecoveryEnabled}
                 disabled={disabled}
@@ -835,71 +861,71 @@ function SystemCronPanel({
               />
             </div>
           </div>
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <Field label='默认时区'>
-              <Input
-                value={form.schedulerTimezone}
-                disabled={disabled}
-                onChange={(event) =>
-                  set('schedulerTimezone', event.target.value)
-                }
-                placeholder='UTC'
-              />
-            </Field>
-            <Field label='Misfire 宽限（秒）'>
-              <Input
-                type='number'
-                min={1}
-                max={86400}
-                value={form.schedulerMisfireGraceSeconds}
-                disabled={disabled}
-                onChange={(event) =>
-                  set(
-                    'schedulerMisfireGraceSeconds',
-                    Number(event.target.value)
-                  )
-                }
-              />
-            </Field>
-            <Field
-              label='隔离恢复 Cron'
-              hint='标准五段 Cron，例如 */5 * * * *'
-              className='sm:col-span-2'
-              action={
-                <CronExpressionHelp
-                  onSelect={(value) => set('recoveryCron', value)}
-                />
-              }
-            >
-              <Input
-                value={form.recoveryCron}
-                disabled={disabled}
-                onChange={(event) => set('recoveryCron', event.target.value)}
-                className='font-mono'
-              />
-            </Field>
-            <Field
-              label='首次探针冷却（分钟）'
-              hint='新账号首次探针完成后，周期计划在此时间内不会重复入队；0 表示关闭冷却。'
-              className='sm:col-span-2'
-            >
-              <Input
-                type='number'
-                min={0}
-                max={10080}
-                value={form.scheduledProbeRegisterCooldownMinutes}
-                disabled={disabled}
-                onChange={(event) =>
-                  set(
-                    'scheduledProbeRegisterCooldownMinutes',
-                    Number(event.target.value)
-                  )
-                }
-              />
-            </Field>
-          </div>
         </div>
-      </section>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <Field label='默认时区'>
+            <Input
+              value={form.schedulerTimezone}
+              disabled={disabled}
+              onChange={(event) =>
+                set('schedulerTimezone', event.target.value)
+              }
+              placeholder='UTC'
+            />
+          </Field>
+          <Field label='Misfire 宽限（秒）'>
+            <Input
+              type='number'
+              min={1}
+              max={86400}
+              value={form.schedulerMisfireGraceSeconds}
+              disabled={disabled}
+              onChange={(event) =>
+                set(
+                  'schedulerMisfireGraceSeconds',
+                  Number(event.target.value)
+                )
+              }
+            />
+          </Field>
+          <Field
+            label='隔离恢复 Cron'
+            hint='标准五段 Cron，例如 */5 * * * *'
+            className='sm:col-span-2'
+            action={
+              <CronExpressionHelp
+                onSelect={(value) => set('recoveryCron', value)}
+              />
+            }
+          >
+            <Input
+              value={form.recoveryCron}
+              disabled={disabled}
+              onChange={(event) => set('recoveryCron', event.target.value)}
+              className='font-mono'
+            />
+          </Field>
+          <Field
+            label='首次探针冷却（分钟）'
+            hint='新账号首次探针完成后，周期计划在此时间内不会重复入队；0 表示关闭冷却。'
+            className='sm:col-span-2'
+          >
+            <Input
+              type='number'
+              min={0}
+              max={10080}
+              value={form.scheduledProbeRegisterCooldownMinutes}
+              disabled={disabled}
+              onChange={(event) =>
+                set(
+                  'scheduledProbeRegisterCooldownMinutes',
+                  Number(event.target.value)
+                )
+              }
+            />
+          </Field>
+        </div>
+      </TitledCard>
     </div>
   )
 }
@@ -944,80 +970,109 @@ function ExecutionHistory({
   }
 
   return (
-    <section className='overflow-hidden rounded-lg border'>
-      <div className='border-b bg-muted/20 px-4 py-3'>
-        <h2 className='text-sm font-semibold'>最近 100 次调用</h2>
-        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-          计划调用可直接打开对应计划详情；计划被删除后仍保留原始调度键和历史结果。
-        </p>
-      </div>
-      <div className='divide-y'>
-        {executions.map((item) => {
-          const plan = getExecutionPlan(item, planById)
-          const title = plan?.name || scheduleName(item.schedule_key)
-          return (
-            <div
-              key={item.id}
-              className={cn(
-                'flex flex-wrap items-center gap-3 px-3 py-3 text-sm transition-colors',
-                selectedIds.includes(item.id) && 'bg-primary/[0.035]'
-              )}
-            >
-              <Checkbox
-                checked={selectedIds.includes(item.id)}
-                disabled={busy}
-                onCheckedChange={(value) =>
-                  onSelectedChange(item.id, value === true)
-                }
-                aria-label={`选择调用记录 ${item.schedule_key}`}
-              />
-              <Badge variant={executionVariant(item.status)}>
-                {executionLabel(item.status)}
-              </Badge>
-              <div className='min-w-44 flex-1'>
-                <div className='font-medium'>{title}</div>
-                <div className='mt-0.5 font-mono text-xs text-muted-foreground'>
-                  {item.schedule_key}
-                </div>
-              </div>
-              <div className='min-w-48 flex-[2] text-muted-foreground'>
-                <div className='truncate' title={item.message}>
-                  {item.message || '—'}
-                </div>
-                <div className='mt-0.5 text-xs'>
-                  {executionDetailSummary(item.detail)}
-                </div>
-              </div>
-              <div className='text-right text-xs text-muted-foreground'>
-                <div>{formatDate(item.started_at)}</div>
-                <div className='mt-0.5'>
-                  完成 {formatDate(item.completed_at)}
-                </div>
-              </div>
-              <ActionToolbar label={`${title} 调用记录操作`}>
-                {plan && (
-                  <ToolbarAction
-                    label='查看关联计划详情'
-                    disabled={busy}
-                    onClick={() => onViewPlan(plan)}
-                  >
-                    <Eye />
-                  </ToolbarAction>
+    <TablePanel
+      toolbar={
+        <div className='flex items-start gap-3'>
+          <IconBadge tone='violet'>
+            <History />
+          </IconBadge>
+          <div className='min-w-0'>
+            <div className='text-sm font-semibold'>最近 100 次调用</div>
+            <p className='mt-0.5 text-xs leading-5 text-muted-foreground'>
+              计划调用可直接打开对应计划详情；计划被删除后仍保留原始调度键和历史结果。
+            </p>
+          </div>
+        </div>
+      }
+    >
+      <Table rememberRowKey='cron-executions'>
+        <TableHeader>
+          <TableRow>
+            <TableHead className='w-10' />
+            <TableHead>状态</TableHead>
+            <TableHead>调用</TableHead>
+            <TableHead>结果</TableHead>
+            <TableHead>时间</TableHead>
+            <TableHead className='text-right'>操作</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {executions.map((item) => {
+            const plan = getExecutionPlan(item, planById)
+            const title = plan?.name || scheduleName(item.schedule_key)
+            return (
+              <TableRow
+                key={item.id}
+                rowId={item.id}
+                className={cn(
+                  selectedIds.includes(item.id) && 'bg-primary/[0.035]'
                 )}
-                <ToolbarAction
-                  label='删除调用记录'
-                  destructive
-                  disabled={busy || item.status === 'running'}
-                  onClick={() => onDelete(item.id)}
-                >
-                  <Trash2 />
-                </ToolbarAction>
-              </ActionToolbar>
-            </div>
-          )
-        })}
-      </div>
-    </section>
+              >
+                <TableCell>
+                  <Checkbox
+                    checked={selectedIds.includes(item.id)}
+                    disabled={busy}
+                    onCheckedChange={(value) =>
+                      onSelectedChange(item.id, value === true)
+                    }
+                    aria-label={`选择调用记录 ${item.schedule_key}`}
+                  />
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={executionVariant(item.status)}
+                    className='h-5 px-1.5 text-[11px]'
+                  >
+                    {executionLabel(item.status)}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className='font-medium'>{title}</div>
+                  <div className='mt-0.5 font-mono text-[11px] text-muted-foreground'>
+                    {item.schedule_key}
+                  </div>
+                </TableCell>
+                <TableCell className='max-w-md whitespace-normal text-muted-foreground'>
+                  <div className='truncate' title={item.message}>
+                    {item.message || '—'}
+                  </div>
+                  <div className='mt-0.5 text-[11px]'>
+                    {executionDetailSummary(item.detail)}
+                  </div>
+                </TableCell>
+                <TableCell className='text-xs text-muted-foreground'>
+                  <div>{formatDate(item.started_at)}</div>
+                  <div className='mt-0.5'>
+                    完成 {formatDate(item.completed_at)}
+                  </div>
+                </TableCell>
+                <TableCell className='text-right'>
+                  <ActionToolbar label={`${title} 调用记录操作`}>
+                    {plan && (
+                      <ToolbarAction
+                        label='查看关联计划详情'
+                        disabled={busy}
+                        onClick={() => onViewPlan(plan)}
+                      >
+                        <Eye />
+                      </ToolbarAction>
+                    )}
+                    <ToolbarAction
+                      label='删除调用记录'
+                      destructive
+                      disabled={busy || item.status === 'running'}
+                      onClick={() => onDelete(item.id)}
+                    >
+                      <Trash2 />
+                    </ToolbarAction>
+                  </ActionToolbar>
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </TablePanel>
   )
 }
 
@@ -1054,17 +1109,16 @@ function PlanDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className='flex flex-wrap gap-2'>
-          <Badge variant={plan.enabled ? 'success' : 'secondary'}>
-            {plan.enabled ? '启用' : '停用'}
-          </Badge>
-          <Badge variant='outline'>
+        <div className='flex flex-wrap gap-1.5'>
+          <EnabledBadge enabled={plan.enabled} />
+          <Badge variant='outline' className='h-5 px-1.5 text-[11px]'>
             {plan.overlap_policy === 'skip' ? '跳过重叠' : '补足空位'}
           </Badge>
           <Badge
             variant={
               plan.execution_mode === 'quality_test' ? 'info' : 'outline'
             }
+            className='h-5 px-1.5 text-[11px]'
           >
             {plan.execution_mode === 'quality_test' ? '快速质量' : '完整对话'}
           </Badge>
@@ -1179,60 +1233,59 @@ function PlanCard({
   return (
     <Card
       className={cn(
-        'transition-colors',
+        'gap-3 py-3 transition-colors',
         selected && 'border-primary/40 bg-primary/[0.025]'
       )}
     >
-      <CardHeader>
+      <CardHeader className='px-4'>
         <div className='flex items-start gap-3'>
           <Checkbox
             checked={selected}
             disabled={pending}
             onCheckedChange={(value) => onSelectedChange(value === true)}
             aria-label={`选择计划 ${plan.name}`}
-            className='mt-3'
+            className='mt-2'
           />
-          <div className='flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary'>
-            <CalendarClock className='size-5' />
-          </div>
+          <IconBadge tone={plan.enabled ? 'sky' : 'muted'}>
+            <CalendarClock />
+          </IconBadge>
           <div className='min-w-0 flex-1'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <CardTitle>{plan.name}</CardTitle>
-              <Badge variant={plan.enabled ? 'success' : 'secondary'}>
-                {plan.enabled ? '启用' : '停用'}
-              </Badge>
-              <Badge variant='outline'>
+            <div className='flex flex-wrap items-center gap-1.5'>
+              <CardTitle className='text-sm'>{plan.name}</CardTitle>
+              <EnabledBadge enabled={plan.enabled} />
+              <Badge variant='outline' className='h-5 px-1.5 text-[11px]'>
                 {plan.overlap_policy === 'skip' ? '跳过重叠' : '补足空位'}
               </Badge>
               <Badge
                 variant={
                   plan.execution_mode === 'quality_test' ? 'info' : 'outline'
                 }
+                className='h-5 px-1.5 text-[11px]'
               >
                 {plan.execution_mode === 'quality_test'
                   ? '快速质量'
                   : '完整对话'}
               </Badge>
             </div>
-            <CardDescription className='mt-1'>
+            <CardDescription className='mt-1 line-clamp-1 text-xs'>
               {plan.description || '未填写说明'}
             </CardDescription>
           </div>
         </div>
       </CardHeader>
-      <CardContent className='space-y-4'>
-        <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
+      <CardContent className='space-y-3 px-4'>
+        <div className='grid grid-cols-2 gap-2 sm:grid-cols-4'>
           <Info label='账号范围' value={accountScopeLabel(plan)} />
           <Info label='出口' value={`${plan.proxy_targets.length} 个`} />
           <Info label='轮数' value={`${plan.rounds} 轮`} />
           <Info label='优先级' value={plan.priority} />
         </div>
-        <div className='rounded-lg border bg-muted/20 p-3'>
-          <div className='flex items-center gap-2 font-mono text-sm'>
-            <Clock3 className='size-4 text-primary' />
+        <div className='rounded-lg border bg-muted/20 px-3 py-2'>
+          <div className='flex items-center gap-2 font-mono text-xs'>
+            <Clock3 className='size-3.5 text-primary' />
             {plan.cron_expression}
           </div>
-          <div className='mt-1 text-xs text-muted-foreground'>
+          <div className='mt-1 text-[11px] text-muted-foreground'>
             {plan.timezone} · 下次执行 {formatDate(plan.job?.nextRunAt)}
           </div>
         </div>
@@ -1245,10 +1298,9 @@ function PlanCard({
               : '每次触发实时解析账号范围'}
           </span>
         </div>
-        <div className='flex justify-end'>
+        <div className='flex justify-end border-t border-border/60 pt-2'>
           <ActionToolbar label={`${plan.name} 操作`}>
-            <div className='flex h-8 shrink-0 items-center gap-2 px-2 text-xs font-medium'>
-              <span>{plan.enabled ? '启用' : '停用'}</span>
+            <div className='flex h-7 shrink-0 items-center px-1'>
               <Switch
                 checked={plan.enabled}
                 disabled={pending}
@@ -1484,11 +1536,11 @@ function PlanDialog({
               </p>
             </div>
           </Field>
-          <label className='flex items-center gap-3 rounded-lg border p-3 text-sm sm:col-span-2'>
+          <label className='flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm sm:col-span-2'>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
-            <span>
-              <span className='font-medium'>启用计划</span>
-              <span className='block text-xs text-muted-foreground'>
+            <span className='min-w-0'>
+              <EnabledBadge enabled={enabled} />
+              <span className='mt-1 block text-xs text-muted-foreground'>
                 保存后立即注册或移除 APScheduler Job
               </span>
             </span>
@@ -1755,9 +1807,9 @@ function PlanDetailRow({
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className='rounded-lg bg-muted/40 p-3'>
-      <div className='text-xs text-muted-foreground'>{label}</div>
-      <div className='mt-1 text-sm font-semibold'>{value}</div>
+    <div className='rounded-lg bg-muted/40 px-3 py-2'>
+      <div className='text-[11px] text-muted-foreground'>{label}</div>
+      <div className='mt-0.5 truncate text-sm font-semibold'>{value}</div>
     </div>
   )
 }

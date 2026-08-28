@@ -76,6 +76,7 @@ import {
 } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -449,35 +450,10 @@ function UpstreamAccountState({
       className='flex min-w-0 items-center gap-1.5 whitespace-nowrap'
       title={`当前上游快照：${upstreamAccountStatusText(account)}；不代表历史请求发生时的状态。`}
     >
-      <Badge
-        variant={
-          account.upstreamEnabled == null
-            ? 'outline'
-            : account.upstreamEnabled
-              ? 'success'
-              : 'secondary'
-        }
-        className={cn(
-          'gap-1.5',
-          compact && 'h-5 px-1.5 text-[10px] [&>svg]:size-3'
-        )}
-      >
-        <span
-          className={cn(
-            'size-1.5 rounded-full',
-            account.upstreamEnabled == null
-              ? 'bg-muted-foreground/50'
-              : account.upstreamEnabled
-                ? 'bg-emerald-500'
-                : 'bg-zinc-400'
-          )}
-        />
-        {account.upstreamEnabled == null
-          ? '启停未知'
-          : account.upstreamEnabled
-            ? '启用'
-            : '停用'}
-      </Badge>
+      <EnabledBadge
+        enabled={account.upstreamEnabled}
+        unknown={account.upstreamEnabled == null}
+      />
       <AuthStatusIndicator
         status={account.upstreamAuthStatus}
         compact={compact}
@@ -4517,9 +4493,7 @@ function NodePerspective({
                 </Badge>
               )}
               {selected.enabled != null && (
-                <Badge variant={selected.enabled ? 'success' : 'secondary'}>
-                  {selected.enabled ? '节点启用' : '节点停用'}
-                </Badge>
+                <EnabledBadge enabled={selected.enabled} prefix='节点' />
               )}
               {(selected.egressRecommendationCount ?? 0) > 0 && (
                 <Badge variant='warning'>

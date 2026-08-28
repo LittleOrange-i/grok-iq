@@ -92,7 +92,7 @@ export function AccountRestoreIndicator({ run }: { run: ProbeRun }) {
       </TooltipTrigger>
       <TooltipContent className='max-w-72'>
         <div className='font-medium'>{visual.label}</div>
-        <div className='mt-0.5 text-primary-foreground/80'>{detail}</div>
+        <div className='mt-0.5 text-background/75'>{detail}</div>
       </TooltipContent>
     </Tooltip>
   )
@@ -147,7 +147,7 @@ export function EgressBindingIndicator({
       </TooltipTrigger>
       <TooltipContent className='max-w-72'>
         <div className='font-medium'>{label}</div>
-        <div className='mt-0.5 text-primary-foreground/80'>{description}</div>
+        <div className='mt-0.5 text-background/75'>{description}</div>
       </TooltipContent>
     </Tooltip>
   )
@@ -214,7 +214,7 @@ export function AuthStatusIndicator({
       </TooltipTrigger>
       <TooltipContent className='max-w-72'>
         <div className='font-medium'>{label}</div>
-        <div className='mt-0.5 text-primary-foreground/80'>{description}</div>
+        <div className='mt-0.5 text-background/75'>{description}</div>
       </TooltipContent>
     </Tooltip>
   )

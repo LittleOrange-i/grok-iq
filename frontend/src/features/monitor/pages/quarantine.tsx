@@ -42,6 +42,7 @@ import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { usePaintDeferredValue } from '@/hooks/use-paint-deferred-value'
 import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 import { useServerTableLoading } from '@/hooks/use-server-table-loading'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -1929,12 +1930,7 @@ function QuarantineRow({
         {account.missingUpstream ? (
           <Badge variant='outline'>上游缺失</Badge>
         ) : (
-          <div className='flex items-center gap-2'>
-            <span
-              className={`size-2 rounded-full ${account.enabled ? 'bg-emerald-500' : 'bg-zinc-400'}`}
-            />
-            {account.enabled ? '启用' : '停用'}
-          </div>
+          <EnabledBadge enabled={account.enabled} prefix='上游' />
         )}
       </TableCell>
       <TableCell>
@@ -2028,9 +2024,7 @@ function QuarantineSampleDetail({
           {account.missingUpstream ? (
             <Badge variant='outline'>上游缺失</Badge>
           ) : (
-            <Badge variant={account.enabled ? 'success' : 'secondary'}>
-              上游{account.enabled ? '启用' : '停用'}
-            </Badge>
+            <EnabledBadge enabled={account.enabled} prefix='上游' />
           )}
           <span className='text-xs text-muted-foreground'>
             {account.assessment?.sample_count ?? samples.length} 条样本
@@ -2157,27 +2151,8 @@ function QuarantineUpstreamDetail({
           )}
         >
           <div className='text-[11px] text-muted-foreground'>是否启用</div>
-          <div
-            className={cn(
-              'mt-1 flex items-center gap-2 text-2xl font-semibold',
-              enabledUnknown
-                ? 'text-muted-foreground'
-                : enabled
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : 'text-zinc-700 dark:text-zinc-200'
-            )}
-          >
-            <span
-              className={cn(
-                'size-2.5 rounded-full',
-                enabledUnknown
-                  ? 'bg-muted-foreground/50'
-                  : enabled
-                    ? 'bg-emerald-500'
-                    : 'bg-zinc-400'
-              )}
-            />
-            {enabledUnknown ? '未知' : enabled ? '启用' : '停用'}
+          <div className='mt-2'>
+            <EnabledBadge enabled={enabled} unknown={enabledUnknown} />
           </div>
           <div className='mt-2 text-xs leading-5 text-muted-foreground'>
             grok2api 当前调度状态

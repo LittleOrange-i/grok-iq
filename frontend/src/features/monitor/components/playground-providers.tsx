@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner'
 import { api, type ChatProvider, type ChatProviderInput } from '@/lib/api'
 import { cn, getErrorMessage } from '@/lib/utils'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -313,9 +314,7 @@ function ProviderSettingsPanel({
                     </button>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={provider.enabled ? 'success' : 'secondary'}>
-                      {provider.enabled ? '启用' : '停用'}
-                    </Badge>
+                    <EnabledBadge enabled={provider.enabled} />
                   </TableCell>
                   <TableCell>
                     <span className='inline-flex items-center gap-1.5 text-xs text-muted-foreground'>
@@ -672,7 +671,7 @@ function ProviderDetailDialog({
             <CloudCog className='size-5 text-primary' />
             {provider.name}
             {provider.isDefault && <Badge variant='info'>默认</Badge>}
-            {!provider.enabled && <Badge variant='secondary'>停用</Badge>}
+            <EnabledBadge enabled={provider.enabled} />
             {selected && <Badge variant='success'>当前</Badge>}
           </DialogTitle>
           <DialogDescription>模型提供商配置详情</DialogDescription>
@@ -687,7 +686,9 @@ function ProviderDetailDialog({
           <dt className='text-muted-foreground'>API Key</dt>
           <dd>{provider.apiKeyConfigured ? '已配置并加密保存' : '未配置'}</dd>
           <dt className='text-muted-foreground'>可用状态</dt>
-          <dd>{provider.enabled ? '已启用' : '已停用'}</dd>
+          <dd>
+            <EnabledBadge enabled={provider.enabled} />
+          </dd>
         </dl>
         <div>
           <div className='mb-2 flex items-center justify-between gap-2'>

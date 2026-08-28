@@ -29,7 +29,6 @@ import {
   ListChecks,
   Loader2,
   Play,
-  Power,
   RefreshCw,
   RotateCcw,
   Search,
@@ -70,6 +69,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -2264,11 +2264,7 @@ function AccountRestoreCard({
             <AccountRestoreIndicator run={run} />
           </div>
           <div className='mt-3 flex flex-wrap items-center gap-2'>
-            <RestoreFact
-              icon={Power}
-              value={run.original_account_enabled ? '启' : '停'}
-              tooltip={`原启用状态：${run.original_account_enabled ? '启用' : '停用'}`}
-            />
+            <EnabledBadge enabled={run.original_account_enabled} />
             <RestoreFact
               icon={ArrowUp}
               value={run.original_account_priority ?? '—'}
@@ -2467,7 +2463,7 @@ function RestoreFact({
   value,
   tooltip,
 }: {
-  icon: typeof Power
+  icon: typeof ArrowUp
   value: ReactNode
   tooltip: string
 }) {

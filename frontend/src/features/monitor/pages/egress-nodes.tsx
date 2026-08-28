@@ -21,7 +21,6 @@ import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -56,10 +55,13 @@ import {
 } from '@/components/ui/tooltip'
 import { ActionToolbar, ToolbarAction } from '@/components/action-toolbar'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { EnabledBadge } from '@/components/enabled-badge'
 import { InfoTooltip } from '@/components/info-tooltip'
 import { EmptyState, LoadingState, Page, PageHeader } from '@/components/page'
 import { SelectionToolbar } from '@/components/selection-toolbar'
 import { ServerPagination } from '@/components/server-pagination'
+import { TablePanel } from '@/components/table-panel'
+import { TitledCard } from '@/components/titled-card'
 
 type NodeAction = {
   kind: 'enable' | 'disable' | 'delete'
@@ -275,6 +277,7 @@ export function EgressNodesPage() {
     (total, node) => total + (node.assignedAccountCount ?? 0),
     0
   )
+  const showTableLoading = query.isFetching
 
   return (
     <Page>
@@ -302,320 +305,354 @@ export function EgressNodesPage() {
             >
               <RefreshCw />
             </ToolbarAction>
+            <SelectionToolbar
+              wrap={false}
+              selectedCount={selected.length}
+              entityLabel='节点'
+              disabled={actionPending}
+              onClear={() => setSelected([])}
+            >
+              <ToolbarAction
+                label={`平均绑定全部账号到 ${selected.length} 个已选出口`}
+                disabled={actionPending || selected.length < 2}
+                onClick={() => {
+                  setAccountsPerNode(null)
+                  setDistributionOpen(true)
+                }}
+              >
+                <Users />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`启用 ${selected.length} 个已选节点`}
+                disabled={actionPending}
+                onClick={() =>
+                  setAction({ kind: 'enable', nodes: selectedNodes })
+                }
+              >
+                <Power />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`停用 ${selected.length} 个已选节点`}
+                disabled={actionPending}
+                onClick={() =>
+                  setAction({ kind: 'disable', nodes: selectedNodes })
+                }
+              >
+                <PowerOff />
+              </ToolbarAction>
+              <ToolbarAction
+                label={`删除 ${selected.length} 个已选节点`}
+                destructive
+                disabled={actionPending}
+                onClick={() =>
+                  setAction({ kind: 'delete', nodes: selectedNodes })
+                }
+              >
+                <Trash2 />
+              </ToolbarAction>
+            </SelectionToolbar>
           </ActionToolbar>
         }
       />
 
-      <SelectionToolbar
-        selectedCount={selected.length}
-        entityLabel='节点'
-        disabled={actionPending}
-        onClear={() => setSelected([])}
-      >
-        <ToolbarAction
-          label={`平均绑定全部账号到 ${selected.length} 个已选出口`}
-          disabled={actionPending || selected.length < 2}
-          onClick={() => {
-            setAccountsPerNode(null)
-            setDistributionOpen(true)
-          }}
-        >
-          <Users />
-        </ToolbarAction>
-        <ToolbarAction
-          label={`启用 ${selected.length} 个已选节点`}
-          disabled={actionPending}
-          onClick={() => setAction({ kind: 'enable', nodes: selectedNodes })}
-        >
-          <Power />
-        </ToolbarAction>
-        <ToolbarAction
-          label={`停用 ${selected.length} 个已选节点`}
-          disabled={actionPending}
-          onClick={() => setAction({ kind: 'disable', nodes: selectedNodes })}
-        >
-          <PowerOff />
-        </ToolbarAction>
-        <ToolbarAction
-          label={`删除 ${selected.length} 个已选节点`}
-          destructive
-          disabled={actionPending}
-          onClick={() => setAction({ kind: 'delete', nodes: selectedNodes })}
-        >
-          <Trash2 />
-        </ToolbarAction>
-      </SelectionToolbar>
-
-      <Card>
-        <CardContent className='p-4'>
-          <div className='mb-4 flex flex-col gap-3 md:flex-row'>
-            <div className='relative flex-1'>
-              <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
-              <Input
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value)
+      <TablePanel
+        toolbar={
+          <div className='space-y-2' aria-busy={showTableLoading}>
+            <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+              <div className='relative min-w-0 flex-1'>
+                <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+                <Input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    setPage(1)
+                    setSelected([])
+                  }}
+                  placeholder='搜索节点名称或出口 IP'
+                  className='h-8 pr-8 pl-8'
+                />
+                {showTableLoading && (
+                  <Loader2 className='absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-primary' />
+                )}
+              </div>
+              <Select
+                value={enabled}
+                onValueChange={(value) => {
+                  setEnabled(value)
                   setPage(1)
                   setSelected([])
                 }}
-                placeholder='搜索节点名称或出口 IP'
-                className='pl-9'
-              />
+              >
+                <SelectTrigger className='h-8 w-full sm:w-40'>
+                  <Power className='size-4 text-muted-foreground' />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>全部启停状态</SelectItem>
+                  <SelectItem value='true'>已启用</SelectItem>
+                  <SelectItem value='false'>已停用</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={probe}
+                onValueChange={(value) => {
+                  setProbe(value)
+                  setPage(1)
+                  setSelected([])
+                }}
+              >
+                <SelectTrigger className='h-8 w-full sm:w-40'>
+                  <Activity className='size-4 text-muted-foreground' />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>全部探测状态</SelectItem>
+                  <SelectItem value='healthy'>健康</SelectItem>
+                  <SelectItem value='unhealthy'>异常</SelectItem>
+                  <SelectItem value='unknown'>未探测</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <Select
-              value={enabled}
-              onValueChange={(value) => {
-                setEnabled(value)
-                setPage(1)
-                setSelected([])
-              }}
-            >
-              <SelectTrigger className='w-full md:w-40'>
-                <Power className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>全部启停状态</SelectItem>
-                <SelectItem value='true'>已启用</SelectItem>
-                <SelectItem value='false'>已停用</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select
-              value={probe}
-              onValueChange={(value) => {
-                setProbe(value)
-                setPage(1)
-                setSelected([])
-              }}
-            >
-              <SelectTrigger className='w-full md:w-40'>
-                <Activity className='size-4 text-muted-foreground' />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>全部探测状态</SelectItem>
-                <SelectItem value='healthy'>健康</SelectItem>
-                <SelectItem value='unhealthy'>异常</SelectItem>
-                <SelectItem value='unknown'>未探测</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
-
-          {query.isLoading && !query.data ? (
-            <LoadingState />
-          ) : query.isError ? (
-            <EmptyState
-              title='节点读取失败'
-              description={getErrorMessage(query.error)}
+        }
+        footer={
+          nodes.length ? (
+            <ServerPagination
+              page={page}
+              pageSize={pageSize}
+              total={query.data?.total ?? 0}
+              disabled={query.isFetching}
+              loading={query.isFetching}
+              itemLabel='节点'
+              onPageChange={(value) => {
+                setPage(value)
+                setSelected([])
+              }}
+              onPageSizeChange={(value) => {
+                setPageSize(value)
+                setPage(1)
+                setSelected([])
+              }}
             />
-          ) : nodes.length ? (
-            <>
-              <Table rememberRowKey='monitor-egress-nodes'>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className='w-10'>
+          ) : null
+        }
+      >
+        {query.isLoading && !query.data ? (
+          <LoadingState />
+        ) : query.isError ? (
+          <EmptyState
+            title='节点读取失败'
+            description={getErrorMessage(query.error)}
+          />
+        ) : nodes.length ? (
+          <Table rememberRowKey='monitor-egress-nodes'>
+            <TableHeader>
+              <TableRow>
+                <TableHead className='w-10'>
+                  <Checkbox
+                    checked={allChecked}
+                    onCheckedChange={(value) =>
+                      setSelected(
+                        value === true
+                          ? nodes.map((node) => Number(node.id))
+                          : []
+                      )
+                    }
+                    aria-label='选择当前页节点'
+                  />
+                </TableHead>
+                <TableHead>节点</TableHead>
+                <TableHead>启停</TableHead>
+                <TableHead className='text-center'>健康</TableHead>
+                <TableHead className='text-center'>探测</TableHead>
+                <TableHead>出口 IP</TableHead>
+                <TableHead>账号负载</TableHead>
+                <TableHead className='text-right'>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {nodes.map((node) => {
+                const id = Number(node.id)
+                const testing =
+                  testMutation.isPending &&
+                  testMutation.variables?.id === node.id
+                return (
+                  <TableRow key={node.id} rowId={node.id}>
+                    <TableCell>
                       <Checkbox
-                        checked={allChecked}
+                        checked={selectedSet.has(id)}
                         onCheckedChange={(value) =>
-                          setSelected(
+                          setSelected((current) =>
                             value === true
-                              ? nodes.map((node) => Number(node.id))
-                              : []
+                              ? Array.from(new Set([...current, id]))
+                              : current.filter((item) => item !== id)
                           )
                         }
-                        aria-label='选择当前页节点'
+                        aria-label={`选择节点 ${node.name}`}
                       />
-                    </TableHead>
-                    <TableHead>节点</TableHead>
-                    <TableHead>启停</TableHead>
-                    <TableHead>健康度</TableHead>
-                    <TableHead>网络探测</TableHead>
-                    <TableHead>出口 IP</TableHead>
-                    <TableHead>账号负载</TableHead>
-                    <TableHead className='text-right'>操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {nodes.map((node) => {
-                    const id = Number(node.id)
-                    const testing =
-                      testMutation.isPending &&
-                      testMutation.variables?.id === node.id
-                    return (
-                      <TableRow key={node.id} rowId={node.id}>
-                        <TableCell>
-                          <Checkbox
-                            checked={selectedSet.has(id)}
-                            onCheckedChange={(value) =>
-                              setSelected((current) =>
-                                value === true
-                                  ? Array.from(new Set([...current, id]))
-                                  : current.filter((item) => item !== id)
-                              )
-                            }
-                            aria-label={`选择节点 ${node.name}`}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex items-center gap-2 font-medium'>
-                            <Network className='size-4 text-muted-foreground' />
-                            {node.name}
-                          </div>
-                          <div className='mt-1 flex items-center gap-1.5 text-xs text-muted-foreground'>
+                    </TableCell>
+                    <TableCell>
+                      <div className='flex min-w-0 items-center gap-2'>
+                        <span className='inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground'>
+                          <Network className='size-4' />
+                        </span>
+                        <div className='min-w-0'>
+                          <div className='truncate font-medium'>{node.name}</div>
+                          <div className='mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground'>
                             <span>ID {node.id}</span>
                             {node.proxyPool && (
-                              <Badge variant='outline'>代理池</Badge>
+                              <Badge
+                                variant='outline'
+                                className='h-5 px-1.5 text-[11px] font-medium'
+                              >
+                                代理池
+                              </Badge>
                             )}
                             {node.accountBoundProxy && (
-                              <Badge variant='outline'>账号粘性</Badge>
+                              <Badge
+                                variant='outline'
+                                className='h-5 px-1.5 text-[11px] font-medium'
+                              >
+                                账号粘性
+                              </Badge>
                             )}
                             {node.sourceId && (
-                              <Badge variant='outline'>订阅</Badge>
+                              <Badge
+                                variant='outline'
+                                className='h-5 px-1.5 text-[11px] font-medium'
+                              >
+                                订阅
+                              </Badge>
                             )}
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <NodeEnabledBadge enabled={node.enabled} />
-                        </TableCell>
-                        <TableCell>
-                          <HealthIndicator node={node} />
-                        </TableCell>
-                        <TableCell>
-                          <ProbeIndicator node={node} />
-                        </TableCell>
-                        <TableCell>
-                          <div
-                            className='max-w-56 truncate font-mono text-xs'
-                            title={node.exitIp}
-                          >
-                            {node.exitIp || '—'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className='font-medium tabular-nums'>
-                            {node.assignedAccountCount ?? 0}
-                            <span className='font-normal text-muted-foreground'>
-                              {' '}
-                              / {node.accountCapacity || '不限'}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className='text-right'>
-                          <div className='inline-flex items-center gap-1'>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size='icon'
-                                  variant='ghost'
-                                  disabled={actionPending}
-                                  onClick={() => {
-                                    setEditingNode(node)
-                                    setNodeForm({
-                                      name: node.name,
-                                      proxyUrl: '',
-                                      proxyPool: node.proxyPool ?? false,
-                                      accountCapacity:
-                                        node.accountCapacity ?? 0,
-                                      enabled: node.enabled,
-                                    })
-                                    setEditorOpen(true)
-                                  }}
-                                  aria-label={`编辑节点 ${node.name}`}
-                                >
-                                  <Pencil />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>编辑节点</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size='icon'
-                                  variant='ghost'
-                                  disabled={testing || actionPending}
-                                  onClick={() => testMutation.mutate(node)}
-                                  aria-label={`探测节点 ${node.name}`}
-                                >
-                                  {testing ? (
-                                    <Loader2 className='animate-spin' />
-                                  ) : (
-                                    <FlaskConical />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>执行网络探测</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size='icon'
-                                  variant='ghost'
-                                  disabled={actionPending}
-                                  onClick={() =>
-                                    setAction({
-                                      kind: node.enabled ? 'disable' : 'enable',
-                                      nodes: [node],
-                                    })
-                                  }
-                                  aria-label={`${node.enabled ? '停用' : '启用'}节点 ${node.name}`}
-                                >
-                                  {node.enabled ? <PowerOff /> : <Power />}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {node.enabled ? '停用节点' : '启用节点'}
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size='icon'
-                                  variant='ghost'
-                                  className='text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
-                                  disabled={actionPending}
-                                  onClick={() =>
-                                    setAction({ kind: 'delete', nodes: [node] })
-                                  }
-                                  aria-label={`删除节点 ${node.name}`}
-                                >
-                                  <Trash2 />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>删除节点</TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-              <ServerPagination
-                page={page}
-                pageSize={pageSize}
-                total={query.data?.total ?? 0}
-                disabled={query.isFetching}
-                loading={query.isFetching}
-                itemLabel='节点'
-                onPageChange={(value) => {
-                  setPage(value)
-                  setSelected([])
-                }}
-                onPageSizeChange={(value) => {
-                  setPageSize(value)
-                  setPage(1)
-                  setSelected([])
-                }}
-              />
-            </>
-          ) : (
-            <EmptyState
-              title='未找到节点'
-              description='请调整筛选条件或检查 grok2api 连接。'
-            />
-          )}
-        </CardContent>
-      </Card>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <EnabledBadge enabled={node.enabled} />
+                    </TableCell>
+                    <TableCell className='text-center'>
+                      <HealthIndicator node={node} />
+                    </TableCell>
+                    <TableCell className='text-center'>
+                      <ProbeIndicator node={node} />
+                    </TableCell>
+                    <TableCell>
+                      <div
+                        className='max-w-56 truncate font-mono text-xs text-muted-foreground'
+                        title={node.exitIp}
+                      >
+                        {node.exitIp || '—'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className='text-sm tabular-nums'>
+                        {node.assignedAccountCount ?? 0}
+                        <span className='text-muted-foreground'>
+                          {' '}
+                          / {node.accountCapacity || '不限'}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className='text-right'>
+                      <div className='inline-flex items-center gap-0.5'>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size='icon'
+                              variant='ghost'
+                              className='size-7'
+                              disabled={actionPending}
+                              onClick={() => {
+                                setEditingNode(node)
+                                setNodeForm({
+                                  name: node.name,
+                                  proxyUrl: '',
+                                  proxyPool: node.proxyPool ?? false,
+                                  accountCapacity: node.accountCapacity ?? 0,
+                                  enabled: node.enabled,
+                                })
+                                setEditorOpen(true)
+                              }}
+                              aria-label={`编辑节点 ${node.name}`}
+                            >
+                              <Pencil />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>编辑节点</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size='icon'
+                              variant='ghost'
+                              className='size-7'
+                              disabled={testing || actionPending}
+                              onClick={() => testMutation.mutate(node)}
+                              aria-label={`探测节点 ${node.name}`}
+                            >
+                              {testing ? (
+                                <Loader2 className='animate-spin' />
+                              ) : (
+                                <FlaskConical />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>执行网络探测</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size='icon'
+                              variant='ghost'
+                              className='size-7'
+                              disabled={actionPending}
+                              onClick={() =>
+                                setAction({
+                                  kind: node.enabled ? 'disable' : 'enable',
+                                  nodes: [node],
+                                })
+                              }
+                              aria-label={`${node.enabled ? '停用' : '启用'}节点 ${node.name}`}
+                            >
+                              {node.enabled ? <PowerOff /> : <Power />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {node.enabled ? '停用节点' : '启用节点'}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size='icon'
+                              variant='ghost'
+                              className='size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
+                              disabled={actionPending}
+                              onClick={() =>
+                                setAction({ kind: 'delete', nodes: [node] })
+                              }
+                              aria-label={`删除节点 ${node.name}`}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>删除节点</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        ) : (
+          <EmptyState
+            title='未找到节点'
+            description='请调整筛选条件或检查 grok2api 连接。'
+          />
+        )}
+      </TablePanel>
 
       <Dialog
         open={editorOpen}
@@ -638,8 +675,8 @@ export function EgressNodesPage() {
                 ' 该节点来自订阅，后续同步可能覆盖部分配置。'}
             </DialogDescription>
           </DialogHeader>
-          <div className='space-y-4'>
-            <div className='space-y-2'>
+          <div className='space-y-3'>
+            <div className='space-y-1.5'>
               <Label htmlFor='egress-node-name'>节点名称</Label>
               <Input
                 id='egress-node-name'
@@ -654,7 +691,7 @@ export function EgressNodesPage() {
                 maxLength={160}
               />
             </div>
-            <div className='space-y-2'>
+            <div className='space-y-1.5'>
               <div className='flex min-h-5 items-center gap-1.5'>
                 <Label htmlFor='egress-node-proxy'>代理地址</Label>
                 <InfoTooltip
@@ -685,7 +722,7 @@ export function EgressNodesPage() {
                 }
               />
             </div>
-            <div className='space-y-2'>
+            <div className='space-y-1.5'>
               <Label htmlFor='egress-node-capacity'>账号容量</Label>
               <Input
                 id='egress-node-capacity'
@@ -705,7 +742,7 @@ export function EgressNodesPage() {
                 placeholder='0 表示不限'
               />
             </div>
-            <div className='divide-y rounded-md border'>
+            <div className='divide-y overflow-hidden rounded-lg border'>
               <CreateSwitchRow
                 label='代理池节点'
                 description='同一逻辑节点可按账号映射到不同实际出口。'
@@ -776,25 +813,36 @@ export function EgressNodesPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className='space-y-4'>
-            <div className='grid grid-cols-3 gap-3'>
-              <DistributionMetric
-                label='全部账号'
-                value={accountTotalQuery.isFetching ? '读取中' : totalAccounts}
-              />
-              <DistributionMetric label='已选出口' value={selectedNodes.length} />
-              <DistributionMetric
-                label='推荐值'
-                value={
-                  accountTotalQuery.isFetching
-                    ? '计算中'
-                    : `${recommendedAccountsPerNode}/出口`
-                }
-                emphasized
-              />
-            </div>
+          <div className='space-y-3'>
+            <TitledCard
+              title='分配概览'
+              icon={<Users />}
+              contentClassName='px-4 py-3'
+            >
+              <div className='grid grid-cols-3 gap-2'>
+                <DistributionMetric
+                  label='全部账号'
+                  value={
+                    accountTotalQuery.isFetching ? '读取中' : totalAccounts
+                  }
+                />
+                <DistributionMetric
+                  label='已选出口'
+                  value={selectedNodes.length}
+                />
+                <DistributionMetric
+                  label='推荐值'
+                  value={
+                    accountTotalQuery.isFetching
+                      ? '计算中'
+                      : `${recommendedAccountsPerNode}/出口`
+                  }
+                  emphasized
+                />
+              </div>
+            </TitledCard>
 
-            <div className='space-y-2'>
+            <div className='space-y-1.5'>
               <div className='flex items-center justify-between gap-3'>
                 <Label htmlFor='egress-accounts-per-node'>单出口账号上限</Label>
                 <span className='text-xs text-muted-foreground'>
@@ -819,13 +867,15 @@ export function EgressNodesPage() {
               </p>
             </div>
 
-            <div className='max-h-48 space-y-2 overflow-y-auto rounded-lg border p-2'>
+            <div className='max-h-48 space-y-1 overflow-y-auto rounded-lg border p-1.5'>
               {selectedNodes.map((node) => (
                 <div
                   key={node.id}
                   className='flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm'
                 >
-                  <span className='min-w-0 truncate font-medium'>{node.name}</span>
+                  <span className='min-w-0 truncate font-medium'>
+                    {node.name}
+                  </span>
                   <span className='shrink-0 text-xs text-muted-foreground'>
                     当前 {node.assignedAccountCount ?? 0} 个
                   </span>
@@ -923,9 +973,6 @@ export function EgressNodesPage() {
             </div>
           )
         }
-        destructive={action?.kind === 'delete'}
-        isLoading={actionPending}
-        cancelBtnText='取消'
         confirmText={
           actionPending
             ? '正在处理…'
@@ -959,12 +1006,12 @@ function DistributionMetric({
   return (
     <div
       className={cn(
-        'rounded-lg border bg-muted/20 p-3',
+        'rounded-lg border bg-muted/20 px-3 py-2',
         emphasized && 'border-primary/30 bg-primary/5'
       )}
     >
-      <div className='text-xs text-muted-foreground'>{label}</div>
-      <div className='mt-1 font-semibold tabular-nums'>{value}</div>
+      <div className='text-[11px] text-muted-foreground'>{label}</div>
+      <div className='mt-0.5 text-sm font-semibold tabular-nums'>{value}</div>
     </div>
   )
 }
@@ -981,7 +1028,7 @@ function CreateSwitchRow({
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <div className='flex items-center justify-between gap-4 p-3'>
+    <div className='flex items-center justify-between gap-4 px-3 py-2'>
       <div className='flex items-center gap-1.5 text-sm font-medium'>
         {label}
         <InfoTooltip label={label} content={description} />
@@ -991,77 +1038,64 @@ function CreateSwitchRow({
   )
 }
 
-function NodeEnabledBadge({ enabled }: { enabled: boolean }) {
-  return (
-    <Badge
-      variant='outline'
-      className={cn(
-        'gap-1.5',
-        enabled
-          ? 'border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
-          : 'border-zinc-500/30 text-muted-foreground'
-      )}
-    >
-      <span
-        className={cn(
-          'size-1.5 rounded-full',
-          enabled ? 'bg-emerald-500' : 'bg-zinc-400'
-        )}
-      />
-      {enabled ? '启用' : '停用'}
-    </Badge>
-  )
-}
-
 function HealthIndicator({ node }: { node: EgressNode }) {
   const unknown =
     (node.probeStatus || 'unknown') === 'unknown' &&
     !node.lastProbedAt &&
     !(node.failureCount ?? 0)
-  if (unknown) {
-    return (
-      <span className='inline-flex items-center gap-1.5 text-xs text-muted-foreground'>
-        <CircleHelp className='size-3.5' />
-        未评估
-      </span>
-    )
-  }
-
   const health = Math.max(0, Math.min(1, node.health ?? 0))
   const percent = health * 100
-  const tone =
-    percent >= 80
-      ? 'bg-emerald-500'
+  const label = unknown
+    ? '未评估'
+    : percent >= 80
+      ? '健康'
       : percent >= 50
-        ? 'bg-amber-500'
-        : 'bg-destructive'
+        ? '一般'
+        : '较差'
+  const tone = unknown
+    ? 'bg-muted/70 text-muted-foreground'
+    : percent >= 80
+      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+      : percent >= 50
+        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+        : 'bg-destructive/10 text-destructive'
+  const Icon = unknown ? CircleHelp : Activity
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className='inline-flex w-24 items-center gap-2' tabIndex={0}>
-          <span className='h-1.5 flex-1 overflow-hidden rounded-full bg-muted'>
-            <span
-              className={cn('block h-full', tone)}
-              style={{ width: `${percent}%` }}
-            />
-          </span>
-          <span className='w-8 text-right text-xs tabular-nums'>
-            {formatNumber(percent, 0)}%
-          </span>
+        <span
+          className={cn(
+            'inline-flex size-7 items-center justify-center rounded-md',
+            'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            tone
+          )}
+          tabIndex={0}
+          aria-label={`健康度 ${label}`}
+        >
+          <Icon className='size-4' />
         </span>
       </TooltipTrigger>
       <TooltipContent className='max-w-72 space-y-1'>
-        <div>健康度 {formatNumber(percent, 0)}%</div>
-        <div className='text-muted-foreground'>
-          累计失败 {node.failureCount ?? 0} 次
-        </div>
-        {node.cooldownUntil && (
-          <div className='text-muted-foreground'>
-            冷却至 {formatDate(node.cooldownUntil)}
-          </div>
-        )}
-        {node.lastError && (
-          <div className='max-w-64 break-words'>{node.lastError}</div>
+        {unknown ? (
+          <div>尚未评估该节点健康度</div>
+        ) : (
+          <>
+            <div>
+              健康度 {formatNumber(percent, 0)}% · {label}
+            </div>
+            <div className='text-muted-foreground'>
+              累计失败 {node.failureCount ?? 0} 次
+            </div>
+            {node.cooldownUntil && (
+              <div className='text-muted-foreground'>
+                冷却至 {formatDate(node.cooldownUntil)}
+              </div>
+            )}
+            {node.lastError && (
+              <div className='max-w-64 break-words'>{node.lastError}</div>
+            )}
+          </>
         )}
       </TooltipContent>
     </Tooltip>
@@ -1074,21 +1108,25 @@ function ProbeIndicator({ node }: { node: EgressNode }) {
     status === 'healthy' ? '健康' : status === 'unhealthy' ? '异常' : '未探测'
   const tone =
     status === 'healthy'
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
       : status === 'unhealthy'
-        ? 'text-destructive'
-        : 'text-muted-foreground'
+        ? 'bg-destructive/10 text-destructive'
+        : 'bg-muted/70 text-muted-foreground'
   const Icon = status === 'unknown' ? CircleHelp : Activity
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className={cn('inline-flex items-center gap-1.5 text-xs', tone)}
+          className={cn(
+            'inline-flex size-7 items-center justify-center rounded-md',
+            'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            tone
+          )}
           tabIndex={0}
+          aria-label={`网络探测 ${label}`}
         >
-          <Icon className='size-3.5' />
-          {label}
-          {node.probeLatencyMs ? ` · ${node.probeLatencyMs} ms` : ''}
+          <Icon className='size-4' />
         </span>
       </TooltipTrigger>
       <TooltipContent className='max-w-72 space-y-1'>
@@ -1096,6 +1134,10 @@ function ProbeIndicator({ node }: { node: EgressNode }) {
           {node.lastProbedAt
             ? `探测于 ${formatDate(node.lastProbedAt)}`
             : '尚未执行网络探测'}
+        </div>
+        <div className='text-muted-foreground'>
+          {label}
+          {node.probeLatencyMs ? ` · ${node.probeLatencyMs} ms` : ''}
         </div>
         {node.probeProvider && (
           <div className='text-muted-foreground'>来源 {node.probeProvider}</div>
