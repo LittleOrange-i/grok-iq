@@ -329,6 +329,18 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.6.4 (2026-08-28)
+
+### Feat
+
+- unify workspace controls, enable/disable badges, and monitor status badges
+
+### Fix
+
+- restore default tooltip colors and keep quota details readable
+- make the active workspace dock tab easier to see
+- satisfy frontend lint for keep-alive page state
+
 ## v0.6.3 (2026-08-27)
 
 ### Fix
