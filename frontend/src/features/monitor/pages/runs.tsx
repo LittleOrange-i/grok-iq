@@ -258,9 +258,15 @@ export function RunsPage() {
   const rawSearch = useSearch({ strict: false })
   const isActive = isRunsPath(pathname)
   const parsedSearch = isActive ? readRunsSearch(rawSearch) : null
-  const lastSearchRef = useRef<RunsSearch>({})
-  if (parsedSearch) lastSearchRef.current = parsedSearch
-  const runsSearch = parsedSearch ?? lastSearchRef.current
+  const [cachedSearch, setCachedSearch] = useState<RunsSearch>({})
+  if (
+    parsedSearch &&
+    (parsedSearch.account !== cachedSearch.account ||
+      parsedSearch.run !== cachedSearch.run)
+  ) {
+    setCachedSearch(parsedSearch)
+  }
+  const runsSearch = parsedSearch ?? cachedSearch
   const pinnedAccountId = pinnedAccountIdFromRunsSearch(runsSearch)
   const runsView = usePersistedViewState(RUNS_VIEW_STORAGE_KEY, defaultRunsView)
   const { status, search, createdFrom, createdTo, page, pageSize } =
@@ -316,11 +322,10 @@ export function RunsPage() {
   const clearPinnedAccount = useCallback(() => {
     void navigate({ to: '/runs', search: {} } as never)
   }, [navigate])
-  useEffect(() => {
-    if (!isActive) return
-    const runId = runsSearch.run?.trim()
-    if (runId) openDetail(runId)
-  }, [isActive, openDetail, runsSearch.run])
+  const runId = isActive ? runsSearch.run?.trim() || '' : ''
+  if (runId && detailId !== runId) {
+    setDetailId(runId)
+  }
   useEffect(() => {
     if (pinnedAccountId == null) return
     setRunsViewValue((current) =>

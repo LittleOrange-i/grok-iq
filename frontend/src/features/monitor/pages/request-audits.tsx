@@ -1,6 +1,5 @@
 import {
   useDeferredValue,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -1230,6 +1229,9 @@ export function RequestAuditsPage() {
   const pinnedAccountId = pinnedAccountIdFromSearch(search)
   const perspective: Perspective = search.view === 'nodes' ? 'nodes' : 'accounts'
   const [cachedTab, setCachedTab] = useState<RequestAuditTab>(routeTab)
+  const accountSyncKey = `${accountFromUrl}::${pinnedAccountId ?? ''}`
+  const [appliedAccountKey, setAppliedAccountKey] = useState(accountSyncKey)
+  const [auditsArmed, setAuditsArmed] = useState(isActive)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(25)
   const [riskPage, setRiskPage] = useState(1)
@@ -1275,10 +1277,9 @@ export function RequestAuditsPage() {
   const [selectedAuditRecord, setSelectedAuditRecord] =
     useState<RequestAuditRecord | null>(null)
 
-  useEffect(() => {
-    if (isActive) setCachedTab(routeTab)
-  }, [isActive, routeTab])
-
+  if (isActive && cachedTab !== routeTab) {
+    setCachedTab(routeTab)
+  }
   const mainView = isActive ? routeTab : cachedTab
 
   const goToTab = (
@@ -1296,8 +1297,8 @@ export function RequestAuditsPage() {
     } as never)
   }
 
-  useEffect(() => {
-    if (!accountFromUrl) return
+  if (accountFromUrl && appliedAccountKey !== accountSyncKey) {
+    setAppliedAccountKey(accountSyncKey)
     if (pinnedAccountId != null) {
       setWorkspaceSearch('')
       setAuditSearch('')
@@ -1305,23 +1306,24 @@ export function RequestAuditsPage() {
       setAuditNode('all')
       setPage(1)
       setRiskPage(1)
-      return
+    } else {
+      setWorkspaceSearch(accountFromUrl)
+      setAuditSearch(accountFromUrl)
+      setPage(1)
+      setRiskPage(1)
     }
-    setWorkspaceSearch(accountFromUrl)
-    setAuditSearch(accountFromUrl)
-    setPage(1)
-    setRiskPage(1)
-  }, [accountFromUrl, pinnedAccountId])
-
-  useEffect(() => {
-    if (isActive) return
+  }
+  if (!isActive && auditsArmed) {
+    setAuditsArmed(false)
     setAuditDetailOpen(false)
     setSelectedAuditRecord(null)
     setBulkAction(null)
     setProbeSelection(null)
     setSampleAccount(null)
     setCustomOpen(false)
-  }, [isActive])
+  } else if (isActive && !auditsArmed) {
+    setAuditsArmed(true)
+  }
 
   const deferredWorkspaceSearch = useDeferredValue(workspaceSearch)
   const deferredAuditSearch = useDeferredValue(auditSearch)

@@ -227,8 +227,10 @@ export function AccountsPage() {
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<number | null>(null)
   const [sampleToDelete, setSampleToDelete] = useState<ProbeSample | null>(null)
-  useEffect(() => {
-    if (matchWorkspaceTabId(pathname) === 'accounts') return
+  const accountsActive = matchWorkspaceTabId(pathname) === 'accounts'
+  const [accountsArmed, setAccountsArmed] = useState(accountsActive)
+  if (!accountsActive && accountsArmed) {
+    setAccountsArmed(false)
     setDetailOpen(false)
     setProbeOpen(false)
     setEgressBindingOpen(false)
@@ -238,7 +240,9 @@ export function AccountsPage() {
     setSsoConfirmOpen(false)
     setBatchAction(null)
     setSampleToDelete(null)
-  }, [pathname])
+  } else if (accountsActive && !accountsArmed) {
+    setAccountsArmed(true)
+  }
   const tableQueryPending =
     tableQuery.page !== committedQuery.page ||
     tableQuery.pageSize !== committedQuery.pageSize ||

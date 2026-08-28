@@ -278,7 +278,7 @@ function LineSparkline({
   className?: string
 }) {
   const rawId = useId()
-  const gradientId = `stat-line-${rawId.replaceAll(':', '')}`
+  const gradientId = `stat-line-${rawId.replace(/:/g, '')}`
   const paths = buildLineSparkline(values)
   if (!paths) {
     return <div className='h-8' aria-hidden='true' />
@@ -333,8 +333,8 @@ function buildLineSparkline(values?: number[]) {
   const linePath = points
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
     .join(' ')
-  const firstPoint = points.at(0)
-  const lastPoint = points.at(-1)
+  const firstPoint = points[0]
+  const lastPoint = points[points.length - 1]
   if (!firstPoint || !lastPoint) return null
   return {
     linePath,
