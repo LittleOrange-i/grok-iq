@@ -246,7 +246,7 @@ function SampleDetail({
             {sample.error}
           </div>
         )}
-        <ReasoningPanel content={sample.reasoning_text || ''} tokenCount={sample.reasoning_tokens} defaultOpen />
+        <ReasoningPanel content={sample.reasoning_text || ''} tokenCount={sample.reasoning_tokens} />
         {responseText ? (
           <div className='flex items-center justify-between gap-3 rounded-lg border bg-muted/15 px-3 py-2.5'>
             <div className='min-w-0'>

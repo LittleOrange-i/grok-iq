@@ -2597,7 +2597,6 @@ function SampleCard({
                 <ReasoningPanel
                   content={sample.reasoning_text || ''}
                   tokenCount={sample.reasoning_tokens}
-                  defaultOpen
                 />
                 {responseExpanded ? (
                   <div

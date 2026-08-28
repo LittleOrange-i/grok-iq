@@ -21,7 +21,7 @@ export function ReasoningPanel({
   className?: string
 }) {
   const text = content.trim()
-  const [open, setOpen] = useState(defaultOpen ?? streaming)
+  const [open, setOpen] = useState(Boolean(defaultOpen))
   const missing = !text && !streaming && (tokenCount ?? 0) > 0
 
   if (!text && !streaming && !missing) return null
