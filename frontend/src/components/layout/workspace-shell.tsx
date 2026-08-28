@@ -61,6 +61,17 @@ const workspaceAccents: Record<WorkspaceTabId, string> = {
   'request-audits': 'text-amber-600 dark:text-amber-400',
 }
 
+const workspaceActive: Record<WorkspaceTabId, string> = {
+  accounts:
+    'bg-sky-500/15 text-sky-800 ring-1 ring-sky-500/30 dark:bg-sky-500/20 dark:text-sky-50 dark:ring-sky-400/30',
+  quarantine:
+    'bg-rose-500/15 text-rose-800 ring-1 ring-rose-500/30 dark:bg-rose-500/20 dark:text-rose-50 dark:ring-rose-400/30',
+  runs:
+    'bg-violet-500/15 text-violet-800 ring-1 ring-violet-500/30 dark:bg-violet-500/20 dark:text-violet-50 dark:ring-violet-400/30',
+  'request-audits':
+    'bg-amber-500/15 text-amber-900 ring-1 ring-amber-500/30 dark:bg-amber-500/20 dark:text-amber-50 dark:ring-amber-400/30',
+}
+
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const pathname = useLocation({ select: (location) => location.pathname })
   const showRouteOutlet = !isWorkspaceTabPath(pathname)
@@ -180,7 +191,7 @@ function WorkspaceDock() {
       aria-label='工作区页面'
       className='pointer-events-none absolute inset-x-0 bottom-3 z-20 flex justify-center px-3'
     >
-      <div className='pointer-events-auto inline-flex items-center gap-0.5 rounded-full border bg-background/95 p-1 shadow-sm backdrop-blur-md'>
+      <div className='pointer-events-auto inline-flex items-center gap-0.5 rounded-full border bg-muted/80 p-1 shadow-lg shadow-black/10 ring-1 ring-black/5 backdrop-blur-md dark:bg-background/80 dark:shadow-black/40 dark:ring-white/10'>
         {WORKSPACE_TAB_IDS.map((id) => (
           <WorkspaceDockItem
             key={id}
@@ -227,16 +238,16 @@ function WorkspaceDockItem({
             search={link.search as never}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors',
+              'inline-flex h-8 items-center gap-1.5 rounded-full text-xs whitespace-nowrap transition-colors',
               'focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none',
               mounted ? 'pl-2.5 pr-7' : 'px-2.5',
-              active &&
-                'bg-background text-foreground shadow-sm dark:bg-input/50',
+              active && cn('font-semibold shadow-sm', workspaceActive[id]),
               !active &&
                 mounted &&
-                'text-foreground/80 hover:bg-background/70 hover:text-foreground',
-              !mounted &&
-                'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                'font-medium text-foreground/75 hover:bg-background/70 hover:text-foreground',
+              !active &&
+                !mounted &&
+                'font-medium text-muted-foreground hover:bg-background/70 hover:text-foreground'
             )}
           >
             <Icon
