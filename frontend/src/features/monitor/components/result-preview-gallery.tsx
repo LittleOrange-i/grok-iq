@@ -28,6 +28,7 @@ import {
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { InfoTooltip } from '@/components/info-tooltip'
 import { CopyButton } from '@/components/copy-button'
 import { EnabledBadge } from '@/components/enabled-badge'
 import { ContentPreviewCanvas } from '@/components/formatted-content'
@@ -698,24 +699,30 @@ export function ResultPreviewGallery({
         >
           <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
             <header className='flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2'>
-              <Tabs
-                value={view}
-                className='shrink-0 gap-0'
-                onValueChange={(value) =>
-                  setView(value === 'grid' ? 'grid' : 'split')
-                }
-              >
-                <TabsList className='h-8'>
-                  <TabsTrigger value='split'>
-                    <LayoutList className='size-3.5' />
-                    阅读
-                  </TabsTrigger>
-                  <TabsTrigger value='grid'>
-                    <LayoutGrid className='size-3.5' />
-                    缩略图
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
+              <div className='flex shrink-0 items-center gap-1'>
+                <Tabs
+                  value={view}
+                  className='shrink-0 gap-0'
+                  onValueChange={(value) =>
+                    setView(value === 'grid' ? 'grid' : 'split')
+                  }
+                >
+                  <TabsList className='h-8'>
+                    <TabsTrigger value='split'>
+                      <LayoutList className='size-3.5' />
+                      阅读
+                    </TabsTrigger>
+                    <TabsTrigger value='grid'>
+                      <LayoutGrid className='size-3.5' />
+                      缩略图
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <InfoTooltip
+                  label='预览操作'
+                  content='单击选中卡片，双击进入阅读模式查看详情。'
+                />
+              </div>
               {showGroupToggle ? (
                 <Tabs
                   value={effectiveGroup}
