@@ -33,6 +33,7 @@ import { ContentPreviewCanvas } from '@/components/formatted-content'
 import { MonitorStatusBadge } from '@/components/monitor-status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -180,6 +181,7 @@ export function ResultPreviewGallery({
   const [gridCols, setGridCols] = useState(4)
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
   const [runDetailId, setRunDetailId] = useState<string>()
+  const [pageDraft, setPageDraft] = useState(String(Math.max(1, page)))
   const pendingSampleId = useRef<string | undefined>()
   const currentPage = Math.max(1, page)
   const currentPageCount = Math.max(1, pageCount)
@@ -212,6 +214,20 @@ export function ResultPreviewGallery({
     if (sampleId) pendingSampleId.current = sampleId
     onIndexChange(nextIndex)
     if (sampleId) setSampleOverrideId(sampleId)
+  }
+  const commitPreviewPage = () => {
+    if (!onPageChange) {
+      setPageDraft(String(currentPage))
+      return
+    }
+    const parsed = Number.parseInt(pageDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setPageDraft(String(currentPage))
+      return
+    }
+    const nextPage = Math.min(currentPageCount, Math.max(1, parsed))
+    setPageDraft(String(nextPage))
+    if (nextPage !== currentPage) onPageChange(nextPage, 'start')
   }
   const neighborRunIds = useMemo(() => {
     if (!item || view !== 'split') return []
@@ -310,6 +326,10 @@ export function ResultPreviewGallery({
     setAccountDetailId(null)
     setRunDetailId(undefined)
   }, [open])
+
+  useEffect(() => {
+    setPageDraft(String(currentPage))
+  }, [currentPage])
 
   useEffect(() => {
     if (!open || view !== 'split') return
@@ -524,9 +544,34 @@ export function ResultPreviewGallery({
                   >
                     上一页
                   </Button>
-                  <span className='min-w-16 text-center text-xs tabular-nums text-muted-foreground'>
-                    {currentPage}/{currentPageCount}
-                  </span>
+                  <label className='flex items-center gap-1 text-xs text-muted-foreground'>
+                    <span className='sr-only'>跳转到页码</span>
+                    <Input
+                      type='text'
+                      inputMode='numeric'
+                      pattern='[0-9]*'
+                      value={pageDraft}
+                      disabled={pageLoading}
+                      aria-label='页码'
+                      className='h-8 w-14 px-2 text-center text-xs tabular-nums'
+                      onChange={(event) =>
+                        setPageDraft(event.target.value.replace(/[^\d]/g, ''))
+                      }
+                      onBlur={() => commitPreviewPage()}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          commitPreviewPage()
+                          event.currentTarget.blur()
+                        }
+                        if (event.key === 'Escape') {
+                          setPageDraft(String(currentPage))
+                          event.currentTarget.blur()
+                        }
+                      }}
+                    />
+                    <span className='tabular-nums'>/ {currentPageCount}</span>
+                  </label>
                   <Button
                     type='button'
                     size='sm'
@@ -1150,63 +1195,88 @@ function VirtualizedThumbGrid({
   scrollRef: { current: HTMLDivElement | null }
   onSelect: (index: number) => void
 }) {
+  const hostRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   useLayoutEffect(() => {
-    const node = scrollRef.current
-    if (!node) return
+    const host = hostRef.current
+    const scroller = scrollRef.current
+    if (!host) return
     const update = () => {
-      setScrollTop(node.scrollTop)
-      setViewport({ width: node.clientWidth, height: node.clientHeight })
+      setScrollTop(scroller?.scrollTop ?? 0)
+      setViewport({
+        width: host.clientWidth,
+        height: scroller?.clientHeight || host.clientHeight,
+      })
     }
     update()
-    const onScroll = () => setScrollTop(node.scrollTop)
-    node.addEventListener('scroll', onScroll, { passive: true })
+    const raf = requestAnimationFrame(update)
+    const onScroll = () => setScrollTop(scroller?.scrollTop ?? 0)
+    scroller?.addEventListener('scroll', onScroll, { passive: true })
     const observer = new ResizeObserver(update)
-    observer.observe(node)
+    observer.observe(host)
+    if (scroller && scroller !== host) observer.observe(scroller)
     return () => {
-      node.removeEventListener('scroll', onScroll)
+      cancelAnimationFrame(raf)
+      scroller?.removeEventListener('scroll', onScroll)
       observer.disconnect()
     }
-  }, [scrollRef])
+  }, [scrollRef, items.length, columns])
   const gap = 12
-  const padding = 16
   const cols = Math.max(1, columns)
-  const innerWidth = Math.max(0, viewport.width - padding * 2)
   const cellWidth =
-    cols > 1 ? (innerWidth - gap * (cols - 1)) / cols : innerWidth
+    cols > 1 ? (viewport.width - gap * (cols - 1)) / cols : viewport.width
   const thumbHeight = cellWidth * (THUMB_FRAME_HEIGHT / THUMB_FRAME_WIDTH)
   const rowHeight = thumbHeight + 56 + gap
   const rows = Math.ceil(items.length / cols) || 1
-  const startRow = Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - 1)
-  const endRow = Math.min(
-    rows,
-    Math.ceil((scrollTop + viewport.height) / Math.max(rowHeight, 1)) + 1
-  )
+  const measured = viewport.width > 0 && cellWidth > 0
+  const startRow = measured
+    ? Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - 1)
+    : 0
+  const endRow = measured
+    ? Math.min(
+        rows,
+        Math.ceil(
+          (scrollTop + Math.max(viewport.height, rowHeight)) /
+            Math.max(rowHeight, 1)
+        ) + 1
+      )
+    : rows
   const startIndex = startRow * cols
   const endIndex = Math.min(items.length, endRow * cols)
-  if (innerWidth <= 0) {
-    return <div className='min-h-[12rem]' aria-hidden />
-  }
+  const visibleItems = measured ? items.slice(startIndex, endIndex) : items
   return (
     <div
-      className='relative'
-      style={{ height: Math.max(rowHeight, rows * rowHeight) }}
+      ref={hostRef}
+      className='relative w-full'
+      style={
+        measured
+          ? { height: Math.max(rowHeight, rows * rowHeight) }
+          : {
+              display: 'grid',
+              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+              gap,
+            }
+      }
     >
-      {items.slice(startIndex, endIndex).map((entry, offset) => {
-        const index = startIndex + offset
+      {visibleItems.map((entry, offset) => {
+        const index = measured ? startIndex + offset : offset
         const row = Math.floor(index / cols)
         const col = index % cols
         return (
           <div
             key={entry.id}
-            className='absolute overflow-hidden'
-            style={{
-              top: row * rowHeight,
-              left: col * (cellWidth + gap),
-              width: cellWidth,
-              height: rowHeight - gap,
-            }}
+            className={measured ? 'absolute overflow-hidden' : 'min-w-0'}
+            style={
+              measured
+                ? {
+                    top: row * rowHeight,
+                    left: col * (cellWidth + gap),
+                    width: cellWidth,
+                    height: rowHeight - gap,
+                  }
+                : undefined
+            }
           >
             <PreviewThumbCard
               item={entry}
