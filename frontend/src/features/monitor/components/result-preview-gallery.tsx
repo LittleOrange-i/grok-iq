@@ -41,6 +41,7 @@ import {
 } from '@/features/monitor/components/egress-node-names'
 import { ProbeRunDetailDialog } from '@/features/monitor/components/probe-run-detail-dialog'
 import { DualTpsValue } from '@/features/monitor/components/tps-display'
+import { usePersistedViewState } from '@/hooks/use-persisted-view-state'
 
 const AccountProbeDetailDialog = lazy(() =>
   import('@/features/monitor/components/account-probe-detail-dialog').then(
@@ -53,6 +54,16 @@ const THUMB_FRAME_WIDTH = 1280
 const THUMB_FRAME_HEIGHT = 800
 const THUMB_GRID_CLASSNAME =
   'grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'
+const PREVIEW_VIEW_STORAGE_KEY = 'grokiq.monitor.result-preview.v1'
+const defaultPreviewView: {
+  view: 'split' | 'grid'
+  groupMode: 'task' | 'account'
+  roundLayout: 'aggregate' | 'expand'
+} = {
+  view: 'split',
+  groupMode: 'task',
+  roundLayout: 'aggregate',
+}
 
 export type ResultPreviewItem = {
   id: string
@@ -177,11 +188,28 @@ export function ResultPreviewGallery({
   const gridRef = useRef<HTMLDivElement>(null)
   const [isolateOpen, setIsolateOpen] = useState(false)
   const [compareExpected, setCompareExpected] = useState(false)
-  const [view, setView] = useState<'split' | 'grid'>('split')
-  const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
-  const [roundLayout, setRoundLayout] = useState<'aggregate' | 'expand'>(
-    'aggregate'
+  const previewPrefs = usePersistedViewState(
+    PREVIEW_VIEW_STORAGE_KEY,
+    defaultPreviewView
   )
+  const [sessionView, setSessionView] = useState<'split' | 'grid'>()
+  const view =
+    sessionView ??
+    (previewPrefs.value.view === 'grid' ? 'grid' : 'split')
+  const groupMode =
+    previewPrefs.value.groupMode === 'account' ? 'account' : 'task'
+  const roundLayout =
+    previewPrefs.value.roundLayout === 'expand' ? 'expand' : 'aggregate'
+  const setView = (next: 'split' | 'grid') => {
+    setSessionView(undefined)
+    previewPrefs.setValue((current) => ({ ...current, view: next }))
+  }
+  const setGroupMode = (next: 'task' | 'account') => {
+    previewPrefs.setValue((current) => ({ ...current, groupMode: next }))
+  }
+  const setRoundLayout = (next: 'aggregate' | 'expand') => {
+    previewPrefs.setValue((current) => ({ ...current, roundLayout: next }))
+  }
   const [sampleOverrideId, setSampleOverrideId] = useState<string>()
   const [gridCols, setGridCols] = useState(4)
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
@@ -232,7 +260,7 @@ export function ResultPreviewGallery({
   }
   const openPreviewItem = (nextIndex: number, sampleId?: string) => {
     selectPreviewItem(nextIndex, sampleId)
-    setView('split')
+    setSessionView('split')
   }
   const commitPreviewPage = () => {
     if (!onPageChange) {
@@ -342,6 +370,7 @@ export function ResultPreviewGallery({
 
   useEffect(() => {
     if (open) return
+    setSessionView(undefined)
     setAccountDetailId(null)
     setRunDetailId(undefined)
   }, [open])
@@ -393,7 +422,7 @@ export function ResultPreviewGallery({
       if (isolateOpen) return
       if (event.key === 'Enter' && view === 'grid') {
         event.preventDefault()
-        setView('split')
+        setSessionView('split')
         return
       }
       if (event.key === '[' || event.key === ']') {
