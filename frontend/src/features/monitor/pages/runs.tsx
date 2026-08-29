@@ -504,23 +504,20 @@ export function RunsPage() {
       : previewRunsQuery.data?.page === previewPage
         ? previewRunsQuery.data
         : undefined
+  const previewSampleId = resultPreview?.sampleId
+  const previewSampleIndex = resultPreview?.index
   const previewItems = useMemo(() => {
     const items = previewItemsFromRuns(
       previewSource?.items ?? [],
       profileNameById
     )
-    if (!resultPreview?.sampleId) return items
+    if (!previewSampleId) return items
     return items.map((item, itemIndex) =>
-      itemIndex === resultPreview.index
-        ? { ...item, sampleId: resultPreview.sampleId }
+      itemIndex === previewSampleIndex
+        ? { ...item, sampleId: previewSampleId }
         : item
     )
-  }, [
-    previewSource?.items,
-    profileNameById,
-    resultPreview?.index,
-    resultPreview?.sampleId,
-  ])
+  }, [previewSource?.items, profileNameById, previewSampleId, previewSampleIndex])
   const previewTotal = previewSource?.total ?? query.data?.total ?? 0
   const previewPageCount = Math.max(
     1,
@@ -530,24 +527,17 @@ export function RunsPage() {
     resultPreview != null &&
     previewSource?.page !== resultPreview.page &&
     previewRunsQuery.isFetching
-  useEffect(() => {
-    if (!resultPreview?.land) return
-    if (!previewItems.length) return
-    if (previewSource?.page !== resultPreview.page) return
+  if (
+    resultPreview?.land &&
+    previewItems.length > 0 &&
+    previewSource?.page === resultPreview.page
+  ) {
+    const nextIndex = resultPreview.land === 'end' ? previewItems.length - 1 : 0
     setResultPreview((current) => {
-      if (!current?.land) return current
-      return {
-        ...current,
-        index: current.land === 'end' ? previewItems.length - 1 : 0,
-        land: undefined,
-      }
+      if (!current?.land || current.page !== resultPreview.page) return current
+      return { ...current, index: nextIndex, land: undefined }
     })
-  }, [
-    previewItems.length,
-    previewSource?.page,
-    resultPreview?.land,
-    resultPreview?.page,
-  ])
+  }
   const openRunPreview = useCallback(
     (runId: string, sampleId?: string) => {
       const items = previewItemsFromRuns(currentPageRuns, profileNameById)

@@ -287,6 +287,7 @@ export function ResultPreviewGallery({
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
   const [runDetailId, setRunDetailId] = useState<string>()
   const [pageDraft, setPageDraft] = useState(String(Math.max(1, page)))
+  const [pageDraftSource, setPageDraftSource] = useState(Math.max(1, page))
   const pendingSampleId = useRef<string | undefined>()
   const currentPage = Math.max(1, page)
   const currentPageCount = Math.max(1, pageCount)
@@ -294,12 +295,19 @@ export function ResultPreviewGallery({
     ? Math.min(Math.max(index, 0), items.length - 1)
     : 0
   const item = items[safeIndex]
-  const layoutItemsRef = useRef(items)
+  const [cachedLayoutItems, setCachedLayoutItems] = useState(items)
   if (items.length > 0) {
-    layoutItemsRef.current = items
+    if (
+      cachedLayoutItems.length !== items.length ||
+      cachedLayoutItems.some((entry, offset) => entry.id !== items[offset]?.id)
+    ) {
+      setCachedLayoutItems(items)
+    }
+  } else if (!pageLoading && cachedLayoutItems.length > 0) {
+    setCachedLayoutItems(items)
   }
   const layoutItems =
-    items.length > 0 || !pageLoading ? items : layoutItemsRef.current
+    items.length > 0 || !pageLoading ? items : cachedLayoutItems
   const sampleLeaves = layoutItems.some((entry) => Boolean(entry.sample))
   const groups = useMemo(
     () => groupPreviewItems(layoutItems),
@@ -520,6 +528,8 @@ export function ResultPreviewGallery({
   })
 
   useEffect(() => {
+    // Reset per-item chrome after the selected preview card changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCompareExpected(false)
     setIsolateOpen(false)
     const nextId = pendingSampleId.current ?? item?.sampleId
@@ -527,16 +537,16 @@ export function ResultPreviewGallery({
     setSampleOverrideId(nextId)
   }, [item?.id, item?.sampleId])
 
-  useEffect(() => {
-    if (open) return
-    setSessionView(undefined)
-    setAccountDetailId(null)
-    setRunDetailId(undefined)
-  }, [open])
+  if (!open) {
+    if (sessionView !== undefined) setSessionView(undefined)
+    if (accountDetailId != null) setAccountDetailId(null)
+    if (runDetailId) setRunDetailId(undefined)
+  }
 
-  useEffect(() => {
+  if (pageDraftSource !== currentPage) {
+    setPageDraftSource(currentPage)
     setPageDraft(String(currentPage))
-  }, [currentPage])
+  }
 
   useEffect(() => {
     if (!open || view !== 'split') return

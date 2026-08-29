@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import {
   Activity,
   ChevronDown,
@@ -727,7 +727,6 @@ function OperatorNoteCell({
 
 export function QuarantinePage() {
   const client = useQueryClient()
-  const navigate = useNavigate()
   const statsFetching =
     useIsFetching({ queryKey: ['accounts', 'quarantine-stats'] }) > 0
   const view = usePersistedViewState(
@@ -900,6 +899,7 @@ export function QuarantinePage() {
     if (previewQuery.isFetching) return
     if (previewQuery.isError) {
       toast.error(getErrorMessage(previewQuery.error))
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPreviewAccount(null)
       return
     }
