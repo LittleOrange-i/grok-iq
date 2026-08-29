@@ -463,6 +463,10 @@ export function ResultPreviewGallery({
         <DialogContent
           showCloseButton={false}
           className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden overflow-x-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+            ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
+          }}
         >
           <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
             <header className='flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2'>
