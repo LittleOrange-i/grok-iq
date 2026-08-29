@@ -17,6 +17,7 @@ import { formatAccountCreatedAt } from '@/lib/account-label'
 import {
   api,
   type ProbeRun,
+  type ProbeRunPreviewSample,
   type ProbeSample,
   type UpstreamAccount,
 } from '@/lib/api'
@@ -82,6 +83,7 @@ export type ResultPreviewItem = {
   sample?: ProbeSample
   rounds?: number
   completedSteps?: number
+  heading?: string
 }
 
 export function previewItemsFromRuns(
@@ -136,6 +138,73 @@ export function previewItemsFromSamples(
 
 function samplesForPreview(samples: ProbeSample[]) {
   return samples.filter((sample) => (sample.response_text || '').trim())
+}
+
+function expandPreviewItems(
+  items: ResultPreviewItem[],
+  samples: ProbeRunPreviewSample[] | undefined,
+  variant: 'task' | 'account'
+) {
+  const byRun = new Map<string, ProbeRunPreviewSample[]>()
+  if (samples) {
+    for (const sample of samples) {
+      const list = byRun.get(sample.run_id) ?? []
+      list.push(sample)
+      byRun.set(sample.run_id, list)
+    }
+  }
+  const leaves: ResultPreviewItem[] = []
+  for (const item of items) {
+    const rounds = samples
+      ? (byRun.get(item.runId) ?? [])
+      : placeholderPreviewRounds(item)
+    if (!rounds.length) {
+      leaves.push(item)
+      continue
+    }
+    for (const sample of rounds) {
+      const sameRoundCount = rounds.filter(
+        (candidate) => candidate.round_number === sample.round_number
+      ).length
+      const roundLabel =
+        sameRoundCount > 1 && sample.egress_name
+          ? `第 ${sample.round_number || 1} 轮 · ${sample.egress_name}`
+          : `第 ${sample.round_number || 1} 轮`
+      const heading =
+        variant === 'task'
+          ? rounds.length > 1
+            ? `${item.accountName} · ${roundLabel}`
+            : item.accountName
+          : item.profileName
+            ? rounds.length > 1
+              ? `${item.profileName} · ${roundLabel}`
+              : item.profileName
+            : roundLabel
+      leaves.push({
+        ...item,
+        id: `${item.id}:${sample.id}`,
+        sampleId: sample.id.startsWith('pending:') ? undefined : sample.id,
+        createdAt: sample.created_at || item.createdAt,
+        heading,
+        completedSteps: 1,
+      })
+    }
+  }
+  return leaves
+}
+
+function placeholderPreviewRounds(
+  item: ResultPreviewItem
+): ProbeRunPreviewSample[] {
+  const count = Math.max(1, item.completedSteps || 1)
+  return Array.from({ length: count }, (_, offset) => ({
+    id: `pending:${offset + 1}`,
+    run_id: item.runId,
+    round_number: offset + 1,
+    egress_name: '',
+    classification: '',
+    created_at: item.createdAt || '',
+  }))
 }
 
 export function pickPreviewSample(
@@ -238,23 +307,59 @@ export function ResultPreviewGallery({
   const showGroupToggle = !sampleLeaves && groups.length > 1
   const effectiveGroup = sampleLeaves || !showGroupToggle ? 'task' : groupMode
   const expandRounds = !sampleLeaves && roundLayout === 'expand'
-  const canPrevItem = safeIndex > 0 || currentPage > 1
+  const previewRunIds = useMemo(
+    () =>
+      Array.from(
+        new Set(layoutItems.map((entry) => entry.runId).filter(Boolean))
+      ),
+    [layoutItems]
+  )
+  const previewSamplesQuery = useQuery({
+    queryKey: ['run-preview-samples', previewRunIds],
+    queryFn: () => api.runPreviewSamples(previewRunIds),
+    enabled:
+      open &&
+      view === 'grid' &&
+      expandRounds &&
+      previewRunIds.length > 0,
+    staleTime: 30_000,
+  })
+  const expandItems = useMemo(
+    () =>
+      expandRounds
+        ? expandPreviewItems(
+            layoutItems,
+            previewSamplesQuery.data?.items,
+            effectiveGroup
+          )
+        : layoutItems,
+    [
+      effectiveGroup,
+      expandRounds,
+      layoutItems,
+      previewSamplesQuery.data?.items,
+    ]
+  )
+  const activeSampleId = sampleOverrideId || item?.sampleId
+  const expandLeafIndex = expandRounds
+    ? Math.max(
+        0,
+        expandItems.findIndex((leaf) =>
+          activeSampleId && leaf.sampleId
+            ? leaf.sampleId === activeSampleId
+            : leaf.runId === item?.runId
+        )
+      )
+    : safeIndex
+  const canPrevItem =
+    (view === 'grid' && expandRounds
+      ? expandLeafIndex > 0
+      : safeIndex > 0) || currentPage > 1
   const canNextItem =
-    safeIndex < Math.max(items.length - 1, 0) || currentPage < currentPageCount
-  const goPrevItem = () => {
-    if (safeIndex > 0) {
-      onIndexChange(safeIndex - 1)
-      return
-    }
-    if (currentPage > 1) onPageChange?.(currentPage - 1, 'end')
-  }
-  const goNextItem = () => {
-    if (items.length && safeIndex < items.length - 1) {
-      onIndexChange(safeIndex + 1)
-      return
-    }
-    if (currentPage < currentPageCount) onPageChange?.(currentPage + 1, 'start')
-  }
+    (view === 'grid' && expandRounds
+      ? expandLeafIndex < Math.max(expandItems.length - 1, 0)
+      : safeIndex < Math.max(items.length - 1, 0)) ||
+    currentPage < currentPageCount
   const selectPreviewItem = (nextIndex: number, sampleId?: string) => {
     if (sampleId) pendingSampleId.current = sampleId
     onIndexChange(nextIndex)
@@ -263,6 +368,47 @@ export function ResultPreviewGallery({
   const openPreviewItem = (nextIndex: number, sampleId?: string) => {
     selectPreviewItem(nextIndex, sampleId)
     setSessionView('split')
+  }
+  const selectExpandLeaf = (leafIndex: number) => {
+    const leaf = expandItems[leafIndex]
+    if (!leaf) return
+    const taskIndex = items.findIndex((entry) => entry.runId === leaf.runId)
+    if (taskIndex < 0) return
+    selectPreviewItem(taskIndex, leaf.sampleId)
+  }
+  const moveExpandLeaf = (delta: number) => {
+    const next = expandLeafIndex + delta
+    if (next < 0) {
+      if (currentPage > 1) onPageChange?.(currentPage - 1, 'end')
+      return
+    }
+    if (next >= expandItems.length) {
+      if (currentPage < currentPageCount) onPageChange?.(currentPage + 1, 'start')
+      return
+    }
+    selectExpandLeaf(next)
+  }
+  const goPrevItem = () => {
+    if (view === 'grid' && expandRounds) {
+      moveExpandLeaf(-1)
+      return
+    }
+    if (safeIndex > 0) {
+      onIndexChange(safeIndex - 1)
+      return
+    }
+    if (currentPage > 1) onPageChange?.(currentPage - 1, 'end')
+  }
+  const goNextItem = () => {
+    if (view === 'grid' && expandRounds) {
+      moveExpandLeaf(1)
+      return
+    }
+    if (items.length && safeIndex < items.length - 1) {
+      onIndexChange(safeIndex + 1)
+      return
+    }
+    if (currentPage < currentPageCount) onPageChange?.(currentPage + 1, 'start')
   }
   const commitPreviewPage = () => {
     if (!onPageChange) {
@@ -458,14 +604,18 @@ export function ResultPreviewGallery({
           : 1
       if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
         event.preventDefault()
-        if (safeIndex > 0) {
+        if (view === 'grid' && expandRounds) {
+          moveExpandLeaf(-step)
+        } else if (safeIndex > 0) {
           onIndexChange(Math.max(0, safeIndex - step))
         } else if (currentPage > 1) {
           onPageChange?.(currentPage - 1, 'end')
         }
       } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
         event.preventDefault()
-        if (items.length && safeIndex < items.length - 1) {
+        if (view === 'grid' && expandRounds) {
+          moveExpandLeaf(step)
+        } else if (items.length && safeIndex < items.length - 1) {
           onIndexChange(Math.min(items.length - 1, safeIndex + step))
         } else if (currentPage < currentPageCount) {
           onPageChange?.(currentPage + 1, 'start')
@@ -481,10 +631,12 @@ export function ResultPreviewGallery({
     alreadyIsolated,
     currentPage,
     currentPageCount,
+    expandRounds,
     gridCols,
     isolateOpen,
     item,
     items.length,
+    moveExpandLeaf,
     onIndexChange,
     onPageChange,
     open,
@@ -499,11 +651,19 @@ export function ResultPreviewGallery({
       ? `第 ${currentPage} / ${currentPageCount} 页`
       : ''
   const totalLabel = total != null ? `共 ${total} 条` : ''
+  const accountCounter =
+    effectiveGroup === 'account'
+      ? `账号 ${Math.max(1, groups.findIndex((group) => group.accountId === item?.accountId) + 1)} / ${groups.length}`
+      : ''
   const counterLabel = [
     sampleLeaves
       ? `样本 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+      : expandRounds
+        ? [accountCounter, `轮次 ${expandItems.length ? expandLeafIndex + 1 : 0} / ${expandItems.length}`]
+            .filter(Boolean)
+            .join(' · ')
       : effectiveGroup === 'account'
-        ? `账号 ${Math.max(1, groups.findIndex((group) => group.accountId === item?.accountId) + 1)} / ${groups.length} · 任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+        ? `${accountCounter} · 任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
         : `任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`,
     pageLabel,
     totalLabel,
@@ -754,78 +914,96 @@ export function ResultPreviewGallery({
                 >
                   {effectiveGroup === 'account' ? (
                     <div className='flex flex-col px-4 pb-4'>
-                      {groups.map((group) => (
-                        <section key={group.accountId}>
-                          <div className='sticky top-0 z-30 isolate -mx-4 border-b border-border/70 bg-background/90 px-4 py-2 backdrop-blur-md'>
-                            <div className='truncate text-sm font-medium'>
-                              {group.accountName}
+                      {groups.map((group) => {
+                        const leaves = expandRounds
+                          ? expandItems.filter(
+                              (leaf) => leaf.accountId === group.accountId
+                            )
+                          : group.items
+                        return (
+                          <section key={group.accountId}>
+                            <div className='sticky top-0 z-30 isolate -mx-4 border-b border-border/70 bg-background/90 px-4 py-2 backdrop-blur-md'>
+                              <div className='truncate text-sm font-medium'>
+                                {group.accountName}
+                              </div>
+                              <div className='truncate text-xs font-normal text-muted-foreground'>
+                                {accountMeta(group.items[0], {
+                                  includeTaskTime: false,
+                                })}
+                                {` · ${group.items.length} 个任务`}
+                                {leaves.length > group.items.length
+                                  ? ` · ${leaves.length} 轮`
+                                  : groupRoundCount(group.items) >
+                                      group.items.length
+                                    ? ` · ${groupRoundCount(group.items)} 轮`
+                                    : ''}
+                              </div>
                             </div>
-                            <div className='truncate text-xs font-normal text-muted-foreground'>
-                              {accountMeta(group.items[0], {
-                                includeTaskTime: false,
+                            <div className={`${THUMB_GRID_CLASSNAME} pt-3 pb-6`}>
+                              {leaves.map((entry) => {
+                                const index = items.findIndex(
+                                  (candidate) => candidate.runId === entry.runId
+                                )
+                                const selected =
+                                  entry.id ===
+                                  (expandRounds
+                                    ? expandItems[expandLeafIndex]?.id
+                                    : item.id)
+                                return (
+                                  <PreviewThumbCard
+                                    key={entry.id}
+                                    item={entry}
+                                    index={index}
+                                    active={selected}
+                                    sampleLeaves={Boolean(entry.sampleId)}
+                                    heading={entry.heading}
+                                    onSelect={() =>
+                                      selectPreviewItem(index, entry.sampleId)
+                                    }
+                                    onOpen={() =>
+                                      openPreviewItem(index, entry.sampleId)
+                                    }
+                                  />
+                                )
                               })}
-                              {` · ${group.items.length} 个任务`}
-                              {groupRoundCount(group.items) > group.items.length
-                                ? ` · ${groupRoundCount(group.items)} 轮`
-                                : ''}
                             </div>
-                          </div>
-                          <div className={`${THUMB_GRID_CLASSNAME} pt-3 pb-6`}>
-                            {group.items.map((entry) => {
-                              const index = items.findIndex(
-                                (candidate) => candidate.id === entry.id
-                              )
-                              return expandRounds ? (
-                                <AccountTaskThumbGroup
-                                  key={entry.id}
-                                  item={entry}
-                                  index={index}
-                                  active={entry.id === item.id}
-                                  activeSampleId={sample?.id}
-                                  onSelect={selectPreviewItem}
-                                  onOpen={openPreviewItem}
-                                />
-                              ) : (
-                                <PreviewThumbCard
-                                  key={entry.id}
-                                  item={entry}
-                                  index={index}
-                                  active={entry.id === item.id}
-                                  sampleLeaves={false}
-                                  onSelect={selectPreviewItem}
-                                  onOpen={openPreviewItem}
-                                />
-                              )
-                            })}
-                          </div>
-                        </section>
-                      ))}
-                    </div>
-                  ) : expandRounds ? (
-                    <div className={`${THUMB_GRID_CLASSNAME} p-4`}>
-                      {items.map((entry, entryIndex) => (
-                        <AccountTaskThumbGroup
-                          key={entry.id}
-                          item={entry}
-                          index={entryIndex}
-                          active={entry.id === item.id}
-                          activeSampleId={sample?.id}
-                          variant='task'
-                          onSelect={selectPreviewItem}
-                          onOpen={openPreviewItem}
-                        />
-                      ))}
+                          </section>
+                        )
+                      })}
                     </div>
                   ) : (
                     <div className='p-4'>
                       <VirtualizedThumbGrid
-                        items={items}
+                        items={expandRounds ? expandItems : items}
                         columns={gridCols}
-                        activeId={item.id}
+                        activeId={
+                          expandRounds
+                            ? expandItems[expandLeafIndex]?.id || item.id
+                            : item.id
+                        }
                         sampleLeaves={sampleLeaves}
                         scrollRef={gridRef}
-                        onSelect={onIndexChange}
-                        onOpen={openPreviewItem}
+                        onSelect={(index) => {
+                          if (!expandRounds) {
+                            onIndexChange(index)
+                            return
+                          }
+                          selectExpandLeaf(index)
+                        }}
+                        onOpen={(index) => {
+                          if (!expandRounds) {
+                            openPreviewItem(index)
+                            return
+                          }
+                          const leaf = expandItems[index]
+                          if (!leaf) return
+                          const taskIndex = items.findIndex(
+                            (entry) => entry.runId === leaf.runId
+                          )
+                          if (taskIndex >= 0) {
+                            openPreviewItem(taskIndex, leaf.sampleId)
+                          }
+                        }}
                       />
                     </div>
                   )}
@@ -1239,96 +1417,6 @@ function groupRoundCount(items: ResultPreviewItem[]) {
   )
 }
 
-function AccountTaskThumbGroup({
-  item,
-  index,
-  active,
-  activeSampleId,
-  variant = 'account',
-  onSelect,
-  onOpen,
-}: {
-  item: ResultPreviewItem
-  index: number
-  active: boolean
-  activeSampleId?: string
-  variant?: 'task' | 'account'
-  onSelect: (index: number, sampleId?: string) => void
-  onOpen: (index: number, sampleId?: string) => void
-}) {
-  const { ref, inView } = useInView<HTMLDivElement>()
-  const hasLocal = Boolean(item.content || item.sample)
-  const runQuery = useQuery({
-    queryKey: ['run', item.runId],
-    queryFn: () => api.run(item.runId),
-    enabled: inView && !hasLocal && Boolean(item.runId),
-    staleTime: 30_000,
-  })
-  const samples = item.sample
-    ? [item.sample]
-    : samplesForPreview(runQuery.data?.samples ?? [])
-  const leaves = samples.length > 0 ? samples : [null]
-  return (
-    <>
-      {leaves.map((entrySample, offset) => {
-        const leaf: ResultPreviewItem = entrySample
-          ? {
-              ...item,
-              id: `${item.id}:${entrySample.id}`,
-              sampleId: entrySample.id,
-              content: entrySample.response_text,
-              sample: entrySample,
-              createdAt: entrySample.created_at || item.createdAt,
-            }
-          : item
-        const selected =
-          active &&
-          (activeSampleId
-            ? entrySample?.id === activeSampleId
-            : offset === 0)
-        const sameRoundCount = entrySample
-          ? samples.filter(
-              (candidate) =>
-                candidate.round_number === entrySample.round_number
-            ).length
-          : 0
-        const roundLabel = entrySample
-          ? sameRoundCount > 1 && entrySample.egress_name
-            ? `第 ${entrySample.round_number || 1} 轮 · ${entrySample.egress_name}`
-            : `第 ${entrySample.round_number || 1} 轮`
-          : item.profileName || item.accountName
-        const heading =
-          variant === 'task'
-            ? samples.length > 1 && entrySample
-              ? `${item.accountName} · ${roundLabel}`
-              : item.accountName
-            : item.profileName
-              ? samples.length > 1
-                ? `${item.profileName} · ${roundLabel}`
-                : item.profileName
-              : roundLabel
-        return (
-          <div
-            key={leaf.id}
-            ref={offset === 0 ? ref : undefined}
-            className='min-w-0'
-          >
-            <PreviewThumbCard
-              item={leaf}
-              index={index}
-              active={selected}
-              sampleLeaves={variant !== 'task' && Boolean(entrySample)}
-              heading={heading}
-              onSelect={() => onSelect(index, entrySample?.id)}
-              onOpen={() => onOpen(index, entrySample?.id)}
-            />
-          </div>
-        )
-      })}
-    </>
-  )
-}
-
 function VirtualizedThumbGrid({
   items,
   columns,
@@ -1434,6 +1522,7 @@ function VirtualizedThumbGrid({
               index={index}
               active={entry.id === activeId}
               sampleLeaves={sampleLeaves}
+              heading={entry.heading}
               onSelect={onSelect}
               onOpen={onOpen}
             />
@@ -1490,7 +1579,7 @@ function PreviewThumbCard({
       onDoubleClick={() => onOpen(index)}
     >
       <div className='relative aspect-[16/10] w-full min-h-0 overflow-hidden border-b bg-muted/20'>
-        {(item.completedSteps || 0) > 1 && !item.sample ? (
+        {(item.completedSteps || 0) > 1 && !item.sample && !item.sampleId ? (
           <span className='absolute top-2 right-2 z-[1] rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm'>
             {item.completedSteps} 轮
           </span>
@@ -1514,6 +1603,7 @@ function PreviewThumbCard({
       <div className='h-14 shrink-0 px-2.5 py-2'>
         <div className='truncate text-xs font-medium'>
           {heading ||
+            item.heading ||
             (sampleLeaves
               ? `第 ${item.sample?.round_number || 1} 轮`
               : item.accountName)}

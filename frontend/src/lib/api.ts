@@ -1197,6 +1197,15 @@ export type ProbeWorkerLogsResponse = {
   sizeBytes: number
 }
 
+export type ProbeRunPreviewSample = {
+  id: string
+  run_id: string
+  round_number: number
+  egress_name: string
+  classification: string
+  created_at: string
+}
+
 export type ProbeSample = {
   id: string
   run_id: string
@@ -2951,6 +2960,11 @@ export const api = {
       profile: ProbeProfile
       samples: ProbeSample[]
     }>(`/probe-runs/${id}`),
+  runPreviewSamples: (ids: string[]) =>
+    request<{ items: ProbeRunPreviewSample[] }>('/probe-runs/preview-samples', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
   cancelRun: (id: string) =>
     request<Record<string, unknown>>(`/probe-runs/${id}/cancel`, {
       method: 'POST',

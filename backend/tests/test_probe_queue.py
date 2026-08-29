@@ -530,6 +530,55 @@ def test_list_runs_reports_active_count(repository: ProbeRepository):
     repository.request_cancel(active)
 
 
+def test_preview_samples_for_runs_omit_empty_text_and_response_body(
+    repository: ProbeRepository,
+):
+    first = create_run(repository, account_id=41)
+    second = create_run(repository, account_id=42)
+    sample_values = {
+        "target_key": "direct",
+        "target_kind": "direct",
+        "status": "done",
+        "classification": "normal",
+    }
+    repository.add_sample(
+        first,
+        {
+            **sample_values,
+            "round_number": 1,
+            "egress_name": "直连",
+            "response_text": "第一轮正文",
+        },
+    )
+    repository.add_sample(
+        first,
+        {
+            **sample_values,
+            "round_number": 2,
+            "target_key": "direct-2",
+            "egress_name": "节点A",
+            "response_text": "第二轮正文",
+        },
+    )
+    repository.add_sample(
+        second,
+        {
+            **sample_values,
+            "round_number": 1,
+            "response_text": "   ",
+        },
+    )
+    items = repository.preview_samples_for_runs([second, first, first])
+    assert [item["run_id"] for item in items] == [first, first]
+    assert [item["round_number"] for item in items] == [1, 2]
+    assert items[0]["egress_name"] == "直连"
+    assert "response_text" not in items[0]
+    assert "reasoning_text" not in items[0]
+    detail = repository.run_detail(first)
+    assert detail is not None
+    assert detail["samples"][0]["response_text"] == "第一轮正文"
+
+
 def test_duration_estimate_backfills_once_then_updates_incrementally(
     repository: ProbeRepository,
 ):

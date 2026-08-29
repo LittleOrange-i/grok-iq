@@ -70,6 +70,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/probe-runs/batch/cancel"),
     ("POST", "/api/probe-runs/batch/restore-account-settings"),
     ("GET", "/api/probe-runs/selection"),
+    ("POST", "/api/probe-runs/preview-samples"),
     ("GET", "/api/probe-runs/{run_id}"),
     ("POST", "/api/probe-runs/{run_id}/cancel"),
     ("POST", "/api/probe-runs/{run_id}/retry"),

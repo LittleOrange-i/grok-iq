@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.clock import utc_now
+from app.core.clock import to_app_timezone, utc_now
 
 from .database import Database
 from .models import (
@@ -179,6 +179,56 @@ class ProbeRunReader:
                 "profile": self.profile_dict(profile) if profile else None,
                 "samples": [model_dict(value) for value in samples],
             }
+
+    def preview_samples_for_runs(self, run_ids: Iterable[str]) -> list[dict[str, Any]]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in run_ids:
+            run_id = str(value or "").strip()
+            if not run_id or run_id in seen:
+                continue
+            seen.add(run_id)
+            normalized.append(run_id)
+            if len(normalized) >= 100:
+                break
+        if not normalized:
+            return []
+        with self.database.session() as session:
+            rows = session.execute(
+                select(
+                    ProbeSample.id,
+                    ProbeSample.run_id,
+                    ProbeSample.round_number,
+                    ProbeSample.egress_name,
+                    ProbeSample.classification,
+                    ProbeSample.created_at,
+                )
+                .where(
+                    ProbeSample.run_id.in_(normalized),
+                    func.trim(ProbeSample.response_text) != "",
+                )
+                .order_by(
+                    ProbeSample.round_number.asc(),
+                    ProbeSample.target_key.asc(),
+                    ProbeSample.id.asc(),
+                )
+            ).all()
+        grouped: dict[str, list[dict[str, Any]]] = {run_id: [] for run_id in normalized}
+        for row in rows:
+            bucket = grouped.get(row.run_id)
+            if bucket is None:
+                continue
+            bucket.append(
+                {
+                    "id": row.id,
+                    "run_id": row.run_id,
+                    "round_number": row.round_number,
+                    "egress_name": row.egress_name,
+                    "classification": row.classification,
+                    "created_at": to_app_timezone(row.created_at),
+                }
+            )
+        return [item for run_id in normalized for item in grouped[run_id]]
 
     def samples_for_audits(
         self,

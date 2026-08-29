@@ -125,6 +125,11 @@ class ProbesRouter:
             "/probe-runs/selection", self.select_probe_runs, methods=["GET"]
         )
         self.router.add_api_route(
+            "/probe-runs/preview-samples",
+            self.preview_probe_samples,
+            methods=["POST"],
+        )
+        self.router.add_api_route(
             "/probe-runs/{run_id}", self.probe_run_detail, methods=["GET"]
         )
         self.router.add_api_route(
@@ -358,6 +363,9 @@ class ProbesRouter:
             created_from=normalized_from,
             created_to=normalized_to,
         )
+
+    def preview_probe_samples(self, payload: BulkIdsInput) -> dict[str, Any]:
+        return {"items": self.repository.preview_samples_for_runs(payload.ids)}
 
     async def probe_run_detail(self, run_id: str) -> dict[str, Any]:
         value = self.repository.run_detail(run_id)

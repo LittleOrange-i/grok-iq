@@ -1420,6 +1420,9 @@ class ProbeRepository:
     def run_detail(self, run_id: str) -> dict[str, Any] | None:
         return self._run_reader.run_detail(run_id)
 
+    def preview_samples_for_runs(self, run_ids: list[str] | tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        return self._run_reader.preview_samples_for_runs(run_ids)
+
     def samples_for_audits(
         self,
         *,
