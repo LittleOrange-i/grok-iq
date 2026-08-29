@@ -679,12 +679,14 @@ export function ResultPreviewGallery({
                   className='min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4'
                 >
                   {effectiveGroup === 'account' ? (
-                    <div className='space-y-6'>
+                    <div className='flex flex-col gap-6'>
                       {groups.map((group) => (
                         <section key={group.accountId}>
-                          <div className='sticky top-0 z-10 mb-2 bg-background/95 py-1 text-sm font-medium backdrop-blur-sm'>
-                            {group.accountName}
-                            <span className='ms-2 text-xs font-normal text-muted-foreground'>
+                          <div className='sticky top-0 z-30 isolate -mx-4 mb-3 border-b border-border/70 bg-background px-4 py-2'>
+                            <div className='truncate text-sm font-medium'>
+                              {group.accountName}
+                            </div>
+                            <div className='truncate text-xs font-normal text-muted-foreground'>
                               {accountMeta(group.items[0], {
                                 includeTaskTime: false,
                               })}
@@ -692,7 +694,7 @@ export function ResultPreviewGallery({
                               {groupRoundCount(group.items) > group.items.length
                                 ? ` · ${groupRoundCount(group.items)} 轮`
                                 : ''}
-                            </span>
+                            </div>
                           </div>
                           <div className={THUMB_GRID_CLASSNAME}>
                             {group.items.map((entry) => {
@@ -1403,7 +1405,7 @@ function PreviewThumbCard({
       type='button'
       data-preview-index={index}
       className={cn(
-        'flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background p-0 text-left transition-colors',
+        'relative z-0 isolate flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background p-0 text-left transition-colors',
         active
           ? 'border-primary/60 ring-2 ring-primary/20'
           : 'hover:border-primary/30'
@@ -1413,7 +1415,7 @@ function PreviewThumbCard({
     >
       <div className='relative aspect-[16/10] w-full min-h-0 overflow-hidden border-b bg-muted/20'>
         {(item.completedSteps || 0) > 1 && !item.sample ? (
-          <span className='absolute top-2 right-2 z-10 rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm'>
+          <span className='absolute top-2 right-2 z-[1] rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm'>
             {item.completedSteps} 轮
           </span>
         ) : null}
@@ -1465,7 +1467,7 @@ function ScaledHtmlThumb({ html }: { html: string }) {
   return (
     <div
       ref={ref}
-      className='pointer-events-none absolute inset-0 overflow-hidden bg-white'
+      className='pointer-events-none absolute inset-0 z-0 overflow-hidden bg-white'
     >
       {scale > 0 ? (
         <iframe
