@@ -56,6 +56,8 @@ export type ResultPreviewItem = {
   expectedImageUrl?: string
   content?: string
   sample?: ProbeSample
+  rounds?: number
+  completedSteps?: number
 }
 
 export function previewItemsFromRuns(
@@ -75,6 +77,8 @@ export function previewItemsFromRuns(
       createdAt: run.created_at,
       profileId: run.profile_id,
       profileName: profileNames[run.profile_id],
+      rounds: run.rounds,
+      completedSteps: run.completed_steps,
     }))
 }
 
@@ -106,6 +110,10 @@ export function previewItemsFromSamples(
     }))
 }
 
+function samplesForPreview(samples: ProbeSample[]) {
+  return samples.filter((sample) => (sample.response_text || '').trim())
+}
+
 export function pickPreviewSample(
   samples: ProbeSample[],
   preferredId?: string
@@ -114,9 +122,7 @@ export function pickPreviewSample(
     const matched = samples.find((sample) => sample.id === preferredId)
     if (matched) return matched
   }
-  const withText = samples.filter((sample) =>
-    (sample.response_text || '').trim()
-  )
+  const withText = samplesForPreview(samples)
   const newestFirst = [...withText].sort((left, right) => {
     const delta = Date.parse(right.created_at) - Date.parse(left.created_at)
     if (Number.isFinite(delta) && delta !== 0) return delta
@@ -166,6 +172,7 @@ export function ResultPreviewGallery({
   const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
   const [sampleOverrideId, setSampleOverrideId] = useState<string>()
   const [gridCols, setGridCols] = useState(4)
+  const pendingSampleId = useRef<string | undefined>()
   const currentPage = Math.max(1, page)
   const currentPageCount = Math.max(1, pageCount)
   const safeIndex = items.length
@@ -192,6 +199,11 @@ export function ResultPreviewGallery({
       return
     }
     if (currentPage < currentPageCount) onPageChange?.(currentPage + 1, 'start')
+  }
+  const selectPreviewItem = (nextIndex: number, sampleId?: string) => {
+    if (sampleId) pendingSampleId.current = sampleId
+    onIndexChange(nextIndex)
+    if (sampleId) setSampleOverrideId(sampleId)
   }
   const neighborRunIds = useMemo(() => {
     if (!item || view !== 'split') return []
@@ -269,7 +281,9 @@ export function ResultPreviewGallery({
   useEffect(() => {
     setCompareExpected(false)
     setIsolateOpen(false)
-    setSampleOverrideId(item?.sampleId)
+    const nextId = pendingSampleId.current ?? item?.sampleId
+    pendingSampleId.current = undefined
+    setSampleOverrideId(nextId)
   }, [item?.id, item?.sampleId])
 
   useEffect(() => {
@@ -562,24 +576,26 @@ export function ResultPreviewGallery({
                                 includeTaskTime: false,
                               })}
                               {` · ${group.items.length} 个任务`}
+                              {groupRoundCount(group.items) > group.items.length
+                                ? ` · ${groupRoundCount(group.items)} 轮`
+                                : ''}
                             </span>
                           </div>
                           <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
                             {group.items.map((entry) => (
-                              <div key={entry.id} className='min-w-0'>
-                                <PreviewThumbCard
-                                  item={entry}
-                                  index={items.findIndex(
-                                    (candidate) => candidate.id === entry.id
-                                  )}
-                                  active={entry.id === item.id}
-                                  sampleLeaves={sampleLeaves}
-                                  onSelect={(nextIndex) => {
-                                    onIndexChange(nextIndex)
-                                    setView('split')
-                                  }}
-                                />
-                              </div>
+                              <AccountTaskThumbGroup
+                                key={entry.id}
+                                item={entry}
+                                index={items.findIndex(
+                                  (candidate) => candidate.id === entry.id
+                                )}
+                                active={entry.id === item.id}
+                                activeSampleId={sample?.id}
+                                onSelect={(nextIndex, sampleId) => {
+                                  selectPreviewItem(nextIndex, sampleId)
+                                  setView('split')
+                                }}
+                              />
                             ))}
                           </div>
                         </section>
@@ -653,6 +669,10 @@ export function ResultPreviewGallery({
                                       includeTaskTime: false,
                                     })}
                                     {` · ${group.items.length} 个任务`}
+                                    {groupRoundCount(group.items) >
+                                    group.items.length
+                                      ? ` · ${groupRoundCount(group.items)} 轮`
+                                      : ''}
                                   </div>
                                 </button>
                                 {selected ? (
@@ -662,31 +682,73 @@ export function ResultPreviewGallery({
                                         (candidate) => candidate.id === entry.id
                                       )
                                       const active = itemIndex === safeIndex
+                                      const roundCount = Math.max(
+                                        1,
+                                        entry.completedSteps || 1
+                                      )
                                       return (
-                                        <button
-                                          key={entry.id}
-                                          type='button'
-                                          data-preview-index={itemIndex}
-                                          className={cn(
-                                            'w-full rounded-lg px-2 py-1.5 text-left',
-                                            active
-                                              ? 'bg-background shadow-sm'
-                                              : 'hover:bg-background/70'
-                                          )}
-                                          onClick={() => onIndexChange(itemIndex)}
-                                        >
-                                          <div className='truncate text-xs font-medium'>
-                                            {entry.profileName ||
-                                              (entry.createdAt
-                                                ? `任务 ${formatDate(entry.createdAt)}`
-                                                : `任务 ${entry.runId.slice(0, 8)}`)}
-                                          </div>
-                                          <div className='truncate text-[11px] text-muted-foreground'>
-                                            {entry.profileName && entry.createdAt
-                                              ? `任务 ${formatDate(entry.createdAt)}`
-                                              : `ID ${entry.accountId}`}
-                                          </div>
-                                        </button>
+                                        <div key={entry.id}>
+                                          <button
+                                            type='button'
+                                            data-preview-index={itemIndex}
+                                            className={cn(
+                                              'w-full rounded-lg px-2 py-1.5 text-left',
+                                              active
+                                                ? 'bg-background shadow-sm'
+                                                : 'hover:bg-background/70'
+                                            )}
+                                            onClick={() =>
+                                              onIndexChange(itemIndex)
+                                            }
+                                          >
+                                            <div className='flex items-start justify-between gap-2'>
+                                              <div className='min-w-0'>
+                                                <div className='truncate text-xs font-medium'>
+                                                  {entry.profileName ||
+                                                    (entry.createdAt
+                                                      ? `任务 ${formatDate(entry.createdAt)}`
+                                                      : `任务 ${entry.runId.slice(0, 8)}`)}
+                                                </div>
+                                                <div className='truncate text-[11px] text-muted-foreground'>
+                                                  {entry.createdAt
+                                                    ? `任务 ${formatDate(entry.createdAt)}`
+                                                    : `ID ${entry.accountId}`}
+                                                  {roundCount > 1
+                                                    ? ` · ${roundCount} 轮`
+                                                    : ''}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </button>
+                                          {active && runSamples.length > 1 ? (
+                                            <div className='mt-1 flex flex-wrap gap-1 px-1 pb-1'>
+                                              {runSamples.map((entrySample) => {
+                                                const selectedSample =
+                                                  entrySample.id === sample?.id
+                                                return (
+                                                  <Button
+                                                    key={entrySample.id}
+                                                    type='button'
+                                                    size='sm'
+                                                    variant={
+                                                      selectedSample
+                                                        ? 'secondary'
+                                                        : 'outline'
+                                                    }
+                                                    className='h-7 px-2 text-xs'
+                                                    onClick={() =>
+                                                      setSampleOverrideId(
+                                                        entrySample.id
+                                                      )
+                                                    }
+                                                  >
+                                                    第 {entrySample.round_number || 1} 轮
+                                                  </Button>
+                                                )
+                                              })}
+                                            </div>
+                                          ) : null}
+                                        </div>
                                       )
                                     })}
                                   </div>
@@ -948,6 +1010,93 @@ function InspectBar({
   )
 }
 
+function groupRoundCount(items: ResultPreviewItem[]) {
+  return items.reduce(
+    (sum, entry) => sum + Math.max(1, entry.completedSteps || 1),
+    0
+  )
+}
+
+function AccountTaskThumbGroup({
+  item,
+  index,
+  active,
+  activeSampleId,
+  onSelect,
+}: {
+  item: ResultPreviewItem
+  index: number
+  active: boolean
+  activeSampleId?: string
+  onSelect: (index: number, sampleId?: string) => void
+}) {
+  const { ref, inView } = useInView<HTMLDivElement>()
+  const hasLocal = Boolean(item.content || item.sample)
+  const runQuery = useQuery({
+    queryKey: ['run', item.runId],
+    queryFn: () => api.run(item.runId),
+    enabled: inView && !hasLocal && Boolean(item.runId),
+    staleTime: 30_000,
+  })
+  const samples = item.sample
+    ? [item.sample]
+    : samplesForPreview(runQuery.data?.samples ?? [])
+  const leaves = samples.length > 0 ? samples : [null]
+  return (
+    <>
+      {leaves.map((entrySample, offset) => {
+        const leaf: ResultPreviewItem = entrySample
+          ? {
+              ...item,
+              id: `${item.id}:${entrySample.id}`,
+              sampleId: entrySample.id,
+              content: entrySample.response_text,
+              sample: entrySample,
+              createdAt: entrySample.created_at || item.createdAt,
+            }
+          : item
+        const selected =
+          active &&
+          (activeSampleId
+            ? entrySample?.id === activeSampleId
+            : offset === 0)
+        const sameRoundCount = entrySample
+          ? samples.filter(
+              (candidate) =>
+                candidate.round_number === entrySample.round_number
+            ).length
+          : 0
+        const roundLabel = entrySample
+          ? sameRoundCount > 1 && entrySample.egress_name
+            ? `第 ${entrySample.round_number || 1} 轮 · ${entrySample.egress_name}`
+            : `第 ${entrySample.round_number || 1} 轮`
+          : item.profileName || item.accountName
+        const heading = item.profileName
+          ? samples.length > 1
+            ? `${item.profileName} · ${roundLabel}`
+            : item.profileName
+          : roundLabel
+        return (
+          <div
+            key={leaf.id}
+            ref={offset === 0 ? ref : undefined}
+            className='min-w-0'
+          >
+            <PreviewThumbCard
+              item={leaf}
+              index={index}
+              active={selected}
+              sampleLeaves={Boolean(entrySample)}
+              heading={heading}
+              onSelect={() => onSelect(index, entrySample?.id)}
+            />
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
 function VirtualizedThumbGrid({
   items,
   columns,
@@ -1040,12 +1189,14 @@ function PreviewThumbCard({
   index,
   active,
   sampleLeaves,
+  heading,
   onSelect,
 }: {
   item: ResultPreviewItem
   index: number
   active: boolean
   sampleLeaves: boolean
+  heading?: string
   onSelect: (index: number) => void
 }) {
   const { ref, inView } = useInView<HTMLButtonElement>()
@@ -1076,6 +1227,11 @@ function PreviewThumbCard({
       onClick={() => onSelect(index)}
     >
       <div className='relative aspect-[16/10] w-full min-h-0 overflow-hidden border-b bg-muted/20'>
+        {(item.completedSteps || 0) > 1 && !item.sample ? (
+          <span className='absolute top-2 right-2 z-10 rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm'>
+            {item.completedSteps} 轮
+          </span>
+        ) : null}
         {loading ? (
           <div className='flex h-full w-full items-center justify-center text-muted-foreground'>
             <Loader2 className='size-4 animate-spin' />
@@ -1094,9 +1250,10 @@ function PreviewThumbCard({
       </div>
       <div className='h-14 shrink-0 px-2.5 py-2'>
         <div className='truncate text-xs font-medium'>
-          {sampleLeaves
-            ? `第 ${item.sample?.round_number || 1} 轮`
-            : item.accountName}
+          {heading ||
+            (sampleLeaves
+              ? `第 ${item.sample?.round_number || 1} 轮`
+              : item.accountName)}
         </div>
         <div className='mt-0.5 truncate text-[11px] text-muted-foreground'>
           {sampleLeaves ? sampleMeta(item) : accountMeta(item)}
