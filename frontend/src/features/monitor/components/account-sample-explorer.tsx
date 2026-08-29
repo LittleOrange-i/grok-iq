@@ -60,7 +60,7 @@ export function AccountSampleExplorer({
   const navigate = useNavigate()
   const [selectedId, setSelectedId] = useState(samples[0]?.id ?? '')
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
-  const pendingPreviewLand = useRef<'start' | 'end'>()
+  const pendingPreviewLand = useRef<'start' | 'end' | undefined>(undefined)
   const selected =
     samples.find((sample) => sample.id === selectedId) ?? samples[0]
   const previewItems = useMemo(

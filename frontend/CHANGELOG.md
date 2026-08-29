@@ -347,6 +347,7 @@ but introduces breaking changes.
 - close preview when the account timeline jumps to another page
 - sort isolation zone by newest isolation time
 - satisfy lint for result preview
+- initialize preview refs for React 19 types
 
 ## v0.6.4 (2026-08-28)
 

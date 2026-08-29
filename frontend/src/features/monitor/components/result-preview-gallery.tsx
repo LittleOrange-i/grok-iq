@@ -288,7 +288,7 @@ export function ResultPreviewGallery({
   const [runDetailId, setRunDetailId] = useState<string>()
   const [pageDraft, setPageDraft] = useState(String(Math.max(1, page)))
   const [pageDraftSource, setPageDraftSource] = useState(Math.max(1, page))
-  const pendingSampleId = useRef<string | undefined>()
+  const pendingSampleId = useRef<string | undefined>(undefined)
   const currentPage = Math.max(1, page)
   const currentPageCount = Math.max(1, pageCount)
   const safeIndex = items.length

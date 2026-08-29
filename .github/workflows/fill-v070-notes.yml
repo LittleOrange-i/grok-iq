@@ -1,0 +1,41 @@
+name: Fill v0.7.0 release notes
+
+on:
+  workflow_run:
+    workflows: ["Docker images"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  fill:
+    if: github.event.workflow_run.head_branch == 'v0.7.0' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Update GitHub Release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit v0.7.0 --repo "${GITHUB_REPOSITORY}" --title "v0.7.0" --notes "$(cat <<'EOF'
+任务中心新增**结果预览**，方便快速人工审核探针输出是否降智。
+
+缩略图浏览 HTML/文本结果，双击进入阅读模式看详情；预览中可直接把判定降智的账号移入隔离区。
+
+## 预览
+
+- 阅读 / 缩略图两种模式，支持任务或账号视角
+- 探针多轮结果可聚合或平铺展开
+- 支持输入页码跳转，并记住布局
+- 预览里打开探针详情、任务详情不离开当前页
+
+## 其他
+
+- 查询 grok2api 密钥剩余额度
+- 任务中心可打开账号探针详情
+- HTML 源码预览支持复制
+- 隔离区按最新隔离时间排序
+
+**Full Changelog**: https://github.com/kaibush/grok-iq/compare/v0.6.4...v0.7.0
+EOF
+)"
