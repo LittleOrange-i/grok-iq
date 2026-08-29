@@ -36,7 +36,6 @@ type AccountSampleExplorerProps = {
     email?: string
     createdAt?: string | null
   }
-  onOpenAccount?: (accountId: number) => void
   page?: number
   pageCount?: number
   total?: number
@@ -52,7 +51,6 @@ export function AccountSampleExplorer({
   countLabel,
   className,
   account,
-  onOpenAccount,
   page,
   pageCount,
   total,
@@ -188,7 +186,6 @@ export function AccountSampleExplorer({
         items={previewItems}
         index={previewIndex ?? 0}
         onIndexChange={(index) => setPreviewIndex(index)}
-        onOpenAccount={onOpenAccount}
         page={page}
         pageCount={pageCount}
         total={total}
@@ -201,12 +198,6 @@ export function AccountSampleExplorer({
               }
             : undefined
         }
-        onOpenRun={(runId) => {
-          void navigate({
-            to: '/runs',
-            search: { run: runId },
-          } as never)
-        }}
         onOpenQuarantine={() => {
           void navigate({ to: '/quarantine' } as never)
         }}

@@ -1452,8 +1452,6 @@ export function RunsPage() {
               : current
           )
         }
-        onOpenAccount={(accountId) => setAccountDetailId(accountId)}
-        onOpenRun={(runId) => openDetail(runId)}
         onOpenQuarantine={() => {
           void navigate({ to: '/quarantine' } as never)
         }}

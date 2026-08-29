@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronLeft,
@@ -35,7 +35,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  buildEgressNodeNameMap,
+} from '@/features/monitor/components/egress-node-names'
+import { ProbeRunDetailDialog } from '@/features/monitor/components/probe-run-detail-dialog'
 import { DualTpsValue } from '@/features/monitor/components/tps-display'
+
+const AccountProbeDetailDialog = lazy(() =>
+  import('@/features/monitor/components/account-probe-detail-dialog').then(
+    (module) => ({ default: module.AccountProbeDetailDialog })
+  )
+)
 
 const PREVIEW_ISOLATE_NOTE = 'HTML 预览人工判定降智'
 const THUMB_FRAME_WIDTH = 1280
@@ -140,8 +150,6 @@ export function ResultPreviewGallery({
   items,
   index,
   onIndexChange,
-  onOpenAccount,
-  onOpenRun,
   onOpenQuarantine,
   page = 1,
   pageCount = 1,
@@ -154,8 +162,6 @@ export function ResultPreviewGallery({
   items: ResultPreviewItem[]
   index: number
   onIndexChange: (index: number) => void
-  onOpenAccount?: (accountId: number) => void
-  onOpenRun?: (runId: string) => void
   onOpenQuarantine?: () => void
   page?: number
   pageCount?: number
@@ -172,6 +178,8 @@ export function ResultPreviewGallery({
   const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
   const [sampleOverrideId, setSampleOverrideId] = useState<string>()
   const [gridCols, setGridCols] = useState(4)
+  const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
+  const [runDetailId, setRunDetailId] = useState<string>()
   const pendingSampleId = useRef<string | undefined>()
   const currentPage = Math.max(1, page)
   const currentPageCount = Math.max(1, pageCount)
@@ -244,7 +252,18 @@ export function ResultPreviewGallery({
     queryFn: () => api.account(item!.accountId, 1),
     enabled: open && Boolean(item?.accountId),
   })
+  const egressQuery = useQuery({
+    queryKey: ['egress'],
+    queryFn: () => api.egress({ pageSize: 500 }),
+    enabled: open,
+    staleTime: 60_000,
+  })
   const account = accountQuery.data?.account
+  const egressNodeNames = useMemo(
+    () => buildEgressNodeNameMap(egressQuery.data?.items),
+    [egressQuery.data?.items]
+  )
+  const nestedDetailOpen = accountDetailId != null || Boolean(runDetailId)
   const runSamples = item?.sample ? [] : (runQuery.data?.samples ?? [])
   const sample = item?.sample
     ? item.sample
@@ -285,6 +304,12 @@ export function ResultPreviewGallery({
     pendingSampleId.current = undefined
     setSampleOverrideId(nextId)
   }, [item?.id, item?.sampleId])
+
+  useEffect(() => {
+    if (open) return
+    setAccountDetailId(null)
+    setRunDetailId(undefined)
+  }, [open])
 
   useEffect(() => {
     if (!open || view !== 'split') return
@@ -408,7 +433,13 @@ export function ResultPreviewGallery({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!next && nestedDetailOpen) return
+          onOpenChange(next)
+        }}
+      >
         <DialogContent
           showCloseButton={false}
           className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden overflow-x-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
@@ -839,22 +870,8 @@ export function ResultPreviewGallery({
                       sample={sample}
                       loading={accountQuery.isLoading}
                       profileName={profileName}
-                      onOpenAccount={
-                        onOpenAccount
-                          ? () => {
-                              onOpenChange(false)
-                              onOpenAccount(item.accountId)
-                            }
-                          : undefined
-                      }
-                      onOpenRun={
-                        onOpenRun
-                          ? () => {
-                              onOpenChange(false)
-                              onOpenRun(item.runId)
-                            }
-                          : undefined
-                      }
+                      onOpenAccount={() => setAccountDetailId(item.accountId)}
+                      onOpenRun={() => setRunDetailId(item.runId)}
                     />
                     <div className='min-h-0 min-w-0 flex-1 overflow-hidden'>
                       {needsRunFetch && runQuery.isLoading ? (
@@ -890,6 +907,26 @@ export function ResultPreviewGallery({
           </div>
         </DialogContent>
       </Dialog>
+      <Suspense fallback={null}>
+        <AccountProbeDetailDialog
+          accountId={accountDetailId}
+          open={accountDetailId != null}
+          stacked
+          egressNodeNames={egressNodeNames}
+          onOpenChange={(next) => {
+            if (!next) setAccountDetailId(null)
+          }}
+        />
+      </Suspense>
+      <ProbeRunDetailDialog
+        runId={runDetailId}
+        open={Boolean(runDetailId)}
+        stacked
+        egressNodeNames={egressNodeNames}
+        onOpenChange={(next) => {
+          if (!next) setRunDetailId(undefined)
+        }}
+      />
       <ConfirmDialog
         open={isolateOpen}
         onOpenChange={(nextOpen) => {

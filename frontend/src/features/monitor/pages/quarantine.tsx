@@ -1825,14 +1825,6 @@ export function QuarantinePage() {
           setPreviewPage(nextPage)
           setPreviewIndex(0)
         }}
-        onOpenAccount={(accountId) => {
-          setPreviewAccount(null)
-          openAccountSamples(accountId)
-        }}
-        onOpenRun={(runId) => {
-          setPreviewAccount(null)
-          void navigate({ to: '/runs', search: { run: runId } } as never)
-        }}
         onOpenQuarantine={() => setPreviewAccount(null)}
       />
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>

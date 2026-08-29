@@ -59,11 +59,13 @@ export function AccountProbeDetailDialog({
   open,
   onOpenChange,
   egressNodeNames,
+  stacked = false,
 }: {
   accountId: number | null
   open: boolean
   onOpenChange: (open: boolean) => void
   egressNodeNames: EgressNodeNameMap
+  stacked?: boolean
 }) {
   const client = useQueryClient()
   const [isolateOpen, setIsolateOpen] = useState(false)
@@ -126,7 +128,11 @@ export function AccountProbeDetailDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent size='wide' className='overflow-hidden'>
+        <DialogContent
+          size='wide'
+          className={stacked ? 'z-[70] overflow-hidden' : 'overflow-hidden'}
+          overlayClassName={stacked ? 'z-[70]' : undefined}
+        >
           <DialogHeader className='shrink-0'>
             <DialogTitle className='flex items-center gap-2'>
               <UsersRound className='size-5 text-primary' />
@@ -217,6 +223,8 @@ export function AccountProbeDetailDialog({
         </DialogContent>
       </Dialog>
       <ConfirmDialog
+        className={stacked ? 'z-[80]' : undefined}
+        overlayClassName={stacked ? 'z-[80]' : undefined}
         open={isolateOpen}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !isolateMutation.isPending) setIsolateOpen(false)
@@ -251,6 +259,8 @@ export function AccountProbeDetailDialog({
         }}
       />
       <ConfirmDialog
+        className={stacked ? 'z-[80]' : undefined}
+        overlayClassName={stacked ? 'z-[80]' : undefined}
         open={sampleToDelete != null}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && !deleteSampleMutation.isPending) {
