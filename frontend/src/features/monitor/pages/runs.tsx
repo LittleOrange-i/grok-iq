@@ -461,14 +461,26 @@ export function RunsPage() {
     () => query.data?.items ?? [],
     [query.data?.items]
   )
+  const profileNameById = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const profile of profiles.data ?? []) {
+      map[profile.id] = profile.name
+    }
+    return map
+  }, [profiles.data])
   const openRunPreview = useCallback(
     (runId: string, sampleId?: string) => {
-      let items = previewItemsFromRuns(currentPageRuns)
+      let items = previewItemsFromRuns(currentPageRuns, profileNameById)
       if (!items.some((item) => item.runId === runId)) {
         const extraRun =
           currentPageRuns.find((run) => run.id === runId) ||
           (detail.data?.run.id === runId ? detail.data.run : null)
-        if (extraRun) items = [...previewItemsFromRuns([extraRun]), ...items]
+        if (extraRun) {
+          items = [
+            ...previewItemsFromRuns([extraRun], profileNameById),
+            ...items,
+          ]
+        }
       }
       if (!items.length) {
         toast.error('当前页没有可预览的任务样本')
@@ -485,7 +497,7 @@ export function RunsPage() {
       }
       setResultPreview({ items, index })
     },
-    [currentPageRuns, detail.data]
+    [currentPageRuns, detail.data, profileNameById]
   )
   const currentPageRunMap = useMemo(
     () => new Map(currentPageRuns.map((run) => [run.id, run])),

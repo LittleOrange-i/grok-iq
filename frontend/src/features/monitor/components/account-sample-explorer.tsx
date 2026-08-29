@@ -34,6 +34,7 @@ type AccountSampleExplorerProps = {
     id: number | string
     name?: string
     email?: string
+    createdAt?: string | null
   }
   onOpenAccount?: (accountId: number) => void
 }

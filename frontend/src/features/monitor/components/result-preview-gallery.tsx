@@ -1,24 +1,29 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronLeft,
   ChevronRight,
   Columns2,
   ExternalLink,
+  LayoutGrid,
+  LayoutList,
   Loader2,
   ShieldBan,
   UsersRound,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { formatAccountSecondaryLabel } from '@/lib/account-label'
+import { formatAccountCreatedAt } from '@/lib/account-label'
 import {
   api,
   type ProbeRun,
   type ProbeSample,
   type UpstreamAccount,
 } from '@/lib/api'
-import { extractHtmlPreviews } from '@/lib/formatted-content'
+import {
+  buildHtmlDocument,
+  extractHtmlPreviews,
+} from '@/lib/formatted-content'
 import { StatusBadge } from '@/lib/status'
 import { cn, formatDate, formatNumber, getErrorMessage } from '@/lib/utils'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -29,9 +34,12 @@ import { MonitorStatusBadge } from '@/components/monitor-status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DualTpsValue } from '@/features/monitor/components/tps-display'
 
 const PREVIEW_ISOLATE_NOTE = 'HTML 预览人工判定降智'
+const THUMB_FRAME_WIDTH = 1280
+const THUMB_FRAME_HEIGHT = 800
 
 export type ResultPreviewItem = {
   id: string
@@ -39,7 +47,10 @@ export type ResultPreviewItem = {
   accountId: number
   accountName: string
   accountEmail?: string
+  accountCreatedAt?: string | null
+  createdAt?: string | null
   sampleId?: string
+  profileId?: string
   profileName?: string
   expectedOutput?: string
   expectedImageUrl?: string
@@ -47,7 +58,10 @@ export type ResultPreviewItem = {
   sample?: ProbeSample
 }
 
-export function previewItemsFromRuns(runs: ProbeRun[]): ResultPreviewItem[] {
+export function previewItemsFromRuns(
+  runs: ProbeRun[],
+  profileNames: Record<string, string> = {}
+): ResultPreviewItem[] {
   return runs
     .filter((run) => run.completed_steps > 0)
     .map((run) => ({
@@ -57,6 +71,10 @@ export function previewItemsFromRuns(runs: ProbeRun[]): ResultPreviewItem[] {
       accountName:
         run.account_name || run.account_email || `账号 ${run.account_id}`,
       accountEmail: run.account_email,
+      accountCreatedAt: run.account_created_at,
+      createdAt: run.created_at,
+      profileId: run.profile_id,
+      profileName: profileNames[run.profile_id],
     }))
 }
 
@@ -66,6 +84,7 @@ export function previewItemsFromSamples(
     id: number | string
     name?: string
     email?: string
+    createdAt?: string | null
   }
 ): ResultPreviewItem[] {
   const accountId = Number(account.id)
@@ -79,6 +98,8 @@ export function previewItemsFromSamples(
       accountId: sample.account_id || accountId,
       accountName,
       accountEmail: account.email,
+      accountCreatedAt: account.createdAt,
+      createdAt: sample.created_at,
       sampleId: sample.id,
       content: sample.response_text,
       sample,
@@ -127,21 +148,31 @@ export function ResultPreviewGallery({
   onOpenQuarantine?: () => void
 }) {
   const client = useQueryClient()
+  const listRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
   const [isolateOpen, setIsolateOpen] = useState(false)
   const [compareExpected, setCompareExpected] = useState(false)
+  const [view, setView] = useState<'split' | 'grid'>('split')
+  const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
+  const [sampleOverrideId, setSampleOverrideId] = useState<string>()
+  const [gridCols, setGridCols] = useState(4)
   const safeIndex = items.length
     ? Math.min(Math.max(index, 0), items.length - 1)
     : 0
   const item = items[safeIndex]
+  const sampleLeaves = items.some((entry) => entry.sample)
+  const groups = useMemo(() => groupPreviewItems(items), [items])
+  const showGroupToggle = !sampleLeaves && groups.length > 1
+  const effectiveGroup = sampleLeaves || !showGroupToggle ? 'task' : groupMode
   const neighborRunIds = useMemo(() => {
-    if (!item) return []
+    if (!item || view !== 'split') return []
     const ids = [item.runId]
     const previous = items[safeIndex - 1]
     const next = items[safeIndex + 1]
     if (previous?.runId) ids.push(previous.runId)
     if (next?.runId) ids.push(next.runId)
     return Array.from(new Set(ids.filter(Boolean)))
-  }, [item, items, safeIndex])
+  }, [item, items, safeIndex, view])
 
   useQueries({
     queries: neighborRunIds.map((runId) => ({
@@ -158,11 +189,13 @@ export function ResultPreviewGallery({
     })),
   })
 
-  const needsRunFetch = Boolean(item && !item.content && !item.sample && item.runId)
+  const needsRunFetch = Boolean(
+    item && !item.content && !item.sample && item.runId
+  )
   const runQuery = useQuery({
     queryKey: ['run', item?.runId],
     queryFn: () => api.run(item!.runId),
-    enabled: open && Boolean(item?.runId),
+    enabled: open && view === 'split' && Boolean(item?.runId),
     staleTime: 30_000,
   })
   const accountQuery = useQuery({
@@ -171,17 +204,17 @@ export function ResultPreviewGallery({
     enabled: open && Boolean(item?.accountId),
   })
   const account = accountQuery.data?.account
-  const sample = useMemo(() => {
-    if (!item) return null
-    if (item.sample) return item.sample
-    return pickPreviewSample(runQuery.data?.samples ?? [], item.sampleId)
-  }, [item, runQuery.data?.samples])
+  const runSamples = item?.sample ? [] : (runQuery.data?.samples ?? [])
+  const sample = item?.sample
+    ? item.sample
+    : pickPreviewSample(runSamples, sampleOverrideId || item?.sampleId)
   const content = item?.content || sample?.response_text || ''
   const expectedOutput =
     item?.expectedOutput || runQuery.data?.profile?.expected_output || ''
   const expectedImageUrl =
     item?.expectedImageUrl || runQuery.data?.profile?.expected_image_url || ''
-  const profileName = item?.profileName || runQuery.data?.profile?.name || ''
+  const profileName =
+    item?.profileName || runQuery.data?.profile?.name || ''
   const canCompare = Boolean(expectedOutput || expectedImageUrl)
   const alreadyIsolated = isIsolatedAccount(account)
   const isolateMutation = useMutation({
@@ -207,15 +240,42 @@ export function ResultPreviewGallery({
   useEffect(() => {
     setCompareExpected(false)
     setIsolateOpen(false)
-  }, [item?.id])
+    setSampleOverrideId(item?.sampleId)
+  }, [item?.id, item?.sampleId])
 
   useEffect(() => {
-    if (!open) return
-    const active = document.querySelector<HTMLElement>(
+    if (!open || view !== 'split') return
+    const container = listRef.current
+    const active = container?.querySelector<HTMLElement>(
       `[data-preview-index="${safeIndex}"]`
     )
-    active?.scrollIntoView({ inline: 'center', block: 'nearest' })
-  }, [open, safeIndex])
+    if (container && active) scrollChildIntoContainer(container, active)
+  }, [open, safeIndex, view, effectiveGroup])
+
+  useEffect(() => {
+    if (!open || view !== 'grid') return
+    const container = gridRef.current
+    const active = container?.querySelector<HTMLElement>(
+      `[data-preview-index="${safeIndex}"]`
+    )
+    if (container && active) scrollChildIntoContainer(container, active)
+  }, [open, safeIndex, view, effectiveGroup])
+
+  useEffect(() => {
+    const node = gridRef.current
+    if (!node || view !== 'grid') return
+    const measure = () => {
+      const first = node.querySelector<HTMLElement>('[data-preview-index]')
+      if (!first) return
+      setGridCols(
+        Math.max(1, Math.round(node.clientWidth / Math.max(first.offsetWidth, 1)))
+      )
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [view, items.length, effectiveGroup])
 
   useEffect(() => {
     if (!open) return
@@ -227,12 +287,38 @@ export function ResultPreviewGallery({
         return
       }
       if (isolateOpen) return
-      if (event.key === 'ArrowLeft') {
+      if (event.key === 'Enter' && view === 'grid') {
         event.preventDefault()
-        if (safeIndex > 0) onIndexChange(safeIndex - 1)
-      } else if (event.key === 'ArrowRight') {
+        setView('split')
+        return
+      }
+      if (event.key === '[' || event.key === ']') {
+        if (runSamples.length < 2) return
         event.preventDefault()
-        if (safeIndex < items.length - 1) onIndexChange(safeIndex + 1)
+        const currentId = sample?.id
+        const current = Math.max(
+          0,
+          runSamples.findIndex((entry) => entry.id === currentId)
+        )
+        const next =
+          event.key === ']'
+            ? Math.min(runSamples.length - 1, current + 1)
+            : Math.max(0, current - 1)
+        setSampleOverrideId(runSamples[next]?.id)
+        return
+      }
+      const step =
+        view === 'grid' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+          ? gridCols
+          : 1
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (safeIndex > 0) onIndexChange(Math.max(0, safeIndex - step))
+      } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (safeIndex < items.length - 1) {
+          onIndexChange(Math.min(items.length - 1, safeIndex + step))
+        }
       } else if (event.key === 'i' || event.key === 'I') {
         event.preventDefault()
         if (item && !alreadyIsolated) setIsolateOpen(true)
@@ -242,30 +328,72 @@ export function ResultPreviewGallery({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     alreadyIsolated,
+    gridCols,
     isolateOpen,
     item,
     items.length,
     onIndexChange,
     open,
+    runSamples,
     safeIndex,
+    sample?.id,
+    view,
   ])
+
+  const counterLabel = sampleLeaves
+    ? `样本 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+    : effectiveGroup === 'account'
+      ? `账号 ${Math.max(1, groups.findIndex((group) => group.accountId === item?.accountId) + 1)} / ${groups.length} · 任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+      : `任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
           showCloseButton={false}
-          className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
+          className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden overflow-x-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
         >
-          <div className='flex h-full min-h-0 flex-col'>
+          <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
             <header className='flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2'>
+              <Tabs
+                value={view}
+                className='shrink-0 gap-0'
+                onValueChange={(value) =>
+                  setView(value === 'grid' ? 'grid' : 'split')
+                }
+              >
+                <TabsList className='h-8'>
+                  <TabsTrigger value='split'>
+                    <LayoutList className='size-3.5' />
+                    阅读
+                  </TabsTrigger>
+                  <TabsTrigger value='grid'>
+                    <LayoutGrid className='size-3.5' />
+                    缩略图
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {showGroupToggle ? (
+                <Tabs
+                  value={effectiveGroup}
+                  className='shrink-0 gap-0'
+                  onValueChange={(value) =>
+                    setGroupMode(value === 'account' ? 'account' : 'task')
+                  }
+                >
+                  <TabsList className='h-8'>
+                    <TabsTrigger value='task'>任务</TabsTrigger>
+                    <TabsTrigger value='account'>账号</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              ) : null}
               <Button
                 type='button'
                 size='icon'
                 variant='ghost'
                 disabled={safeIndex <= 0}
                 onClick={() => onIndexChange(safeIndex - 1)}
-                aria-label='上一个账号'
+                aria-label='上一项'
               >
                 <ChevronLeft />
               </Button>
@@ -275,23 +403,21 @@ export function ResultPreviewGallery({
                 variant='ghost'
                 disabled={safeIndex >= items.length - 1}
                 onClick={() => onIndexChange(safeIndex + 1)}
-                aria-label='下一个账号'
+                aria-label='下一项'
               >
                 <ChevronRight />
               </Button>
               <div className='min-w-0 flex-1'>
                 <div className='truncate font-medium'>
-                  {item?.accountName || '账号结果预览'}
+                  {item?.accountName || '结果预览'}
                 </div>
                 <div className='truncate text-xs text-muted-foreground'>
                   {item
-                    ? `${safeIndex + 1} / ${items.length}${
-                        profileName ? ` · ${profileName}` : ''
-                      }`
+                    ? `${counterLabel}${profileName ? ` · ${profileName}` : ''}`
                     : '当前筛选没有可预览样本'}
                 </div>
               </div>
-              {canCompare ? (
+              {canCompare && view === 'split' ? (
                 <Button
                   type='button'
                   size='sm'
@@ -338,91 +464,286 @@ export function ResultPreviewGallery({
               </Button>
             </header>
             {item ? (
-              <div className='grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_20rem]'>
-                <div className='min-h-0'>
-                  {needsRunFetch && runQuery.isLoading ? (
-                    <div className='flex h-full items-center justify-center gap-2 text-sm text-muted-foreground'>
-                      <Loader2 className='size-4 animate-spin' />
-                      正在读取样本
-                    </div>
-                  ) : needsRunFetch && runQuery.isError ? (
-                    <div className='flex h-full items-center justify-center p-6 text-sm text-destructive'>
-                      {getErrorMessage(runQuery.error)}
+              view === 'grid' ? (
+                <div
+                  ref={gridRef}
+                  className='min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4'
+                >
+                  {effectiveGroup === 'account' ? (
+                    <div className='space-y-6'>
+                      {groups.map((group) => (
+                        <section key={group.accountId}>
+                          <div className='sticky top-0 z-10 mb-2 bg-background/95 py-1 text-sm font-medium backdrop-blur-sm'>
+                            {group.accountName}
+                            <span className='ms-2 text-xs font-normal text-muted-foreground'>
+                              {accountMeta(group.items[0], {
+                                includeTaskTime: false,
+                              })}
+                              {` · ${group.items.length} 个任务`}
+                            </span>
+                          </div>
+                          <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
+                            {group.items.map((entry) => (
+                              <PreviewThumbCard
+                                key={entry.id}
+                                item={entry}
+                                index={items.findIndex(
+                                  (candidate) => candidate.id === entry.id
+                                )}
+                                active={entry.id === item.id}
+                                sampleLeaves={sampleLeaves}
+                                onSelect={(nextIndex) => {
+                                  onIndexChange(nextIndex)
+                                  setView('split')
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
                     </div>
                   ) : (
-                    <ContentPreviewCanvas
-                      key={item.id}
-                      content={content}
-                      expectedImageUrl={expectedImageUrl}
-                      expectedContent={expectedOutput}
-                      compareExpected={compareExpected}
-                      className='h-full'
-                    />
+                    <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
+                      {items.map((entry, itemIndex) => (
+                        <PreviewThumbCard
+                          key={entry.id}
+                          item={entry}
+                          index={itemIndex}
+                          active={itemIndex === safeIndex}
+                          sampleLeaves={sampleLeaves}
+                          onSelect={(nextIndex) => {
+                            onIndexChange(nextIndex)
+                            setView('split')
+                          }}
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
-                <aside className='min-h-0 overflow-y-auto border-t bg-muted/15 p-4 lg:border-t-0 lg:border-s'>
-                  <PreviewAccountPane
-                    item={item}
-                    account={account}
-                    sample={sample}
-                    loading={accountQuery.isLoading}
-                    onOpenAccount={
-                      onOpenAccount
-                        ? () => {
-                            onOpenChange(false)
-                            onOpenAccount(item.accountId)
-                          }
-                        : undefined
-                    }
-                    onOpenRun={
-                      onOpenRun
-                        ? () => {
-                            onOpenChange(false)
-                            onOpenRun(item.runId)
-                          }
-                        : undefined
-                    }
-                  />
-                </aside>
-              </div>
+              ) : (
+                <div className='flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:flex-row'>
+                  <aside className='flex max-h-56 w-full shrink-0 flex-col overflow-hidden border-b bg-muted/10 lg:max-h-none lg:w-[22rem] lg:border-e lg:border-b-0'>
+                    <div className='flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2'>
+                      <span className='text-sm font-medium'>
+                        {sampleLeaves
+                          ? '样本'
+                          : effectiveGroup === 'account'
+                            ? '账号'
+                            : '任务'}
+                      </span>
+                      <Badge variant='secondary'>
+                        {sampleLeaves || effectiveGroup === 'task'
+                          ? items.length
+                          : groups.length}
+                      </Badge>
+                    </div>
+                    <div
+                      ref={listRef}
+                      className='min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-2'
+                    >
+                      {effectiveGroup === 'account' ? (
+                        <div className='space-y-2'>
+                          {groups.map((group) => {
+                            const selected = group.accountId === item.accountId
+                            return (
+                              <div
+                                key={group.accountId}
+                                className={cn(
+                                  'rounded-xl border',
+                                  selected
+                                    ? 'border-primary/45 bg-primary/5'
+                                    : 'bg-background'
+                                )}
+                              >
+                                <button
+                                  type='button'
+                                  className='w-full px-3 py-2.5 text-left'
+                                  onClick={() =>
+                                    onIndexChange(
+                                      items.findIndex(
+                                        (entry) => entry.id === group.items[0].id
+                                      )
+                                    )
+                                  }
+                                >
+                                  <div className='truncate text-sm font-medium'>
+                                    {group.accountName}
+                                  </div>
+                                  <div className='mt-1 truncate text-[11px] text-muted-foreground'>
+                                    {accountMeta(group.items[0], {
+                                      includeTaskTime: false,
+                                    })}
+                                    {` · ${group.items.length} 个任务`}
+                                  </div>
+                                </button>
+                                {selected ? (
+                                  <div className='space-y-1 border-t px-2 py-2'>
+                                    {group.items.map((entry) => {
+                                      const itemIndex = items.findIndex(
+                                        (candidate) => candidate.id === entry.id
+                                      )
+                                      const active = itemIndex === safeIndex
+                                      return (
+                                        <button
+                                          key={entry.id}
+                                          type='button'
+                                          data-preview-index={itemIndex}
+                                          className={cn(
+                                            'w-full rounded-lg px-2 py-1.5 text-left',
+                                            active
+                                              ? 'bg-background shadow-sm'
+                                              : 'hover:bg-background/70'
+                                          )}
+                                          onClick={() => onIndexChange(itemIndex)}
+                                        >
+                                          <div className='truncate text-xs font-medium'>
+                                            {entry.profileName ||
+                                              (entry.createdAt
+                                                ? `任务 ${formatDate(entry.createdAt)}`
+                                                : `任务 ${entry.runId.slice(0, 8)}`)}
+                                          </div>
+                                          <div className='truncate text-[11px] text-muted-foreground'>
+                                            {entry.profileName && entry.createdAt
+                                              ? `任务 ${formatDate(entry.createdAt)}`
+                                              : `ID ${entry.accountId}`}
+                                          </div>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className='space-y-2'>
+                          {items.map((entry, itemIndex) => {
+                            const active = itemIndex === safeIndex
+                            return (
+                              <div key={entry.id}>
+                                <button
+                                  type='button'
+                                  data-preview-index={itemIndex}
+                                  className={cn(
+                                    'w-full rounded-xl border px-3 py-2.5 text-left transition-colors',
+                                    active
+                                      ? 'border-primary/45 bg-primary/5'
+                                      : 'bg-background hover:border-border hover:bg-muted/40'
+                                  )}
+                                  onClick={() => onIndexChange(itemIndex)}
+                                >
+                                  <div className='flex items-start justify-between gap-2'>
+                                    <div className='min-w-0'>
+                                      <div className='truncate text-sm font-medium'>
+                                        {sampleLeaves
+                                          ? `第 ${entry.sample?.round_number || 1} 轮`
+                                          : entry.accountName}
+                                      </div>
+                                      <div className='mt-1 truncate text-[11px] text-muted-foreground'>
+                                        {sampleLeaves
+                                          ? sampleMeta(entry)
+                                          : accountMeta(entry)}
+                                      </div>
+                                    </div>
+                                    {sampleLeaves && entry.sample ? (
+                                      <StatusBadge
+                                        value={entry.sample.classification}
+                                      />
+                                    ) : entry.profileName ? (
+                                      <Badge
+                                        variant='outline'
+                                        className='max-w-24 truncate'
+                                      >
+                                        {entry.profileName}
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                </button>
+                                {active && runSamples.length > 1 ? (
+                                  <div className='mt-1 flex flex-wrap gap-1 px-1'>
+                                    {runSamples.map((entrySample) => {
+                                      const selectedSample =
+                                        entrySample.id === sample?.id
+                                      return (
+                                        <Button
+                                          key={entrySample.id}
+                                          type='button'
+                                          size='sm'
+                                          variant={
+                                            selectedSample ? 'secondary' : 'outline'
+                                          }
+                                          className='h-7 px-2 text-xs'
+                                          onClick={() =>
+                                            setSampleOverrideId(entrySample.id)
+                                          }
+                                        >
+                                          第 {entrySample.round_number || 1} 轮
+                                        </Button>
+                                      )
+                                    })}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </aside>
+                  <div className='flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'>
+                    <InspectBar
+                      item={item}
+                      account={account}
+                      sample={sample}
+                      loading={accountQuery.isLoading}
+                      profileName={profileName}
+                      onOpenAccount={
+                        onOpenAccount
+                          ? () => {
+                              onOpenChange(false)
+                              onOpenAccount(item.accountId)
+                            }
+                          : undefined
+                      }
+                      onOpenRun={
+                        onOpenRun
+                          ? () => {
+                              onOpenChange(false)
+                              onOpenRun(item.runId)
+                            }
+                          : undefined
+                      }
+                    />
+                    <div className='min-h-0 min-w-0 flex-1 overflow-hidden'>
+                      {needsRunFetch && runQuery.isLoading ? (
+                        <div className='flex h-full items-center justify-center gap-2 text-sm text-muted-foreground'>
+                          <Loader2 className='size-4 animate-spin' />
+                          正在读取样本
+                        </div>
+                      ) : needsRunFetch && runQuery.isError ? (
+                        <div className='flex h-full items-center justify-center p-6 text-sm text-destructive'>
+                          {getErrorMessage(runQuery.error)}
+                        </div>
+                      ) : (
+                        <ContentPreviewCanvas
+                          key={`${item.id}:${sample?.id ?? 'empty'}`}
+                          content={content}
+                          expectedImageUrl={expectedImageUrl}
+                          expectedContent={expectedOutput}
+                          compareExpected={compareExpected}
+                          className='h-full min-w-0'
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
             ) : (
               <div className='flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground'>
                 当前筛选没有可预览的任务样本
               </div>
             )}
-            {items.length > 1 ? (
-              <div className='shrink-0 border-t bg-background px-2 py-2'>
-                <div className='mb-1.5 px-1 text-[11px] text-muted-foreground'>
-                  ← → 翻页 · I 隔离 · Esc 关闭
-                </div>
-                <div className='flex min-w-max gap-1.5 overflow-x-auto'>
-                  {items.map((entry, itemIndex) => {
-                    const active = itemIndex === safeIndex
-                    return (
-                      <button
-                        key={entry.id}
-                        type='button'
-                        data-preview-index={itemIndex}
-                        className={cn(
-                          'max-w-40 rounded-lg border px-2.5 py-1.5 text-left transition-colors',
-                          active
-                            ? 'border-primary/50 bg-primary/10'
-                            : 'hover:bg-muted/60'
-                        )}
-                        onClick={() => onIndexChange(itemIndex)}
-                      >
-                        <div className='truncate text-xs font-medium'>
-                          {entry.accountName}
-                        </div>
-                        <div className='truncate text-[11px] text-muted-foreground'>
-                          {entry.accountEmail || `账号 ${entry.accountId}`}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -466,11 +787,12 @@ export function ResultPreviewGallery({
   )
 }
 
-function PreviewAccountPane({
+function InspectBar({
   item,
   account,
   sample,
   loading,
+  profileName,
   onOpenAccount,
   onOpenRun,
 }: {
@@ -478,98 +800,66 @@ function PreviewAccountPane({
   account?: UpstreamAccount
   sample: ProbeSample | null
   loading: boolean
+  profileName?: string
   onOpenAccount?: () => void
   onOpenRun?: () => void
 }) {
-  const assessment = account?.assessment
   return (
-    <div className='space-y-4'>
-      <div>
-        <div className='flex items-start gap-1'>
-          <div className='min-w-0 flex-1'>
-            <div className='font-medium break-all'>{item.accountName}</div>
-            <div className='mt-1 text-xs text-muted-foreground'>
-              {formatAccountSecondaryLabel({
-                id: String(item.accountId),
-                email: item.accountEmail || account?.email,
-                createdAt: account?.createdAt,
-                accountLabel: item.accountName,
-              })}
-            </div>
-          </div>
-          <CopyButton
-            value={item.accountEmail?.trim() || String(item.accountId)}
-            className='size-6'
-          />
-        </div>
-        <div className='mt-3 flex flex-wrap gap-1.5'>
-          {loading ? (
-            <Badge variant='outline'>读取账号中</Badge>
-          ) : (
-            <>
-              <MonitorStatusBadge status={assessment?.monitor_status} />
-              {account?.missingUpstream ? (
-                <Badge variant='outline'>上游缺失</Badge>
-              ) : (
-                <EnabledBadge enabled={account?.enabled} prefix='上游' />
-              )}
-              {isIsolatedAccount(account) ? (
-                <Badge variant='secondary'>已隔离</Badge>
-              ) : null}
-            </>
-          )}
-        </div>
-      </div>
-      {sample ? (
-        <div className='space-y-2 rounded-lg border bg-background p-3'>
-          <div className='flex items-center justify-between gap-2'>
-            <span className='text-xs text-muted-foreground'>本条样本</span>
-            <StatusBadge value={sample.classification} />
-          </div>
-          <div className='grid grid-cols-2 gap-2 text-sm'>
-            <PreviewMetric
-              label='TPS'
-              value={
-                <DualTpsValue
-                  tps={sample.tps}
-                  upstreamTps={sample.upstream_tps}
-                  compact
-                />
-              }
-            />
-            <PreviewMetric
-              label='首 Token'
-              value={`${formatNumber(sample.first_token_ms, 0)} ms`}
-            />
-            <PreviewMetric
-              label='耗时'
-              value={`${formatNumber(sample.duration_ms, 0)} ms`}
-            />
-            <PreviewMetric
-              label='轮次'
-              value={`第 ${sample.round_number || 1} 轮`}
-            />
-          </div>
-          <div className='text-xs text-muted-foreground'>
-            {formatDate(sample.created_at)}
-          </div>
-        </div>
+    <div className='flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2'>
+      {loading ? (
+        <Badge variant='outline'>读取账号中</Badge>
       ) : (
-        <div className='rounded-lg border border-dashed p-3 text-sm text-muted-foreground'>
-          还没有可展示的样本正文
-        </div>
+        <>
+          <MonitorStatusBadge status={account?.assessment.monitor_status} />
+          {account?.missingUpstream ? (
+            <Badge variant='outline'>上游缺失</Badge>
+          ) : (
+            <EnabledBadge enabled={account?.enabled} prefix='上游' />
+          )}
+          {isIsolatedAccount(account) ? (
+            <Badge variant='secondary'>已隔离</Badge>
+          ) : null}
+        </>
       )}
-      <div className='flex flex-col gap-2'>
+      {sample ? <StatusBadge value={sample.classification} /> : null}
+      {profileName ? (
+        <Badge variant='outline' className='max-w-40 truncate'>
+          {profileName}
+        </Badge>
+      ) : null}
+      {sample ? (
+        <>
+          <span className='text-xs text-muted-foreground'>
+            TPS{' '}
+            <DualTpsValue
+              tps={sample.tps}
+              upstreamTps={sample.upstream_tps}
+              compact
+            />
+          </span>
+          <span className='text-xs text-muted-foreground'>
+            首 Token {formatNumber(sample.first_token_ms, 0)} ms
+          </span>
+          <span className='text-xs text-muted-foreground'>
+            耗时 {formatNumber(sample.duration_ms, 0)} ms
+          </span>
+        </>
+      ) : null}
+      <CopyButton
+        value={item.accountEmail?.trim() || String(item.accountId)}
+        className='size-6'
+      />
+      <div className='ms-auto flex flex-wrap gap-2'>
         {onOpenAccount ? (
-          <Button type='button' variant='outline' onClick={onOpenAccount}>
+          <Button type='button' size='sm' variant='outline' onClick={onOpenAccount}>
             <UsersRound />
-            打开探针详情
+            探针详情
           </Button>
         ) : null}
         {onOpenRun ? (
-          <Button type='button' variant='outline' onClick={onOpenRun}>
+          <Button type='button' size='sm' variant='outline' onClick={onOpenRun}>
             <ExternalLink />
-            打开任务详情
+            任务详情
           </Button>
         ) : null}
       </div>
@@ -577,19 +867,197 @@ function PreviewAccountPane({
   )
 }
 
-function PreviewMetric({
-  label,
-  value,
+function PreviewThumbCard({
+  item,
+  index,
+  active,
+  sampleLeaves,
+  onSelect,
 }: {
-  label: string
-  value: ReactNode
+  item: ResultPreviewItem
+  index: number
+  active: boolean
+  sampleLeaves: boolean
+  onSelect: (index: number) => void
 }) {
+  const { ref, inView } = useInView<HTMLButtonElement>()
+  const hasLocal = Boolean(item.content || item.sample)
+  const runQuery = useQuery({
+    queryKey: ['run', item.runId],
+    queryFn: () => api.run(item.runId),
+    enabled: inView && !hasLocal && Boolean(item.runId),
+    staleTime: 30_000,
+  })
+  const sample = item.sample
+    ? item.sample
+    : pickPreviewSample(runQuery.data?.samples ?? [], item.sampleId)
+  const content = item.content || sample?.response_text || ''
+  const html = extractHtmlPreviews(content)[0]
+  const loading = inView && !hasLocal && runQuery.isLoading && !content
   return (
-    <div>
-      <div className='text-[11px] text-muted-foreground'>{label}</div>
-      <div className='mt-0.5 tabular-nums'>{value}</div>
+    <button
+      ref={ref}
+      type='button'
+      data-preview-index={index}
+      className={cn(
+        'overflow-hidden rounded-xl border bg-background text-left transition-colors',
+        active
+          ? 'border-primary/60 ring-2 ring-primary/20'
+          : 'hover:border-primary/30'
+      )}
+      onClick={() => onSelect(index)}
+    >
+      <div className='border-b bg-muted/20'>
+        {loading ? (
+          <div className='flex aspect-[16/10] items-center justify-center text-muted-foreground'>
+            <Loader2 className='size-4 animate-spin' />
+          </div>
+        ) : html ? (
+          <ScaledHtmlThumb html={html} />
+        ) : content.trim() ? (
+          <div className='aspect-[16/10] overflow-hidden p-3 text-[11px] leading-5 text-muted-foreground'>
+            {content.replace(/\s+/g, ' ').slice(0, 220)}
+          </div>
+        ) : (
+          <div className='flex aspect-[16/10] items-center justify-center text-xs text-muted-foreground'>
+            {inView ? '没有可预览正文' : '滚动后加载'}
+          </div>
+        )}
+      </div>
+      <div className='px-2.5 py-2'>
+        <div className='truncate text-xs font-medium'>
+          {sampleLeaves
+            ? `第 ${item.sample?.round_number || 1} 轮`
+            : item.accountName}
+        </div>
+        <div className='mt-0.5 truncate text-[11px] text-muted-foreground'>
+          {sampleLeaves ? sampleMeta(item) : accountMeta(item)}
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function ScaledHtmlThumb({ html }: { html: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(0)
+  const htmlDocument = useMemo(() => buildHtmlDocument(html), [html])
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    const update = () => setWidth(node.clientWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+  const scale = width > 0 ? width / THUMB_FRAME_WIDTH : 0
+  return (
+    <div
+      ref={ref}
+      className='relative overflow-hidden bg-white'
+      style={{
+        height: scale > 0 ? THUMB_FRAME_HEIGHT * scale : undefined,
+        aspectRatio: scale > 0 ? undefined : '16 / 10',
+      }}
+    >
+      {scale > 0 ? (
+        <iframe
+          title='HTML thumbnail'
+          sandbox='allow-scripts allow-forms'
+          srcDoc={htmlDocument}
+          tabIndex={-1}
+          className='pointer-events-none absolute top-0 left-0 origin-top-left border-0 bg-white'
+          style={{
+            width: THUMB_FRAME_WIDTH,
+            height: THUMB_FRAME_HEIGHT,
+            transform: `scale(${scale})`,
+          }}
+        />
+      ) : null}
     </div>
   )
+}
+
+function useInView<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(Boolean(entry?.isIntersecting)),
+      { rootMargin: '280px 0px', threshold: 0.01 }
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+  return { ref, inView }
+}
+
+function groupPreviewItems(items: ResultPreviewItem[]) {
+  const order: number[] = []
+  const map = new Map<number, ResultPreviewItem[]>()
+  for (const item of items) {
+    if (!map.has(item.accountId)) {
+      order.push(item.accountId)
+      map.set(item.accountId, [])
+    }
+    map.get(item.accountId)!.push(item)
+  }
+  return order.map((accountId) => {
+    const grouped = map.get(accountId) ?? []
+    return {
+      accountId,
+      accountName: grouped[0]?.accountName || `账号 ${accountId}`,
+      items: grouped,
+    }
+  })
+}
+
+function accountMeta(
+  item: ResultPreviewItem,
+  options: { includeTaskTime?: boolean } = {}
+) {
+  const includeTaskTime = options.includeTaskTime ?? true
+  const email = item.accountEmail?.trim()
+  const parts = [`ID ${item.accountId}`]
+  if (
+    email &&
+    email.toLowerCase() !== item.accountName.trim().toLowerCase()
+  ) {
+    parts.push(email)
+  }
+  if (includeTaskTime && item.createdAt) {
+    parts.push(`任务 ${formatDate(item.createdAt)}`)
+  }
+  if (item.accountCreatedAt) {
+    parts.push(`账号 ${formatAccountCreatedAt(item.accountCreatedAt)}`)
+  }
+  return parts.join(' · ')
+}
+
+function sampleMeta(item: ResultPreviewItem) {
+  const parts = []
+  if (item.createdAt) parts.push(formatDate(item.createdAt))
+  if (item.accountCreatedAt) {
+    parts.push(`账号 ${formatAccountCreatedAt(item.accountCreatedAt)}`)
+  }
+  return parts.join(' · ') || `ID ${item.accountId}`
+}
+
+function scrollChildIntoContainer(container: HTMLElement, child: HTMLElement) {
+  const extra = 8
+  const containerRect = container.getBoundingClientRect()
+  const childRect = child.getBoundingClientRect()
+  const childTop =
+    childRect.top - containerRect.top + container.scrollTop
+  const childBottom = childTop + child.offsetHeight
+  if (childTop < container.scrollTop + extra) {
+    container.scrollTop = Math.max(0, childTop - extra)
+  } else if (childBottom > container.scrollTop + container.clientHeight - extra) {
+    container.scrollTop = childBottom - container.clientHeight + extra
+  }
 }
 
 function isIsolatedAccount(account?: UpstreamAccount) {
