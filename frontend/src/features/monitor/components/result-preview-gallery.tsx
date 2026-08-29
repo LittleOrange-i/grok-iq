@@ -681,7 +681,7 @@ export function ResultPreviewGallery({
                         </section>
                       ))}
                     </div>
-                  ) : (
+                  ) : sampleLeaves ? (
                     <VirtualizedThumbGrid
                       items={items}
                       columns={gridCols}
@@ -693,6 +693,23 @@ export function ResultPreviewGallery({
                         setView('split')
                       }}
                     />
+                  ) : (
+                    <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
+                      {items.map((entry, entryIndex) => (
+                        <AccountTaskThumbGroup
+                          key={entry.id}
+                          item={entry}
+                          index={entryIndex}
+                          active={entry.id === item.id}
+                          activeSampleId={sample?.id}
+                          variant='task'
+                          onSelect={(nextIndex, sampleId) => {
+                            selectPreviewItem(nextIndex, sampleId)
+                            setView('split')
+                          }}
+                        />
+                      ))}
+                    </div>
                   )}
                 </div>
               ) : (
@@ -1109,12 +1126,14 @@ function AccountTaskThumbGroup({
   index,
   active,
   activeSampleId,
+  variant = 'account',
   onSelect,
 }: {
   item: ResultPreviewItem
   index: number
   active: boolean
   activeSampleId?: string
+  variant?: 'task' | 'account'
   onSelect: (index: number, sampleId?: string) => void
 }) {
   const { ref, inView } = useInView<HTMLDivElement>()
@@ -1158,11 +1177,16 @@ function AccountTaskThumbGroup({
             ? `第 ${entrySample.round_number || 1} 轮 · ${entrySample.egress_name}`
             : `第 ${entrySample.round_number || 1} 轮`
           : item.profileName || item.accountName
-        const heading = item.profileName
-          ? samples.length > 1
-            ? `${item.profileName} · ${roundLabel}`
+        const heading =
+          variant === 'task'
+            ? samples.length > 1 && entrySample
+              ? `${item.accountName} · ${roundLabel}`
+              : item.accountName
             : item.profileName
-          : roundLabel
+              ? samples.length > 1
+                ? `${item.profileName} · ${roundLabel}`
+                : item.profileName
+              : roundLabel
         return (
           <div
             key={leaf.id}
@@ -1173,7 +1197,7 @@ function AccountTaskThumbGroup({
               item={leaf}
               index={index}
               active={selected}
-              sampleLeaves={Boolean(entrySample)}
+              sampleLeaves={variant !== 'task' && Boolean(entrySample)}
               heading={heading}
               onSelect={() => onSelect(index, entrySample?.id)}
             />
