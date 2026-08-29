@@ -329,6 +329,25 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.7.0 (2026-08-29)
+
+### Feat
+
+- add task-center result preview so operators can quickly review probe HTML/text and isolate degraded accounts
+- switch preview between reading and thumbnail modes, with account/task grouping and round expansion
+- jump preview pages by number and remember layout across reloads
+- look up grok2api client key remaining quota
+- open account probe details from the task center
+- copy HTML source from the formatted preview
+
+### Fix
+
+- keep preview thumbnails uniform, paginated, and complete across probe rounds
+- open probe/run details as dialogs from preview without leaving the gallery
+- close preview when the account timeline jumps to another page
+- sort isolation zone by newest isolation time
+- satisfy lint for result preview
+
 ## v0.6.4 (2026-08-28)
 
 ### Feat
