@@ -60,12 +60,14 @@ export function AccountProbeDetailDialog({
   onOpenChange,
   egressNodeNames,
   stacked = false,
+  onNavigateAway,
 }: {
   accountId: number | null
   open: boolean
   onOpenChange: (open: boolean) => void
   egressNodeNames: EgressNodeNameMap
   stacked?: boolean
+  onNavigateAway?: () => void
 }) {
   const client = useQueryClient()
   const [isolateOpen, setIsolateOpen] = useState(false)
@@ -175,7 +177,10 @@ export function AccountProbeDetailDialog({
                       : null
                   }
                   onDeleteSample={setSampleToDelete}
-                  onNavigate={() => onOpenChange(false)}
+                  onNavigate={() => {
+                    onOpenChange(false)
+                    onNavigateAway?.()
+                  }}
                 />
               )
             )}

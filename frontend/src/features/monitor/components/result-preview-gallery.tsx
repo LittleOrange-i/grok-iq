@@ -916,6 +916,7 @@ export function ResultPreviewGallery({
           onOpenChange={(next) => {
             if (!next) setAccountDetailId(null)
           }}
+          onNavigateAway={() => onOpenChange(false)}
         />
       </Suspense>
       <ProbeRunDetailDialog
