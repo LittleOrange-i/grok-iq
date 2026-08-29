@@ -676,13 +676,13 @@ export function ResultPreviewGallery({
               view === 'grid' ? (
                 <div
                   ref={gridRef}
-                  className='min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4'
+                  className='min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain'
                 >
                   {effectiveGroup === 'account' ? (
-                    <div className='flex flex-col gap-6'>
+                    <div className='flex flex-col px-4 pb-4'>
                       {groups.map((group) => (
                         <section key={group.accountId}>
-                          <div className='sticky top-0 z-30 isolate -mx-4 mb-3 border-b border-border/70 bg-background px-4 py-2'>
+                          <div className='sticky top-0 z-30 isolate -mx-4 border-b border-border/70 bg-background px-4 py-2'>
                             <div className='truncate text-sm font-medium'>
                               {group.accountName}
                             </div>
@@ -696,7 +696,7 @@ export function ResultPreviewGallery({
                                 : ''}
                             </div>
                           </div>
-                          <div className={THUMB_GRID_CLASSNAME}>
+                          <div className={`${THUMB_GRID_CLASSNAME} pt-3 pb-6`}>
                             {group.items.map((entry) => {
                               const index = items.findIndex(
                                 (candidate) => candidate.id === entry.id
@@ -728,7 +728,7 @@ export function ResultPreviewGallery({
                       ))}
                     </div>
                   ) : expandRounds ? (
-                    <div className={THUMB_GRID_CLASSNAME}>
+                    <div className={`${THUMB_GRID_CLASSNAME} p-4`}>
                       {items.map((entry, entryIndex) => (
                         <AccountTaskThumbGroup
                           key={entry.id}
@@ -743,15 +743,17 @@ export function ResultPreviewGallery({
                       ))}
                     </div>
                   ) : (
-                    <VirtualizedThumbGrid
-                      items={items}
-                      columns={gridCols}
-                      activeId={item.id}
-                      sampleLeaves={sampleLeaves}
-                      scrollRef={gridRef}
-                      onSelect={onIndexChange}
-                      onOpen={openPreviewItem}
-                    />
+                    <div className='p-4'>
+                      <VirtualizedThumbGrid
+                        items={items}
+                        columns={gridCols}
+                        activeId={item.id}
+                        sampleLeaves={sampleLeaves}
+                        scrollRef={gridRef}
+                        onSelect={onIndexChange}
+                        onOpen={openPreviewItem}
+                      />
+                    </div>
                   )}
                 </div>
               ) : (
