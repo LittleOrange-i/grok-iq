@@ -8,7 +8,8 @@ from typing import Any
 import pytest
 
 from app.analyzer import Thresholds
-from app.core.clock import utc_now
+from app.core.clock import app_isoformat, utc_now
+from app.persistence.models import AccountAssessment
 from app.core.config import Settings
 from app.integrations.grok2api.client import AccountBatchUpdateResult
 from app.persistence.account_repository import AccountRepository
@@ -921,6 +922,38 @@ async def test_isolation_zone_note_does_not_reorder(tmp_path: Path):
         for item in (await service.list_isolation_zone(page=1, page_size=50))["items"]
     ]
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_isolation_zone_orders_by_isolated_at_newest_first(tmp_path: Path):
+    database, accounts, _probes, _client, service = _isolation_service(tmp_path)
+    accounts.set_manual_status(
+        account_id=99,
+        status="quarantined",
+        note="older",
+        quarantine_until=None,
+        previous_upstream_enabled=False,
+        disabled_by_monitor=False,
+        recovery_guarded=False,
+    )
+    with database.transaction() as session:
+        assessment = session.get(AccountAssessment, 99)
+        assert assessment is not None
+        payload = dict(assessment.disposition or {})
+        payload["at"] = app_isoformat(utc_now() - timedelta(hours=2))
+        assessment.disposition = payload
+    accounts.set_manual_status(
+        account_id=1,
+        status="quarantined",
+        note="newer",
+        quarantine_until=None,
+        previous_upstream_enabled=True,
+        disabled_by_monitor=True,
+        recovery_guarded=False,
+    )
+
+    page = await service.list_isolation_zone(page=1, page_size=50)
+    assert [int(item["id"]) for item in page["items"]] == [1, 99]
 
 
 @pytest.mark.asyncio

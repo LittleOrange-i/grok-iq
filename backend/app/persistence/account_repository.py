@@ -196,6 +196,15 @@ def _dashboard_probe_run_counts(status_counts: dict[str, int]) -> dict[str, Any]
     }
 
 
+def _isolation_sort_key(item: dict[str, Any]) -> tuple[str, int]:
+    disposition = item.get("disposition") if isinstance(item.get("disposition"), dict) else {}
+    isolated_at = parse_optional_datetime(disposition.get("at")) or parse_optional_datetime(
+        item.get("updated_at")
+    )
+    stamp = isolated_at.isoformat() if isolated_at is not None else ""
+    return (stamp, int(item.get("account_id") or 0))
+
+
 def _hydrated_disposition(payload: dict[str, Any]) -> dict[str, Any]:
     current = public_disposition(payload.get("disposition"))
     if current:
@@ -278,14 +287,14 @@ class AccountRepository:
 
         with self.database.session() as session:
             values = session.scalars(
-                select(AccountAssessment)
-                .where(
+                select(AccountAssessment).where(
                     AccountAssessment.monitor_status == "quarantined",
                     AccountAssessment.quarantine_until.is_(None),
                 )
-                .order_by(AccountAssessment.account_id.desc())
             ).all()
-            return [_assessment_dict(value) for value in values]
+            items = [_assessment_dict(value) for value in values]
+        items.sort(key=_isolation_sort_key, reverse=True)
+        return items
 
     def migrate_fixed_egress_risk_formula(
         self,
