@@ -5,12 +5,13 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import {
   Activity,
   ChevronDown,
   Copy,
   Eye,
+  Images,
   Loader2,
   Network,
   Pencil,
@@ -99,6 +100,11 @@ import {
   ServerTableLoadingOverlay,
 } from '@/components/server-pagination'
 import { AccountSampleExplorer } from '@/features/monitor/components/account-sample-explorer'
+import {
+  pickPreviewSample,
+  previewItemsFromSamples,
+  ResultPreviewGallery,
+} from '@/features/monitor/components/result-preview-gallery'
 import {
   ACCOUNT_UPSTREAM_STATUS_OPTIONS,
   type UpstreamStatusFilter,
@@ -721,6 +727,7 @@ function OperatorNoteCell({
 
 export function QuarantinePage() {
   const client = useQueryClient()
+  const navigate = useNavigate()
   const statsFetching =
     useIsFetching({ queryKey: ['accounts', 'quarantine-stats'] }) > 0
   const view = usePersistedViewState(
@@ -765,6 +772,11 @@ export function QuarantinePage() {
   const [noteEditorId, setNoteEditorId] = useState<number | null>(null)
   const [upstreamOpen, setUpstreamOpen] = useState(false)
   const [upstreamId, setUpstreamId] = useState<number | null>(null)
+  const [previewAccount, setPreviewAccount] = useState<UpstreamAccount | null>(
+    null
+  )
+  const [previewIndex, setPreviewIndex] = useState(0)
+  const previewSeeded = useRef(false)
   const tableQueryPending =
     tableQuery.page !== committedQuery.page ||
     tableQuery.pageSize !== committedQuery.pageSize ||
@@ -836,6 +848,23 @@ export function QuarantinePage() {
     queryFn: () => api.accountSamples(detailId!, { page: 1, pageSize: 50 }),
     enabled: detailOpen && detailId != null,
   })
+  const previewQuery = useQuery({
+    queryKey: [
+      'account-samples',
+      previewAccount ? Number(previewAccount.id) : 0,
+      'gallery',
+    ],
+    queryFn: () =>
+      api.accountSamples(Number(previewAccount!.id), { page: 1, pageSize: 50 }),
+    enabled: previewAccount != null,
+  })
+  const previewItems = useMemo(
+    () =>
+      previewAccount
+        ? previewItemsFromSamples(previewQuery.data?.items ?? [], previewAccount)
+        : [],
+    [previewAccount, previewQuery.data?.items]
+  )
   const profiles = useQuery({
     queryKey: ['profiles'],
     queryFn: api.profiles,
@@ -857,6 +886,43 @@ export function QuarantinePage() {
     () => buildEgressNodeNameMap(egressData?.items),
     [egressData?.items]
   )
+  useEffect(() => {
+    if (!previewAccount) {
+      previewSeeded.current = false
+      return
+    }
+    if (previewQuery.isFetching) return
+    if (previewQuery.isError) {
+      toast.error(getErrorMessage(previewQuery.error))
+      setPreviewAccount(null)
+      return
+    }
+    if (previewQuery.isSuccess && previewItems.length === 0) {
+      toast.error('该账号没有可预览的样本正文')
+      setPreviewAccount(null)
+      return
+    }
+    if (
+      previewQuery.isSuccess &&
+      !previewSeeded.current &&
+      previewItems.length > 0
+    ) {
+      previewSeeded.current = true
+      const picked = pickPreviewSample(previewQuery.data?.items ?? [])
+      const index = previewItems.findIndex(
+        (item) => item.sampleId === picked?.id
+      )
+      setPreviewIndex(index >= 0 ? index : 0)
+    }
+  }, [
+    previewAccount,
+    previewItems,
+    previewQuery.data?.items,
+    previewQuery.error,
+    previewQuery.isError,
+    previewQuery.isFetching,
+    previewQuery.isSuccess,
+  ])
   const detailAccount =
     detail.data?.account ??
     accounts.find((item) => Number(item.id) === detailId) ??
@@ -1466,6 +1532,10 @@ export function QuarantinePage() {
                   onNoteEditorOpenChange={setNoteEditorOpen}
                   onOpenUpstream={openAccountUpstream}
                   onOpenSamples={openAccountSamples}
+                  onPreview={(account) => {
+                    setPreviewIndex(0)
+                    setPreviewAccount(account)
+                  }}
                   onProbe={(account) => {
                     const id = Number(account.id)
                     if (account.missingUpstream) {
@@ -1710,6 +1780,24 @@ export function QuarantinePage() {
           </div>
         </DialogContent>
       </Dialog>
+      <ResultPreviewGallery
+        open={previewAccount != null && previewItems.length > 0}
+        onOpenChange={(open) => {
+          if (!open) setPreviewAccount(null)
+        }}
+        items={previewItems}
+        index={previewIndex}
+        onIndexChange={setPreviewIndex}
+        onOpenAccount={(accountId) => {
+          setPreviewAccount(null)
+          openAccountSamples(accountId)
+        }}
+        onOpenRun={(runId) => {
+          setPreviewAccount(null)
+          void navigate({ to: '/runs', search: { run: runId } } as never)
+        }}
+        onOpenQuarantine={() => setPreviewAccount(null)}
+      />
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent size='wide' className='overflow-hidden'>
           <DialogHeader className='shrink-0'>
@@ -1811,6 +1899,7 @@ function QuarantineTable({
   onNoteEditorOpenChange,
   onOpenUpstream,
   onOpenSamples,
+  onPreview,
   onProbe,
 }: {
   accounts: UpstreamAccount[]
@@ -1822,6 +1911,7 @@ function QuarantineTable({
   onNoteEditorOpenChange: (id: number, open: boolean) => void
   onOpenUpstream: (id: number) => void
   onOpenSamples: (id: number) => void
+  onPreview: (account: UpstreamAccount) => void
   onProbe: (account: UpstreamAccount) => void
 }) {
   const selectedIdSet = useMemo(() => new Set(selected), [selected])
@@ -1863,6 +1953,7 @@ function QuarantineTable({
               onNoteOpenChange={(open) => onNoteEditorOpenChange(id, open)}
               onOpenUpstream={() => onOpenUpstream(id)}
               onOpenSamples={() => onOpenSamples(id)}
+              onPreview={() => onPreview(account)}
               onProbe={() => onProbe(account)}
             />
           )
@@ -1880,6 +1971,7 @@ function QuarantineRow({
   onNoteOpenChange,
   onOpenUpstream,
   onOpenSamples,
+  onPreview,
   onProbe,
 }: {
   account: UpstreamAccount
@@ -1889,6 +1981,7 @@ function QuarantineRow({
   onNoteOpenChange: (open: boolean) => void
   onOpenUpstream: () => void
   onOpenSamples: () => void
+  onPreview: () => void
   onProbe: () => void
 }) {
   const id = Number(account.id)
@@ -1996,6 +2089,19 @@ function QuarantineRow({
               <Button
                 size='icon'
                 variant='ghost'
+                onClick={onPreview}
+                aria-label={`预览 ${accountLabel} 的结果`}
+              >
+                <Images />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>预览结果</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size='icon'
+                variant='ghost'
                 onClick={onOpenSamples}
                 aria-label={`查看 ${accountLabel} 的样本`}
               >
@@ -2068,6 +2174,7 @@ function QuarantineSampleDetail({
         key={account?.id ?? 'quarantine-samples'}
         samples={samples}
         egressNodeNames={egressNodeNames}
+        account={account ?? undefined}
       />
     </div>
   )

@@ -3779,6 +3779,14 @@ export function RequestAuditsPage() {
                   samples={accountSamplesQuery.data.items}
                   egressNodeNames={egressNodeNames}
                   countLabel={`本页 ${accountSamplesQuery.data.items.length} / 共 ${accountSamplesQuery.data.total}`}
+                  account={
+                    sampleAccount?.accountId
+                      ? {
+                          id: sampleAccount.accountId,
+                          name: sampleAccount.accountName,
+                        }
+                      : undefined
+                  }
                 />
                 <ServerPagination
                   page={accountSamplesQuery.data.page}

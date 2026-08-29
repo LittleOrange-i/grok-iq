@@ -294,6 +294,7 @@ type FormattedContentPreviewButtonProps = {
   showWhenEmpty?: boolean
   className?: string
   variant?: ComponentProps<typeof Button>['variant']
+  onClick?: () => void
 }
 
 export function FormattedContentPreviewButton({
@@ -305,6 +306,7 @@ export function FormattedContentPreviewButton({
   showWhenEmpty = false,
   className,
   variant = 'outline',
+  onClick,
 }: FormattedContentPreviewButtonProps) {
   const [open, setOpen] = useState(false)
   const hasContent = Boolean(content.trim())
@@ -316,7 +318,13 @@ export function FormattedContentPreviewButton({
       size={iconOnly ? 'icon' : 'sm'}
       variant={variant}
       className={className}
-      onClick={() => setOpen(true)}
+      onClick={() => {
+        if (onClick) {
+          onClick()
+          return
+        }
+        setOpen(true)
+      }}
       disabled={!hasContent}
       aria-label={label}
     >
@@ -335,7 +343,7 @@ export function FormattedContentPreviewButton({
       ) : (
         trigger
       )}
-      {open && (
+      {!onClick && open && (
         <FormattedContentPreviewDialog
           open
           onOpenChange={setOpen}
@@ -351,12 +359,22 @@ export function FormattedContentPreviewButton({
 export function HtmlPreviewButton({
   content,
   expectedImageUrl,
+  onPreview,
 }: {
   content: string
   expectedImageUrl?: string
+  onPreview?: () => void
 }) {
   const previews = useMemo(() => extractHtmlPreviews(content), [content])
   if (!previews.length) return null
+  if (onPreview) {
+    return (
+      <Button type='button' size='sm' variant='outline' onClick={onPreview}>
+        <Eye />
+        预览 HTML
+      </Button>
+    )
+  }
   return (
     <FormattedContentPreviewButton
       content={content}
@@ -364,6 +382,154 @@ export function HtmlPreviewButton({
       label='预览 HTML'
       title='HTML 预览'
     />
+  )
+}
+
+export function ContentPreviewCanvas({
+  content,
+  expectedImageUrl,
+  expectedContent,
+  compareExpected = false,
+  className,
+}: {
+  content: string
+  expectedImageUrl?: string
+  expectedContent?: string
+  compareExpected?: boolean
+  className?: string
+}) {
+  const previews = useMemo(() => extractHtmlPreviews(content), [content])
+  const expectedPreviews = useMemo(
+    () => (expectedContent ? extractHtmlPreviews(expectedContent) : []),
+    [expectedContent]
+  )
+  const [index, setIndex] = useState(0)
+  const isHtml = previews.length > 0
+  const selectedIndex = Math.min(index, Math.max(previews.length - 1, 0))
+  const source = isHtml ? (previews[selectedIndex] ?? '') : content
+  const htmlDocument = useMemo(
+    () => (isHtml ? buildHtmlDocument(source) : ''),
+    [isHtml, source]
+  )
+  const expectedHtml = expectedPreviews[0] || ''
+  const expectedDocument = useMemo(
+    () => (expectedHtml ? buildHtmlDocument(expectedHtml) : ''),
+    [expectedHtml]
+  )
+  const showExpected =
+    compareExpected &&
+    (Boolean(expectedImageUrl) ||
+      Boolean(expectedDocument) ||
+      Boolean(expectedContent?.trim()))
+
+  return (
+    <Tabs
+      defaultValue='preview'
+      className={cn('flex h-full min-h-0 flex-col', className)}
+    >
+      <div className='flex shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-2'>
+        <TabsList>
+          <TabsTrigger value='preview'>
+            <Eye className='size-4' />
+            {isHtml ? '预览' : '渲染'}
+          </TabsTrigger>
+          <TabsTrigger value='source'>
+            <Code2 className='size-4' />
+            源码
+          </TabsTrigger>
+        </TabsList>
+        {previews.length > 1 && (
+          <div className='flex gap-1'>
+            {previews.map((_, item) => (
+              <Button
+                key={item}
+                type='button'
+                size='sm'
+                variant={item === selectedIndex ? 'default' : 'outline'}
+                onClick={() => setIndex(item)}
+              >
+                HTML {item + 1}
+              </Button>
+            ))}
+          </div>
+        )}
+        {isHtml && (
+          <Button
+            className='ms-auto'
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={() => openHtmlDocument(htmlDocument)}
+          >
+            <ExternalLink />
+            新窗口
+          </Button>
+        )}
+      </div>
+      <div
+        className={cn(
+          'grid min-h-0 flex-1',
+          showExpected &&
+            'grid-rows-[minmax(0,2fr)_minmax(10rem,1fr)] lg:grid-cols-2 lg:grid-rows-1'
+        )}
+      >
+        <div className={cn('relative min-h-0', showExpected && 'border-r')}>
+          <TabsContent value='preview' className='absolute inset-0 m-0'>
+            {isHtml ? (
+              <iframe
+                title='HTML preview'
+                sandbox='allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock'
+                srcDoc={htmlDocument}
+                className='size-full border-0 bg-white'
+              />
+            ) : content.trim() ? (
+              <div className='size-full overflow-auto overscroll-contain bg-background p-6'>
+                <MarkdownView content={content} />
+              </div>
+            ) : (
+              <div className='flex size-full items-center justify-center p-6 text-sm text-muted-foreground'>
+                没有可预览的响应
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent
+            value='source'
+            className='absolute inset-0 m-0 overflow-auto bg-zinc-950'
+          >
+            <div className='sticky top-0 z-10 flex justify-end border-b border-white/10 bg-zinc-950/90 px-3 py-2 backdrop-blur-sm'>
+              <SourceCopyButton content={source} />
+            </div>
+            <SourceCodeView content={source} className='min-h-full' />
+          </TabsContent>
+        </div>
+        {showExpected && (
+          <div className='min-h-0 overflow-auto bg-muted/30'>
+            {expectedImageUrl ? (
+              <div className='p-4'>
+                <div className='mb-3 text-sm font-medium'>参考效果图</div>
+                <img
+                  src={expectedImageUrl}
+                  alt='参考效果'
+                  className='mx-auto max-h-[calc(100dvh-7rem)] rounded-lg border bg-white object-contain'
+                />
+              </div>
+            ) : expectedDocument ? (
+              <iframe
+                title='Expected HTML preview'
+                sandbox='allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock'
+                srcDoc={expectedDocument}
+                className='size-full min-h-64 border-0 bg-white'
+              />
+            ) : (
+              <div className='size-full overflow-auto p-4'>
+                <div className='mb-3 text-sm font-medium'>预期输出</div>
+                <MarkdownView content={expectedContent || ''} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Tabs>
   )
 }
 
@@ -380,64 +546,16 @@ function FormattedContentPreviewDialog({
   expectedImageUrl?: string
   title: string
 }) {
-  const previews = useMemo(() => extractHtmlPreviews(content), [content])
-  const [index, setIndex] = useState(0)
-  const isHtml = previews.length > 0
-  const selectedIndex = Math.min(index, Math.max(previews.length - 1, 0))
-  const source = isHtml ? (previews[selectedIndex] ?? '') : content
-  const htmlDocument = useMemo(
-    () => (isHtml ? buildHtmlDocument(source) : ''),
-    [isHtml, source]
-  )
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
         className='top-0 left-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none sm:p-0'
       >
-        <Tabs defaultValue='preview' className='flex h-full min-h-0 flex-col'>
-          <div className='flex shrink-0 flex-wrap items-center gap-3 border-b bg-background px-4 py-3'>
-            <div className='min-w-0 font-medium'>{title}</div>
-            <TabsList>
-              <TabsTrigger value='preview'>
-                <Eye className='size-4' />
-                {isHtml ? '预览' : '渲染'}
-              </TabsTrigger>
-              <TabsTrigger value='source'>
-                <Code2 className='size-4' />
-                源码
-              </TabsTrigger>
-            </TabsList>
-            {previews.length > 1 && (
-              <div className='flex gap-1'>
-                {previews.map((_, item) => (
-                  <Button
-                    key={item}
-                    type='button'
-                    size='sm'
-                    variant={item === selectedIndex ? 'default' : 'outline'}
-                    onClick={() => setIndex(item)}
-                  >
-                    HTML {item + 1}
-                  </Button>
-                ))}
-              </div>
-            )}
-            {isHtml && (
-              <Button
-                className='ms-auto'
-                type='button'
-                size='sm'
-                variant='outline'
-                onClick={() => openHtmlDocument(htmlDocument)}
-              >
-                <ExternalLink />
-                新窗口
-              </Button>
-            )}
+        <div className='flex h-full min-h-0 flex-col'>
+          <div className='flex shrink-0 items-center gap-3 border-b px-4 py-3'>
+            <div className='min-w-0 flex-1 font-medium'>{title}</div>
             <Button
-              className={cn(!isHtml && 'ms-auto')}
               type='button'
               size='icon'
               variant='ghost'
@@ -447,50 +565,13 @@ function FormattedContentPreviewDialog({
               <X />
             </Button>
           </div>
-          <div
-            className={cn(
-              'grid min-h-0 flex-1',
-              expectedImageUrl &&
-                'grid-rows-[minmax(0,2fr)_minmax(10rem,1fr)] lg:grid-cols-2 lg:grid-rows-1'
-            )}
-          >
-            <div className='relative min-h-0 border-r'>
-              <TabsContent value='preview' className='absolute inset-0 m-0'>
-                {isHtml ? (
-                  <iframe
-                    title='HTML preview'
-                    sandbox='allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock'
-                    srcDoc={htmlDocument}
-                    className='size-full border-0 bg-white'
-                  />
-                ) : (
-                  <div className='size-full overflow-auto overscroll-contain bg-background p-6'>
-                    <MarkdownView content={content} />
-                  </div>
-                )}
-              </TabsContent>
-              <TabsContent
-                value='source'
-                className='absolute inset-0 m-0 overflow-auto bg-zinc-950'
-              >
-                <div className='sticky top-0 z-10 flex justify-end border-b border-white/10 bg-zinc-950/90 px-3 py-2 backdrop-blur-sm'>
-                  <SourceCopyButton content={source} />
-                </div>
-                <SourceCodeView content={source} className='min-h-full' />
-              </TabsContent>
-            </div>
-            {expectedImageUrl && (
-              <div className='min-h-0 overflow-auto bg-muted/30 p-4'>
-                <div className='mb-3 text-sm font-medium'>参考效果图</div>
-                <img
-                  src={expectedImageUrl}
-                  alt='参考效果'
-                  className='mx-auto max-h-[calc(100dvh-7rem)] rounded-lg border bg-white object-contain'
-                />
-              </div>
-            )}
-          </div>
-        </Tabs>
+          <ContentPreviewCanvas
+            content={content}
+            expectedImageUrl={expectedImageUrl}
+            compareExpected={Boolean(expectedImageUrl)}
+            className='min-h-0 flex-1'
+          />
+        </div>
       </DialogContent>
     </Dialog>
   )

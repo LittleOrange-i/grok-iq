@@ -26,6 +26,7 @@ import {
   Filter,
   Gauge,
   History,
+  Images,
   ListChecks,
   Loader2,
   Play,
@@ -102,6 +103,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
   TooltipContent,
@@ -140,6 +142,11 @@ import { FilterChip } from '@/features/monitor/components/filter-chip'
 import { ReasoningPanel } from '@/features/monitor/components/reasoning-panel'
 import { DualTpsValue, SampleTpsDetail } from '@/features/monitor/components/tps-display'
 import { AccountProbeDetailDialog } from '@/features/monitor/components/account-probe-detail-dialog'
+import {
+  previewItemsFromRuns,
+  ResultPreviewGallery,
+  type ResultPreviewItem,
+} from '@/features/monitor/components/result-preview-gallery'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 import {
   isRunsPath,
@@ -314,6 +321,10 @@ export function RunsPage() {
   const [bulkRestoreOpen, setBulkRestoreOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
+  const [resultPreview, setResultPreview] = useState<{
+    items: ResultPreviewItem[]
+    index: number
+  } | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollTopRef = useRef(0)
   const openDetail = useCallback((id: string) => {
@@ -449,6 +460,32 @@ export function RunsPage() {
   const currentPageRuns = useMemo(
     () => query.data?.items ?? [],
     [query.data?.items]
+  )
+  const openRunPreview = useCallback(
+    (runId: string, sampleId?: string) => {
+      let items = previewItemsFromRuns(currentPageRuns)
+      if (!items.some((item) => item.runId === runId)) {
+        const extraRun =
+          currentPageRuns.find((run) => run.id === runId) ||
+          (detail.data?.run.id === runId ? detail.data.run : null)
+        if (extraRun) items = [...previewItemsFromRuns([extraRun]), ...items]
+      }
+      if (!items.length) {
+        toast.error('当前页没有可预览的任务样本')
+        return
+      }
+      const index = Math.max(
+        0,
+        items.findIndex((item) => item.runId === runId)
+      )
+      if (sampleId) {
+        items = items.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, sampleId } : item
+        )
+      }
+      setResultPreview({ items, index })
+    },
+    [currentPageRuns, detail.data]
   )
   const currentPageRunMap = useMemo(
     () => new Map(currentPageRuns.map((run) => [run.id, run])),
@@ -988,6 +1025,25 @@ export function RunsPage() {
         toolbar={
           <div className='space-y-2' aria-busy={showTableLoading}>
             <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+              <Tabs
+                value={resultPreview ? 'preview' : 'list'}
+                className='shrink-0 gap-0'
+                onValueChange={(value) => {
+                  if (value === 'list') {
+                    setResultPreview(null)
+                    return
+                  }
+                  openRunPreview(detailId || currentPageRuns[0]?.id || '')
+                }}
+              >
+                <TabsList className='h-8'>
+                  <TabsTrigger value='list'>列表</TabsTrigger>
+                  <TabsTrigger value='preview'>
+                    <Images className='size-3.5' />
+                    预览
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
               <div className='relative min-w-0 flex-1'>
                 <Search className='absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
                 <Input
@@ -1293,6 +1349,24 @@ export function RunsPage() {
         }}
         egressNodeNames={egressNodeNames}
       />
+      <ResultPreviewGallery
+        open={resultPreview != null}
+        onOpenChange={(open) => {
+          if (!open) setResultPreview(null)
+        }}
+        items={resultPreview?.items ?? []}
+        index={resultPreview?.index ?? 0}
+        onIndexChange={(index) =>
+          setResultPreview((current) =>
+            current ? { ...current, index } : current
+          )
+        }
+        onOpenAccount={(accountId) => setAccountDetailId(accountId)}
+        onOpenRun={(runId) => openDetail(runId)}
+        onOpenQuarantine={() => {
+          void navigate({ to: '/quarantine' } as never)
+        }}
+      />
       <ProbeDialog
         open={probeSelection != null}
         onOpenChange={(open) => {
@@ -1575,6 +1649,9 @@ export function RunsPage() {
                   egressNodeNames={egressNodeNames}
                   onAction={(action) =>
                     mutate.mutate({ action, id: detail.data.run.id })
+                  }
+                  onPreviewSample={(sampleId) =>
+                    openRunPreview(detail.data.run.id, sampleId)
                   }
                 />
               )
@@ -2100,10 +2177,12 @@ function RunDetail({
   data,
   egressNodeNames,
   onAction,
+  onPreviewSample,
 }: {
   data: { run: ProbeRun; profile: ProbeProfile; samples: ProbeSample[] }
   egressNodeNames: EgressNodeNameMap
   onAction: (action: 'cancel' | 'retry' | 'delete' | 'restore') => void
+  onPreviewSample?: (sampleId: string) => void
 }) {
   const run = data.run
   const profile = data.profile
@@ -2241,6 +2320,11 @@ function RunDetail({
             expectedImageUrl={profile.expected_image_url}
             executionMode={run.execution_mode}
             egressNodeNames={egressNodeNames}
+            onPreview={
+              onPreviewSample
+                ? () => onPreviewSample(sample.id)
+                : undefined
+            }
           />
         ))}
         {!data.samples.length && (
@@ -2563,11 +2647,13 @@ function SampleCard({
   expectedImageUrl,
   executionMode,
   egressNodeNames,
+  onPreview,
 }: {
   sample: ProbeSample
   expectedImageUrl?: string
   executionMode: ExecutionMode
   egressNodeNames: EgressNodeNameMap
+  onPreview?: () => void
 }) {
   const responseText = sample.response_text || '（空响应）'
   const isLongResponse = responseText.length > 4_000
@@ -2822,6 +2908,7 @@ function SampleCard({
                   <HtmlPreviewButton
                     content={responseText}
                     expectedImageUrl={expectedImageUrl}
+                    onPreview={onPreview}
                   />
                   {responseCollapsible && responseExpanded && (
                     <Button

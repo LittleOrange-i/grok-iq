@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { Loader2, Trash2 } from 'lucide-react'
 import { type ProbeSample } from '@/lib/api'
 import { StatusBadge } from '@/lib/status'
@@ -11,6 +12,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { FormattedContentPreviewButton } from '@/components/formatted-content'
+import {
+  previewItemsFromSamples,
+  ResultPreviewGallery,
+} from '@/features/monitor/components/result-preview-gallery'
 import {
   getEgressNodeName,
   type EgressNodeNameMap,
@@ -25,6 +30,12 @@ type AccountSampleExplorerProps = {
   onDeleteSample?: (sample: ProbeSample) => void
   countLabel?: ReactNode
   className?: string
+  account?: {
+    id: number | string
+    name?: string
+    email?: string
+  }
+  onOpenAccount?: (accountId: number) => void
 }
 
 export function AccountSampleExplorer({
@@ -34,10 +45,18 @@ export function AccountSampleExplorer({
   onDeleteSample,
   countLabel,
   className,
+  account,
+  onOpenAccount,
 }: AccountSampleExplorerProps) {
+  const navigate = useNavigate()
   const [selectedId, setSelectedId] = useState(samples[0]?.id ?? '')
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const selected =
     samples.find((sample) => sample.id === selectedId) ?? samples[0]
+  const previewItems = useMemo(
+    () => (account ? previewItemsFromSamples(samples, account) : []),
+    [account, samples]
+  )
   if (!selected) {
     return (
       <div className='rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground'>
@@ -46,6 +65,7 @@ export function AccountSampleExplorer({
     )
   }
   return (
+    <>
     <div
       className={cn(
         'grid min-h-0 overflow-hidden rounded-xl border bg-muted/10 lg:grid-cols-[21rem_minmax(0,1fr)]',
@@ -123,8 +143,40 @@ export function AccountSampleExplorer({
         egressNodeNames={egressNodeNames}
         deleting={deletingSampleId === selected.id}
         onDelete={onDeleteSample ? () => onDeleteSample(selected) : undefined}
+        onPreview={
+          account && previewItems.length
+            ? () => {
+                const index = previewItems.findIndex(
+                  (item) => item.sampleId === selected.id
+                )
+                setPreviewIndex(index >= 0 ? index : 0)
+              }
+            : undefined
+        }
       />
     </div>
+    {account ? (
+      <ResultPreviewGallery
+        open={previewIndex != null && previewItems.length > 0}
+        onOpenChange={(open) => {
+          if (!open) setPreviewIndex(null)
+        }}
+        items={previewItems}
+        index={previewIndex ?? 0}
+        onIndexChange={(index) => setPreviewIndex(index)}
+        onOpenAccount={onOpenAccount}
+        onOpenRun={(runId) => {
+          void navigate({
+            to: '/runs',
+            search: { run: runId },
+          } as never)
+        }}
+        onOpenQuarantine={() => {
+          void navigate({ to: '/quarantine' } as never)
+        }}
+      />
+    ) : null}
+    </>
   )
 }
 
@@ -133,11 +185,13 @@ function SampleDetail({
   egressNodeNames,
   deleting,
   onDelete,
+  onPreview,
 }: {
   sample: ProbeSample
   egressNodeNames: EgressNodeNameMap
   deleting: boolean
   onDelete?: () => void
+  onPreview?: () => void
 }) {
   const responseText = sample.response_text || ''
   return (
@@ -260,6 +314,7 @@ function SampleDetail({
               label='预览响应'
               title={`样本响应 · 第 ${sample.round_number} 轮`}
               className='shrink-0'
+              onClick={onPreview}
             />
           </div>
         ) : (
