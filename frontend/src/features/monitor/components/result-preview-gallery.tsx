@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ChevronLeft,
@@ -566,19 +566,20 @@ export function ResultPreviewGallery({
                           </div>
                           <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
                             {group.items.map((entry) => (
-                              <PreviewThumbCard
-                                key={entry.id}
-                                item={entry}
-                                index={items.findIndex(
-                                  (candidate) => candidate.id === entry.id
-                                )}
-                                active={entry.id === item.id}
-                                sampleLeaves={sampleLeaves}
-                                onSelect={(nextIndex) => {
-                                  onIndexChange(nextIndex)
-                                  setView('split')
-                                }}
-                              />
+                              <div key={entry.id} className='min-w-0'>
+                                <PreviewThumbCard
+                                  item={entry}
+                                  index={items.findIndex(
+                                    (candidate) => candidate.id === entry.id
+                                  )}
+                                  active={entry.id === item.id}
+                                  sampleLeaves={sampleLeaves}
+                                  onSelect={(nextIndex) => {
+                                    onIndexChange(nextIndex)
+                                    setView('split')
+                                  }}
+                                />
+                              </div>
                             ))}
                           </div>
                         </section>
@@ -964,7 +965,7 @@ function VirtualizedThumbGrid({
 }) {
   const [scrollTop, setScrollTop] = useState(0)
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = scrollRef.current
     if (!node) return
     const update = () => {
@@ -987,7 +988,8 @@ function VirtualizedThumbGrid({
   const innerWidth = Math.max(0, viewport.width - padding * 2)
   const cellWidth =
     cols > 1 ? (innerWidth - gap * (cols - 1)) / cols : innerWidth
-  const rowHeight = cellWidth * (10 / 16) + 56 + gap
+  const thumbHeight = cellWidth * (THUMB_FRAME_HEIGHT / THUMB_FRAME_WIDTH)
+  const rowHeight = thumbHeight + 56 + gap
   const rows = Math.ceil(items.length / cols) || 1
   const startRow = Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - 1)
   const endRow = Math.min(
@@ -996,6 +998,9 @@ function VirtualizedThumbGrid({
   )
   const startIndex = startRow * cols
   const endIndex = Math.min(items.length, endRow * cols)
+  if (innerWidth <= 0) {
+    return <div className='min-h-[12rem]' aria-hidden />
+  }
   return (
     <div
       className='relative'
@@ -1008,11 +1013,12 @@ function VirtualizedThumbGrid({
         return (
           <div
             key={entry.id}
-            className='absolute'
+            className='absolute overflow-hidden'
             style={{
               top: row * rowHeight,
               left: col * (cellWidth + gap),
               width: cellWidth,
+              height: rowHeight - gap,
             }}
           >
             <PreviewThumbCard
@@ -1062,31 +1068,31 @@ function PreviewThumbCard({
       type='button'
       data-preview-index={index}
       className={cn(
-        'overflow-hidden rounded-xl border bg-background text-left transition-colors',
+        'flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background p-0 text-left transition-colors',
         active
           ? 'border-primary/60 ring-2 ring-primary/20'
           : 'hover:border-primary/30'
       )}
       onClick={() => onSelect(index)}
     >
-      <div className='border-b bg-muted/20'>
+      <div className='relative aspect-[16/10] w-full min-h-0 overflow-hidden border-b bg-muted/20'>
         {loading ? (
-          <div className='flex aspect-[16/10] items-center justify-center text-muted-foreground'>
+          <div className='flex h-full w-full items-center justify-center text-muted-foreground'>
             <Loader2 className='size-4 animate-spin' />
           </div>
         ) : inView && html ? (
           <ScaledHtmlThumb html={html} />
         ) : inView && content.trim() ? (
-          <div className='aspect-[16/10] overflow-hidden p-3 text-[11px] leading-5 text-muted-foreground'>
+          <div className='h-full w-full overflow-hidden p-3 text-[11px] leading-5 text-muted-foreground'>
             {content.replace(/\s+/g, ' ').slice(0, 220)}
           </div>
         ) : (
-          <div className='flex aspect-[16/10] items-center justify-center text-xs text-muted-foreground'>
+          <div className='flex h-full w-full items-center justify-center text-xs text-muted-foreground'>
             {inView ? '没有可预览正文' : '滚动后加载'}
           </div>
         )}
       </div>
-      <div className='px-2.5 py-2'>
+      <div className='h-14 shrink-0 px-2.5 py-2'>
         <div className='truncate text-xs font-medium'>
           {sampleLeaves
             ? `第 ${item.sample?.round_number || 1} 轮`
@@ -1104,7 +1110,7 @@ function ScaledHtmlThumb({ html }: { html: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const htmlDocument = useMemo(() => buildHtmlDocument(html), [html])
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
     const update = () => setWidth(node.clientWidth)
@@ -1117,11 +1123,7 @@ function ScaledHtmlThumb({ html }: { html: string }) {
   return (
     <div
       ref={ref}
-      className='relative overflow-hidden bg-white'
-      style={{
-        height: scale > 0 ? THUMB_FRAME_HEIGHT * scale : undefined,
-        aspectRatio: scale > 0 ? undefined : '16 / 10',
-      }}
+      className='pointer-events-none absolute inset-0 overflow-hidden bg-white'
     >
       {scale > 0 ? (
         <iframe
@@ -1129,7 +1131,7 @@ function ScaledHtmlThumb({ html }: { html: string }) {
           sandbox='allow-scripts allow-forms'
           srcDoc={htmlDocument}
           tabIndex={-1}
-          className='pointer-events-none absolute top-0 left-0 origin-top-left border-0 bg-white'
+          className='absolute top-0 left-0 origin-top-left border-0 bg-white'
           style={{
             width: THUMB_FRAME_WIDTH,
             height: THUMB_FRAME_HEIGHT,
