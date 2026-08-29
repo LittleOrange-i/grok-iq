@@ -51,6 +51,8 @@ const AccountProbeDetailDialog = lazy(() =>
 const PREVIEW_ISOLATE_NOTE = 'HTML 预览人工判定降智'
 const THUMB_FRAME_WIDTH = 1280
 const THUMB_FRAME_HEIGHT = 800
+const THUMB_GRID_CLASSNAME =
+  'grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'
 
 export type ResultPreviewItem = {
   id: string
@@ -177,6 +179,9 @@ export function ResultPreviewGallery({
   const [compareExpected, setCompareExpected] = useState(false)
   const [view, setView] = useState<'split' | 'grid'>('split')
   const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
+  const [roundLayout, setRoundLayout] = useState<'aggregate' | 'expand'>(
+    'aggregate'
+  )
   const [sampleOverrideId, setSampleOverrideId] = useState<string>()
   const [gridCols, setGridCols] = useState(4)
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
@@ -193,6 +198,7 @@ export function ResultPreviewGallery({
   const groups = useMemo(() => groupPreviewItems(items), [items])
   const showGroupToggle = !sampleLeaves && groups.length > 1
   const effectiveGroup = sampleLeaves || !showGroupToggle ? 'task' : groupMode
+  const expandRounds = !sampleLeaves && roundLayout === 'expand'
   const canPrevItem = safeIndex > 0 || currentPage > 1
   const canNextItem =
     safeIndex < Math.max(items.length - 1, 0) || currentPage < currentPageCount
@@ -351,7 +357,7 @@ export function ResultPreviewGallery({
       `[data-preview-index="${safeIndex}"]`
     )
     if (container && active) scrollChildIntoContainer(container, active)
-  }, [open, safeIndex, view, effectiveGroup])
+  }, [open, safeIndex, view, effectiveGroup, roundLayout])
 
   useEffect(() => {
     const node = gridRef.current
@@ -364,7 +370,7 @@ export function ResultPreviewGallery({
     const observer = new ResizeObserver(measure)
     observer.observe(node)
     return () => observer.disconnect()
-  }, [view, items.length, effectiveGroup])
+  }, [view, items.length, effectiveGroup, roundLayout])
 
   useEffect(() => {
     if (!open) return
@@ -503,6 +509,20 @@ export function ResultPreviewGallery({
                   <TabsList className='h-8'>
                     <TabsTrigger value='task'>任务</TabsTrigger>
                     <TabsTrigger value='account'>账号</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              ) : null}
+              {view === 'grid' && !sampleLeaves ? (
+                <Tabs
+                  value={roundLayout}
+                  className='shrink-0 gap-0'
+                  onValueChange={(value) =>
+                    setRoundLayout(value === 'expand' ? 'expand' : 'aggregate')
+                  }
+                >
+                  <TabsList className='h-8'>
+                    <TabsTrigger value='aggregate'>聚合轮次</TabsTrigger>
+                    <TabsTrigger value='expand'>平铺展开</TabsTrigger>
                   </TabsList>
                 </Tabs>
               ) : null}
@@ -665,36 +685,39 @@ export function ResultPreviewGallery({
                                 : ''}
                             </span>
                           </div>
-                          <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
-                            {group.items.map((entry) => (
-                              <AccountTaskThumbGroup
-                                key={entry.id}
-                                item={entry}
-                                index={items.findIndex(
-                                  (candidate) => candidate.id === entry.id
-                                )}
-                                active={entry.id === item.id}
-                                activeSampleId={sample?.id}
-                                onSelect={selectPreviewItem}
-                                onOpen={openPreviewItem}
-                              />
-                            ))}
+                          <div className={THUMB_GRID_CLASSNAME}>
+                            {group.items.map((entry) => {
+                              const index = items.findIndex(
+                                (candidate) => candidate.id === entry.id
+                              )
+                              return expandRounds ? (
+                                <AccountTaskThumbGroup
+                                  key={entry.id}
+                                  item={entry}
+                                  index={index}
+                                  active={entry.id === item.id}
+                                  activeSampleId={sample?.id}
+                                  onSelect={selectPreviewItem}
+                                  onOpen={openPreviewItem}
+                                />
+                              ) : (
+                                <PreviewThumbCard
+                                  key={entry.id}
+                                  item={entry}
+                                  index={index}
+                                  active={entry.id === item.id}
+                                  sampleLeaves={false}
+                                  onSelect={selectPreviewItem}
+                                  onOpen={openPreviewItem}
+                                />
+                              )
+                            })}
                           </div>
                         </section>
                       ))}
                     </div>
-                  ) : sampleLeaves ? (
-                    <VirtualizedThumbGrid
-                      items={items}
-                      columns={gridCols}
-                      activeId={item.id}
-                      sampleLeaves={sampleLeaves}
-                      scrollRef={gridRef}
-                      onSelect={onIndexChange}
-                      onOpen={openPreviewItem}
-                    />
-                  ) : (
-                    <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
+                  ) : expandRounds ? (
+                    <div className={THUMB_GRID_CLASSNAME}>
                       {items.map((entry, entryIndex) => (
                         <AccountTaskThumbGroup
                           key={entry.id}
@@ -708,6 +731,16 @@ export function ResultPreviewGallery({
                         />
                       ))}
                     </div>
+                  ) : (
+                    <VirtualizedThumbGrid
+                      items={items}
+                      columns={gridCols}
+                      activeId={item.id}
+                      sampleLeaves={sampleLeaves}
+                      scrollRef={gridRef}
+                      onSelect={onIndexChange}
+                      onOpen={openPreviewItem}
+                    />
                   )}
                 </div>
               ) : (
