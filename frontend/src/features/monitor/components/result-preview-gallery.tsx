@@ -194,8 +194,17 @@ export function ResultPreviewGallery({
     ? Math.min(Math.max(index, 0), items.length - 1)
     : 0
   const item = items[safeIndex]
-  const sampleLeaves = items.some((entry) => Boolean(entry.sample))
-  const groups = useMemo(() => groupPreviewItems(items), [items])
+  const layoutItemsRef = useRef(items)
+  if (items.length > 0) {
+    layoutItemsRef.current = items
+  }
+  const layoutItems =
+    items.length > 0 || !pageLoading ? items : layoutItemsRef.current
+  const sampleLeaves = layoutItems.some((entry) => Boolean(entry.sample))
+  const groups = useMemo(
+    () => groupPreviewItems(layoutItems),
+    [layoutItems]
+  )
   const showGroupToggle = !sampleLeaves && groups.length > 1
   const effectiveGroup = sampleLeaves || !showGroupToggle ? 'task' : groupMode
   const expandRounds = !sampleLeaves && roundLayout === 'expand'
