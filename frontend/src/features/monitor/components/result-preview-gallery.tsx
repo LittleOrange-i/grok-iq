@@ -137,6 +137,11 @@ export function ResultPreviewGallery({
   onOpenAccount,
   onOpenRun,
   onOpenQuarantine,
+  page = 1,
+  pageCount = 1,
+  total,
+  pageLoading = false,
+  onPageChange,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -146,6 +151,11 @@ export function ResultPreviewGallery({
   onOpenAccount?: (accountId: number) => void
   onOpenRun?: (runId: string) => void
   onOpenQuarantine?: () => void
+  page?: number
+  pageCount?: number
+  total?: number
+  pageLoading?: boolean
+  onPageChange?: (page: number, land: 'start' | 'end') => void
 }) {
   const client = useQueryClient()
   const listRef = useRef<HTMLDivElement>(null)
@@ -156,14 +166,33 @@ export function ResultPreviewGallery({
   const [groupMode, setGroupMode] = useState<'task' | 'account'>('task')
   const [sampleOverrideId, setSampleOverrideId] = useState<string>()
   const [gridCols, setGridCols] = useState(4)
+  const currentPage = Math.max(1, page)
+  const currentPageCount = Math.max(1, pageCount)
   const safeIndex = items.length
     ? Math.min(Math.max(index, 0), items.length - 1)
     : 0
   const item = items[safeIndex]
-  const sampleLeaves = items.some((entry) => entry.sample)
+  const sampleLeaves = items.some((entry) => Boolean(entry.sample))
   const groups = useMemo(() => groupPreviewItems(items), [items])
   const showGroupToggle = !sampleLeaves && groups.length > 1
   const effectiveGroup = sampleLeaves || !showGroupToggle ? 'task' : groupMode
+  const canPrevItem = safeIndex > 0 || currentPage > 1
+  const canNextItem =
+    safeIndex < Math.max(items.length - 1, 0) || currentPage < currentPageCount
+  const goPrevItem = () => {
+    if (safeIndex > 0) {
+      onIndexChange(safeIndex - 1)
+      return
+    }
+    if (currentPage > 1) onPageChange?.(currentPage - 1, 'end')
+  }
+  const goNextItem = () => {
+    if (items.length && safeIndex < items.length - 1) {
+      onIndexChange(safeIndex + 1)
+      return
+    }
+    if (currentPage < currentPageCount) onPageChange?.(currentPage + 1, 'start')
+  }
   const neighborRunIds = useMemo(() => {
     if (!item || view !== 'split') return []
     const ids = [item.runId]
@@ -265,11 +294,8 @@ export function ResultPreviewGallery({
     const node = gridRef.current
     if (!node || view !== 'grid') return
     const measure = () => {
-      const first = node.querySelector<HTMLElement>('[data-preview-index]')
-      if (!first) return
-      setGridCols(
-        Math.max(1, Math.round(node.clientWidth / Math.max(first.offsetWidth, 1)))
-      )
+      const width = node.clientWidth
+      setGridCols(width >= 1536 ? 5 : width >= 1280 ? 4 : width >= 768 ? 3 : 2)
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -313,11 +339,17 @@ export function ResultPreviewGallery({
           : 1
       if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
         event.preventDefault()
-        if (safeIndex > 0) onIndexChange(Math.max(0, safeIndex - step))
+        if (safeIndex > 0) {
+          onIndexChange(Math.max(0, safeIndex - step))
+        } else if (currentPage > 1) {
+          onPageChange?.(currentPage - 1, 'end')
+        }
       } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
         event.preventDefault()
-        if (safeIndex < items.length - 1) {
+        if (items.length && safeIndex < items.length - 1) {
           onIndexChange(Math.min(items.length - 1, safeIndex + step))
+        } else if (currentPage < currentPageCount) {
+          onPageChange?.(currentPage + 1, 'start')
         }
       } else if (event.key === 'i' || event.key === 'I') {
         event.preventDefault()
@@ -328,11 +360,14 @@ export function ResultPreviewGallery({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     alreadyIsolated,
+    currentPage,
+    currentPageCount,
     gridCols,
     isolateOpen,
     item,
     items.length,
     onIndexChange,
+    onPageChange,
     open,
     runSamples,
     safeIndex,
@@ -340,11 +375,22 @@ export function ResultPreviewGallery({
     view,
   ])
 
-  const counterLabel = sampleLeaves
-    ? `样本 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
-    : effectiveGroup === 'account'
-      ? `账号 ${Math.max(1, groups.findIndex((group) => group.accountId === item?.accountId) + 1)} / ${groups.length} · 任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
-      : `任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+  const pageLabel =
+    currentPageCount > 1
+      ? `第 ${currentPage} / ${currentPageCount} 页`
+      : ''
+  const totalLabel = total != null ? `共 ${total} 条` : ''
+  const counterLabel = [
+    sampleLeaves
+      ? `样本 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+      : effectiveGroup === 'account'
+        ? `账号 ${Math.max(1, groups.findIndex((group) => group.accountId === item?.accountId) + 1)} / ${groups.length} · 任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`
+        : `任务 ${items.length ? safeIndex + 1 : 0} / ${items.length}`,
+    pageLabel,
+    totalLabel,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <>
@@ -391,8 +437,8 @@ export function ResultPreviewGallery({
                 type='button'
                 size='icon'
                 variant='ghost'
-                disabled={safeIndex <= 0}
-                onClick={() => onIndexChange(safeIndex - 1)}
+                disabled={!canPrevItem || pageLoading}
+                onClick={goPrevItem}
                 aria-label='上一项'
               >
                 <ChevronLeft />
@@ -401,8 +447,8 @@ export function ResultPreviewGallery({
                 type='button'
                 size='icon'
                 variant='ghost'
-                disabled={safeIndex >= items.length - 1}
-                onClick={() => onIndexChange(safeIndex + 1)}
+                disabled={!canNextItem || pageLoading}
+                onClick={goNextItem}
                 aria-label='下一项'
               >
                 <ChevronRight />
@@ -414,9 +460,40 @@ export function ResultPreviewGallery({
                 <div className='truncate text-xs text-muted-foreground'>
                   {item
                     ? `${counterLabel}${profileName ? ` · ${profileName}` : ''}`
-                    : '当前筛选没有可预览样本'}
+                    : pageLoading
+                      ? '正在加载这一页…'
+                      : currentPageCount > 1
+                        ? `这一页没有可预览样本 · ${pageLabel}`
+                        : '当前筛选没有可预览样本'}
                 </div>
               </div>
+              {onPageChange && currentPageCount > 1 ? (
+                <div className='flex shrink-0 items-center gap-1'>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    className='h-8'
+                    disabled={currentPage <= 1 || pageLoading}
+                    onClick={() => onPageChange(currentPage - 1, 'end')}
+                  >
+                    上一页
+                  </Button>
+                  <span className='min-w-16 text-center text-xs tabular-nums text-muted-foreground'>
+                    {currentPage}/{currentPageCount}
+                  </span>
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    className='h-8'
+                    disabled={currentPage >= currentPageCount || pageLoading}
+                    onClick={() => onPageChange(currentPage + 1, 'start')}
+                  >
+                    下一页
+                  </Button>
+                </div>
+              ) : null}
               {canCompare && view === 'split' ? (
                 <Button
                   type='button'
@@ -463,7 +540,12 @@ export function ResultPreviewGallery({
                 <X />
               </Button>
             </header>
-            {item ? (
+            {pageLoading && !item ? (
+              <div className='flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground'>
+                <Loader2 className='size-4 animate-spin' />
+                正在加载这一页
+              </div>
+            ) : item ? (
               view === 'grid' ? (
                 <div
                   ref={gridRef}
@@ -503,21 +585,17 @@ export function ResultPreviewGallery({
                       ))}
                     </div>
                   ) : (
-                    <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
-                      {items.map((entry, itemIndex) => (
-                        <PreviewThumbCard
-                          key={entry.id}
-                          item={entry}
-                          index={itemIndex}
-                          active={itemIndex === safeIndex}
-                          sampleLeaves={sampleLeaves}
-                          onSelect={(nextIndex) => {
-                            onIndexChange(nextIndex)
-                            setView('split')
-                          }}
-                        />
-                      ))}
-                    </div>
+                    <VirtualizedThumbGrid
+                      items={items}
+                      columns={gridCols}
+                      activeId={item.id}
+                      sampleLeaves={sampleLeaves}
+                      scrollRef={gridRef}
+                      onSelect={(nextIndex) => {
+                        onIndexChange(nextIndex)
+                        setView('split')
+                      }}
+                    />
                   )}
                 </div>
               ) : (
@@ -741,7 +819,9 @@ export function ResultPreviewGallery({
               )
             ) : (
               <div className='flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground'>
-                当前筛选没有可预览的任务样本
+                {currentPageCount > 1
+                  ? '这一页没有可预览样本，可以翻到上一页或下一页'
+                  : '当前筛选没有可预览的任务样本'}
               </div>
             )}
           </div>
@@ -867,6 +947,88 @@ function InspectBar({
   )
 }
 
+function VirtualizedThumbGrid({
+  items,
+  columns,
+  activeId,
+  sampleLeaves,
+  scrollRef,
+  onSelect,
+}: {
+  items: ResultPreviewItem[]
+  columns: number
+  activeId?: string
+  sampleLeaves: boolean
+  scrollRef: { current: HTMLDivElement | null }
+  onSelect: (index: number) => void
+}) {
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewport, setViewport] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const update = () => {
+      setScrollTop(node.scrollTop)
+      setViewport({ width: node.clientWidth, height: node.clientHeight })
+    }
+    update()
+    const onScroll = () => setScrollTop(node.scrollTop)
+    node.addEventListener('scroll', onScroll, { passive: true })
+    const observer = new ResizeObserver(update)
+    observer.observe(node)
+    return () => {
+      node.removeEventListener('scroll', onScroll)
+      observer.disconnect()
+    }
+  }, [scrollRef])
+  const gap = 12
+  const padding = 16
+  const cols = Math.max(1, columns)
+  const innerWidth = Math.max(0, viewport.width - padding * 2)
+  const cellWidth =
+    cols > 1 ? (innerWidth - gap * (cols - 1)) / cols : innerWidth
+  const rowHeight = cellWidth * (10 / 16) + 56 + gap
+  const rows = Math.ceil(items.length / cols) || 1
+  const startRow = Math.max(0, Math.floor(scrollTop / Math.max(rowHeight, 1)) - 1)
+  const endRow = Math.min(
+    rows,
+    Math.ceil((scrollTop + viewport.height) / Math.max(rowHeight, 1)) + 1
+  )
+  const startIndex = startRow * cols
+  const endIndex = Math.min(items.length, endRow * cols)
+  return (
+    <div
+      className='relative'
+      style={{ height: Math.max(rowHeight, rows * rowHeight) }}
+    >
+      {items.slice(startIndex, endIndex).map((entry, offset) => {
+        const index = startIndex + offset
+        const row = Math.floor(index / cols)
+        const col = index % cols
+        return (
+          <div
+            key={entry.id}
+            className='absolute'
+            style={{
+              top: row * rowHeight,
+              left: col * (cellWidth + gap),
+              width: cellWidth,
+            }}
+          >
+            <PreviewThumbCard
+              item={entry}
+              index={index}
+              active={entry.id === activeId}
+              sampleLeaves={sampleLeaves}
+              onSelect={onSelect}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function PreviewThumbCard({
   item,
   index,
@@ -912,9 +1074,9 @@ function PreviewThumbCard({
           <div className='flex aspect-[16/10] items-center justify-center text-muted-foreground'>
             <Loader2 className='size-4 animate-spin' />
           </div>
-        ) : html ? (
+        ) : inView && html ? (
           <ScaledHtmlThumb html={html} />
-        ) : content.trim() ? (
+        ) : inView && content.trim() ? (
           <div className='aspect-[16/10] overflow-hidden p-3 text-[11px] leading-5 text-muted-foreground'>
             {content.replace(/\s+/g, ' ').slice(0, 220)}
           </div>

@@ -145,7 +145,6 @@ import { AccountProbeDetailDialog } from '@/features/monitor/components/account-
 import {
   previewItemsFromRuns,
   ResultPreviewGallery,
-  type ResultPreviewItem,
 } from '@/features/monitor/components/result-preview-gallery'
 import { ProbeDialog } from '@/features/monitor/components/probe-dialog'
 import {
@@ -322,8 +321,10 @@ export function RunsPage() {
   const [detailId, setDetailId] = useState<string | null>(null)
   const [accountDetailId, setAccountDetailId] = useState<number | null>(null)
   const [resultPreview, setResultPreview] = useState<{
-    items: ResultPreviewItem[]
+    page: number
     index: number
+    land?: 'start' | 'end'
+    sampleId?: string
   } | null>(null)
   const detailScrollRef = useRef<HTMLDivElement | null>(null)
   const detailScrollTopRef = useRef(0)
@@ -411,7 +412,6 @@ export function RunsPage() {
     queryKey: ['profiles'],
     queryFn: api.profiles,
     staleTime: 60_000,
-    enabled: probeSelection != null,
   })
   const pinnedAccountQuery = useQuery({
     queryKey: ['account', pinnedAccountId],
@@ -468,36 +468,104 @@ export function RunsPage() {
     }
     return map
   }, [profiles.data])
+  const previewPage = resultPreview?.page ?? tableQuery.page
+  const previewRunsQuery = useQuery({
+    queryKey: [
+      'runs',
+      'preview',
+      tableQuery.status,
+      tableQuery.search,
+      tableQuery.createdFrom,
+      tableQuery.createdTo,
+      previewPage,
+      tableQuery.pageSize,
+      pinnedAccountId,
+    ],
+    queryFn: ({ signal }) =>
+      api.runs(
+        {
+          page: previewPage,
+          pageSize: tableQuery.pageSize,
+          status: tableQuery.status === 'all' ? '' : tableQuery.status,
+          search: pinnedAccountId != null ? '' : tableQuery.search,
+          accountId: pinnedAccountId ?? undefined,
+          createdFrom: tableQuery.createdFrom,
+          createdTo: tableQuery.createdTo,
+        },
+        signal
+      ),
+    enabled: resultPreview != null && !invalidTimeRange,
+  })
+  const previewSource =
+    resultPreview &&
+    resultPreview.page === tableQuery.page &&
+    query.data
+      ? query.data
+      : previewRunsQuery.data?.page === previewPage
+        ? previewRunsQuery.data
+        : undefined
+  const previewItems = useMemo(() => {
+    const items = previewItemsFromRuns(
+      previewSource?.items ?? [],
+      profileNameById
+    )
+    if (!resultPreview?.sampleId) return items
+    return items.map((item, itemIndex) =>
+      itemIndex === resultPreview.index
+        ? { ...item, sampleId: resultPreview.sampleId }
+        : item
+    )
+  }, [
+    previewSource?.items,
+    profileNameById,
+    resultPreview?.index,
+    resultPreview?.sampleId,
+  ])
+  const previewTotal = previewSource?.total ?? query.data?.total ?? 0
+  const previewPageCount = Math.max(
+    1,
+    Math.ceil(previewTotal / Math.max(tableQuery.pageSize, 1))
+  )
+  const previewPageLoading =
+    resultPreview != null &&
+    previewSource?.page !== resultPreview.page &&
+    previewRunsQuery.isFetching
+  useEffect(() => {
+    if (!resultPreview?.land) return
+    if (!previewItems.length) return
+    if (previewSource?.page !== resultPreview.page) return
+    setResultPreview((current) => {
+      if (!current?.land) return current
+      return {
+        ...current,
+        index: current.land === 'end' ? previewItems.length - 1 : 0,
+        land: undefined,
+      }
+    })
+  }, [
+    previewItems.length,
+    previewSource?.page,
+    resultPreview?.land,
+    resultPreview?.page,
+  ])
   const openRunPreview = useCallback(
     (runId: string, sampleId?: string) => {
-      let items = previewItemsFromRuns(currentPageRuns, profileNameById)
-      if (!items.some((item) => item.runId === runId)) {
-        const extraRun =
-          currentPageRuns.find((run) => run.id === runId) ||
-          (detail.data?.run.id === runId ? detail.data.run : null)
-        if (extraRun) {
-          items = [
-            ...previewItemsFromRuns([extraRun], profileNameById),
-            ...items,
-          ]
-        }
-      }
-      if (!items.length) {
-        toast.error('当前页没有可预览的任务样本')
+      const items = previewItemsFromRuns(currentPageRuns, profileNameById)
+      if (!items.length && !(query.data?.total ?? 0)) {
+        toast.error('当前筛选没有可预览的任务样本')
         return
       }
       const index = Math.max(
         0,
         items.findIndex((item) => item.runId === runId)
       )
-      if (sampleId) {
-        items = items.map((item, itemIndex) =>
-          itemIndex === index ? { ...item, sampleId } : item
-        )
-      }
-      setResultPreview({ items, index })
+      setResultPreview({
+        page,
+        index,
+        sampleId,
+      })
     },
-    [currentPageRuns, detail.data, profileNameById]
+    [currentPageRuns, page, profileNameById, query.data?.total]
   )
   const currentPageRunMap = useMemo(
     () => new Map(currentPageRuns.map((run) => [run.id, run])),
@@ -1366,11 +1434,22 @@ export function RunsPage() {
         onOpenChange={(open) => {
           if (!open) setResultPreview(null)
         }}
-        items={resultPreview?.items ?? []}
+        items={previewItems}
         index={resultPreview?.index ?? 0}
         onIndexChange={(index) =>
           setResultPreview((current) =>
             current ? { ...current, index } : current
+          )
+        }
+        page={resultPreview?.page ?? page}
+        pageCount={previewPageCount}
+        total={previewTotal}
+        pageLoading={previewPageLoading}
+        onPageChange={(nextPage, land) =>
+          setResultPreview((current) =>
+            current
+              ? { ...current, page: nextPage, land, index: 0, sampleId: undefined }
+              : current
           )
         }
         onOpenAccount={(accountId) => setAccountDetailId(accountId)}

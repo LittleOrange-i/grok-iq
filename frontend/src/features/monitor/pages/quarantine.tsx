@@ -776,6 +776,8 @@ export function QuarantinePage() {
     null
   )
   const [previewIndex, setPreviewIndex] = useState(0)
+  const [previewPage, setPreviewPage] = useState(1)
+  const [previewLand, setPreviewLand] = useState<'start' | 'end'>()
   const previewSeeded = useRef(false)
   const tableQueryPending =
     tableQuery.page !== committedQuery.page ||
@@ -853,9 +855,13 @@ export function QuarantinePage() {
       'account-samples',
       previewAccount ? Number(previewAccount.id) : 0,
       'gallery',
+      previewPage,
     ],
     queryFn: () =>
-      api.accountSamples(Number(previewAccount!.id), { page: 1, pageSize: 50 }),
+      api.accountSamples(Number(previewAccount!.id), {
+        page: previewPage,
+        pageSize: 50,
+      }),
     enabled: previewAccount != null,
   })
   const previewItems = useMemo(
@@ -898,21 +904,33 @@ export function QuarantinePage() {
       return
     }
     if (previewQuery.isSuccess && previewItems.length === 0) {
-      toast.error('该账号没有可预览的样本正文')
-      setPreviewAccount(null)
+      if ((previewQuery.data?.total ?? 0) === 0) {
+        toast.error('该账号没有可预览的样本正文')
+        setPreviewAccount(null)
+      }
       return
     }
-    if (
-      previewQuery.isSuccess &&
-      !previewSeeded.current &&
-      previewItems.length > 0
-    ) {
-      previewSeeded.current = true
-      const picked = pickPreviewSample(previewQuery.data?.items ?? [])
-      const index = previewItems.findIndex(
-        (item) => item.sampleId === picked?.id
-      )
-      setPreviewIndex(index >= 0 ? index : 0)
+    if (previewQuery.isSuccess && previewItems.length > 0) {
+      if (previewLand === 'end') {
+        previewSeeded.current = true
+        setPreviewIndex(previewItems.length - 1)
+        setPreviewLand(undefined)
+        return
+      }
+      if (previewLand === 'start') {
+        previewSeeded.current = true
+        setPreviewIndex(0)
+        setPreviewLand(undefined)
+        return
+      }
+      if (!previewSeeded.current) {
+        previewSeeded.current = true
+        const picked = pickPreviewSample(previewQuery.data?.items ?? [])
+        const index = previewItems.findIndex(
+          (item) => item.sampleId === picked?.id
+        )
+        setPreviewIndex(index >= 0 ? index : 0)
+      }
     }
   }, [
     previewAccount,
@@ -920,6 +938,7 @@ export function QuarantinePage() {
     previewQuery.data?.items,
     previewQuery.error,
     previewQuery.isError,
+    previewLand,
     previewQuery.isFetching,
     previewQuery.isSuccess,
   ])
@@ -1533,7 +1552,10 @@ export function QuarantinePage() {
                   onOpenUpstream={openAccountUpstream}
                   onOpenSamples={openAccountSamples}
                   onPreview={(account) => {
+                    previewSeeded.current = false
                     setPreviewIndex(0)
+                    setPreviewPage(1)
+                    setPreviewLand(undefined)
                     setPreviewAccount(account)
                   }}
                   onProbe={(account) => {
@@ -1781,13 +1803,28 @@ export function QuarantinePage() {
         </DialogContent>
       </Dialog>
       <ResultPreviewGallery
-        open={previewAccount != null && previewItems.length > 0}
+        open={previewAccount != null}
         onOpenChange={(open) => {
           if (!open) setPreviewAccount(null)
         }}
         items={previewItems}
         index={previewIndex}
         onIndexChange={setPreviewIndex}
+        page={previewPage}
+        pageCount={Math.max(
+          1,
+          Math.ceil((previewQuery.data?.total ?? 0) / 50)
+        )}
+        total={previewQuery.data?.total}
+        pageLoading={
+          previewQuery.isFetching && previewQuery.data?.page !== previewPage
+        }
+        onPageChange={(nextPage, land) => {
+          previewSeeded.current = false
+          setPreviewLand(land)
+          setPreviewPage(nextPage)
+          setPreviewIndex(0)
+        }}
         onOpenAccount={(accountId) => {
           setPreviewAccount(null)
           openAccountSamples(accountId)

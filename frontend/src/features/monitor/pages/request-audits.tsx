@@ -3775,7 +3775,7 @@ export function RequestAuditsPage() {
             ) : accountSamplesQuery.data?.items.length ? (
               <div className='space-y-3'>
                 <AccountSampleExplorer
-                  key={`${sampleAccount?.accountId}:${accountSamplesQuery.data.page}:${samplePageSize}`}
+                  key={String(sampleAccount?.accountId ?? 'samples')}
                   samples={accountSamplesQuery.data.items}
                   egressNodeNames={egressNodeNames}
                   countLabel={`本页 ${accountSamplesQuery.data.items.length} / 共 ${accountSamplesQuery.data.total}`}
@@ -3787,6 +3787,20 @@ export function RequestAuditsPage() {
                         }
                       : undefined
                   }
+                  page={samplePage}
+                  pageCount={Math.max(
+                    1,
+                    Math.ceil(
+                      accountSamplesQuery.data.total /
+                        Math.max(accountSamplesQuery.data.pageSize, 1)
+                    )
+                  )}
+                  total={accountSamplesQuery.data.total}
+                  pageLoading={
+                    accountSamplesQuery.isFetching &&
+                    accountSamplesQuery.data.page !== samplePage
+                  }
+                  onPageChange={(nextPage) => setSamplePage(nextPage)}
                 />
                 <ServerPagination
                   page={accountSamplesQuery.data.page}

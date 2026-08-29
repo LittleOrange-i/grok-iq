@@ -471,7 +471,7 @@ function AccountProbeDetail({
       <div>
         <h3 className='mb-2 text-sm font-semibold'>最近样本</h3>
         <AccountSampleExplorer
-          samples={history.samples.slice(0, 30)}
+          samples={history.samples}
           egressNodeNames={egressNodeNames}
           deletingSampleId={deletingSampleId}
           onDeleteSample={onDeleteSample}

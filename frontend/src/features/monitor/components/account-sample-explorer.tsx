@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { Loader2, Trash2 } from 'lucide-react'
 import { type ProbeSample } from '@/lib/api'
@@ -37,6 +37,11 @@ type AccountSampleExplorerProps = {
     createdAt?: string | null
   }
   onOpenAccount?: (accountId: number) => void
+  page?: number
+  pageCount?: number
+  total?: number
+  pageLoading?: boolean
+  onPageChange?: (page: number, land: 'start' | 'end') => void
 }
 
 export function AccountSampleExplorer({
@@ -48,16 +53,29 @@ export function AccountSampleExplorer({
   className,
   account,
   onOpenAccount,
+  page,
+  pageCount,
+  total,
+  pageLoading,
+  onPageChange,
 }: AccountSampleExplorerProps) {
   const navigate = useNavigate()
   const [selectedId, setSelectedId] = useState(samples[0]?.id ?? '')
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const pendingPreviewLand = useRef<'start' | 'end'>()
   const selected =
     samples.find((sample) => sample.id === selectedId) ?? samples[0]
   const previewItems = useMemo(
     () => (account ? previewItemsFromSamples(samples, account) : []),
     [account, samples]
   )
+  useEffect(() => {
+    const land = pendingPreviewLand.current
+    if (!land) return
+    pendingPreviewLand.current = undefined
+    if (!previewItems.length) return
+    setPreviewIndex(land === 'end' ? previewItems.length - 1 : 0)
+  }, [previewItems])
   if (!selected) {
     return (
       <div className='rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground'>
@@ -158,7 +176,12 @@ export function AccountSampleExplorer({
     </div>
     {account ? (
       <ResultPreviewGallery
-        open={previewIndex != null && previewItems.length > 0}
+        open={
+          previewIndex != null &&
+          (previewItems.length > 0 ||
+            Boolean(pageLoading) ||
+            (pageCount ?? 1) > 1)
+        }
         onOpenChange={(open) => {
           if (!open) setPreviewIndex(null)
         }}
@@ -166,6 +189,18 @@ export function AccountSampleExplorer({
         index={previewIndex ?? 0}
         onIndexChange={(index) => setPreviewIndex(index)}
         onOpenAccount={onOpenAccount}
+        page={page}
+        pageCount={pageCount}
+        total={total}
+        pageLoading={pageLoading}
+        onPageChange={
+          onPageChange
+            ? (nextPage, land) => {
+                pendingPreviewLand.current = land
+                onPageChange(nextPage, land)
+              }
+            : undefined
+        }
         onOpenRun={(runId) => {
           void navigate({
             to: '/runs',
