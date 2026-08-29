@@ -215,6 +215,10 @@ export function ResultPreviewGallery({
     onIndexChange(nextIndex)
     if (sampleId) setSampleOverrideId(sampleId)
   }
+  const openPreviewItem = (nextIndex: number, sampleId?: string) => {
+    selectPreviewItem(nextIndex, sampleId)
+    setView('split')
+  }
   const commitPreviewPage = () => {
     if (!onPageChange) {
       setPageDraft(String(currentPage))
@@ -671,10 +675,8 @@ export function ResultPreviewGallery({
                                 )}
                                 active={entry.id === item.id}
                                 activeSampleId={sample?.id}
-                                onSelect={(nextIndex, sampleId) => {
-                                  selectPreviewItem(nextIndex, sampleId)
-                                  setView('split')
-                                }}
+                                onSelect={selectPreviewItem}
+                                onOpen={openPreviewItem}
                               />
                             ))}
                           </div>
@@ -688,10 +690,8 @@ export function ResultPreviewGallery({
                       activeId={item.id}
                       sampleLeaves={sampleLeaves}
                       scrollRef={gridRef}
-                      onSelect={(nextIndex) => {
-                        onIndexChange(nextIndex)
-                        setView('split')
-                      }}
+                      onSelect={onIndexChange}
+                      onOpen={openPreviewItem}
                     />
                   ) : (
                     <div className='grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'>
@@ -703,10 +703,8 @@ export function ResultPreviewGallery({
                           active={entry.id === item.id}
                           activeSampleId={sample?.id}
                           variant='task'
-                          onSelect={(nextIndex, sampleId) => {
-                            selectPreviewItem(nextIndex, sampleId)
-                            setView('split')
-                          }}
+                          onSelect={selectPreviewItem}
+                          onOpen={openPreviewItem}
                         />
                       ))}
                     </div>
@@ -1128,6 +1126,7 @@ function AccountTaskThumbGroup({
   activeSampleId,
   variant = 'account',
   onSelect,
+  onOpen,
 }: {
   item: ResultPreviewItem
   index: number
@@ -1135,6 +1134,7 @@ function AccountTaskThumbGroup({
   activeSampleId?: string
   variant?: 'task' | 'account'
   onSelect: (index: number, sampleId?: string) => void
+  onOpen: (index: number, sampleId?: string) => void
 }) {
   const { ref, inView } = useInView<HTMLDivElement>()
   const hasLocal = Boolean(item.content || item.sample)
@@ -1200,6 +1200,7 @@ function AccountTaskThumbGroup({
               sampleLeaves={variant !== 'task' && Boolean(entrySample)}
               heading={heading}
               onSelect={() => onSelect(index, entrySample?.id)}
+              onOpen={() => onOpen(index, entrySample?.id)}
             />
           </div>
         )
@@ -1215,6 +1216,7 @@ function VirtualizedThumbGrid({
   sampleLeaves,
   scrollRef,
   onSelect,
+  onOpen,
 }: {
   items: ResultPreviewItem[]
   columns: number
@@ -1222,6 +1224,7 @@ function VirtualizedThumbGrid({
   sampleLeaves: boolean
   scrollRef: { current: HTMLDivElement | null }
   onSelect: (index: number) => void
+  onOpen: (index: number) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -1312,6 +1315,7 @@ function VirtualizedThumbGrid({
               active={entry.id === activeId}
               sampleLeaves={sampleLeaves}
               onSelect={onSelect}
+              onOpen={onOpen}
             />
           </div>
         )
@@ -1327,6 +1331,7 @@ function PreviewThumbCard({
   sampleLeaves,
   heading,
   onSelect,
+  onOpen,
 }: {
   item: ResultPreviewItem
   index: number
@@ -1334,6 +1339,7 @@ function PreviewThumbCard({
   sampleLeaves: boolean
   heading?: string
   onSelect: (index: number) => void
+  onOpen: (index: number) => void
 }) {
   const { ref, inView } = useInView<HTMLButtonElement>()
   const hasLocal = Boolean(item.content || item.sample)
@@ -1361,6 +1367,7 @@ function PreviewThumbCard({
           : 'hover:border-primary/30'
       )}
       onClick={() => onSelect(index)}
+      onDoubleClick={() => onOpen(index)}
     >
       <div className='relative aspect-[16/10] w-full min-h-0 overflow-hidden border-b bg-muted/20'>
         {(item.completedSteps || 0) > 1 && !item.sample ? (
