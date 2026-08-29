@@ -16,6 +16,12 @@ class AuthSetupInput(AuthLoginInput):
     confirm_password: str = Field(min_length=1, max_length=256)
 
 
+class ClientKeyQuotaInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True)
+
+    api_key: str = Field(alias="apiKey", min_length=8, max_length=256)
+
+
 class ChatProviderCreateInput(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

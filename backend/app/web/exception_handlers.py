@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.rate_limit import RateLimitExceeded
 from app.integrations.grok2api.client import IntegrationError
 from app.integrations.wechat.client import WeChatIntegrationError
 from app.persistence.auth_repository import AdminAlreadyExistsError
@@ -69,6 +70,14 @@ def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(QueueFullError)
     async def queue_full_error(_: Request, exc: QueueFullError) -> JSONResponse:
         return _error_response(429, exc)
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded(_: Request, exc: RateLimitExceeded) -> JSONResponse:
+        return _error_response(
+            429,
+            exc,
+            headers={**NO_STORE_HEADERS, "Retry-After": str(exc.retry_after)},
+        )
 
     @app.exception_handler(SsoReportNotFoundError)
     async def sso_report_not_found(

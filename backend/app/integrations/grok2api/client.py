@@ -905,6 +905,17 @@ class Grok2APIClient:
         if route_id:
             await self.admin_request("DELETE", f"/api/admin/v1/models/{route_id}")
 
+    async def list_client_keys(self, **params: Any) -> dict[str, Any]:
+        query = {"page": 1, "pageSize": 20} | params
+        return await self.admin_request("GET", "/api/admin/v1/client-keys", params=query)
+
+    async def get_client_key_secret(self, key_id: str) -> str:
+        payload = await self.admin_request("GET", f"/api/admin/v1/client-keys/{key_id}/secret")
+        secret = str(payload.get("secret") or "")
+        if not secret:
+            raise IntegrationError("读取 Client Key secret 后响应缺少 secret")
+        return secret
+
     async def create_probe_client_key(self, route_id: str) -> tuple[str, str]:
         payload = await self.admin_request(
             "POST",

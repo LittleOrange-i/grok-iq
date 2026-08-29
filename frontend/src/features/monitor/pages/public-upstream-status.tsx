@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/tooltip'
 import { StatCard } from '@/components/stat-card'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { ClientKeyQuotaDialog } from '@/features/monitor/components/client-key-quota-dialog'
 
 const providerMeta: Record<
   PublicUpstreamProvider,
@@ -134,7 +135,7 @@ export function PublicUpstreamStatusPage() {
               上游账号情况
             </h1>
             <p className='mt-1 text-sm text-muted-foreground'>
-              只展示 grok2api 聚合计数，不含账号明细、凭据或签名信息。
+              默认只展示 grok2api 聚合计数。密钥额度需手动查询，不会回显明文。
             </p>
           </div>
           <div className='flex flex-wrap items-center gap-2'>
@@ -143,6 +144,7 @@ export function PublicUpstreamStatusPage() {
               reachable={data.reachable}
               error={Boolean(errorMessage)}
             />
+            <ClientKeyQuotaDialog />
             <Button
               type='button'
               size='sm'

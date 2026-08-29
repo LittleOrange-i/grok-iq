@@ -40,6 +40,25 @@ export type PublicUpstreamAccountSummary = {
   }
 }
 
+export type PublicClientKeyQuota = {
+  found: true
+  name: string
+  prefix: string
+  enabled: boolean
+  expired: boolean
+  expiresAt: string | null
+  lastUsedAt: string | null
+  unlimited: boolean
+  billingLimitUsd: number
+  billedUsageUsd: number
+  remainingUsd: number
+  usagePercent: number
+}
+
+export type PublicClientKeyQuotaLookup =
+  | { found: false }
+  | PublicClientKeyQuota
+
 export type AuthSession = {
   accessToken: string
   tokenType: 'bearer'
@@ -2647,6 +2666,12 @@ export const api = {
   publicUpstreamAccounts: () =>
     request<PublicUpstreamAccountSummary>('/public/upstream-accounts', {
       skipAuth: true,
+    }),
+  lookupPublicClientKeyQuota: (apiKey: string) =>
+    request<PublicClientKeyQuotaLookup>('/public/client-key-quota', {
+      method: 'POST',
+      skipAuth: true,
+      body: JSON.stringify({ apiKey }),
     }),
   systemVersion: () =>
     request<SystemVersionInfo>('/system/version', { cache: 'no-store' }),
