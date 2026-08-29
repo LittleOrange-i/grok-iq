@@ -186,6 +186,8 @@ export function ResultPreviewGallery({
   const client = useQueryClient()
   const listRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
+  const pagerRef = useRef<HTMLDivElement>(null)
+  const skipPageCommitRef = useRef(false)
   const [isolateOpen, setIsolateOpen] = useState(false)
   const [compareExpected, setCompareExpected] = useState(false)
   const previewPrefs = usePersistedViewState(
@@ -275,6 +277,16 @@ export function ResultPreviewGallery({
     const nextPage = Math.min(currentPageCount, Math.max(1, parsed))
     setPageDraft(String(nextPage))
     if (nextPage !== currentPage) onPageChange(nextPage, 'start')
+  }
+  const skipPreviewPageCommit = (relatedTarget?: EventTarget | null) => {
+    if (skipPageCommitRef.current) {
+      skipPageCommitRef.current = false
+      return true
+    }
+    return (
+      relatedTarget instanceof Node &&
+      Boolean(pagerRef.current?.contains(relatedTarget))
+    )
   }
   const neighborRunIds = useMemo(() => {
     if (!item || view !== 'split') return []
@@ -515,6 +527,14 @@ export function ResultPreviewGallery({
             event.preventDefault()
             ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
           }}
+          onEscapeKeyDown={(event) => {
+            if (
+              event.target instanceof HTMLElement &&
+              event.target.matches('[data-dialog-autofocus="skip"]')
+            ) {
+              event.preventDefault()
+            }
+          }}
         >
           <div className='flex h-full min-h-0 min-w-0 flex-col overflow-hidden'>
             <header className='flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2'>
@@ -599,7 +619,22 @@ export function ResultPreviewGallery({
                 </div>
               </div>
               {onPageChange && currentPageCount > 1 ? (
-                <div className='flex shrink-0 items-center gap-1'>
+                <div
+                  ref={pagerRef}
+                  className='flex shrink-0 items-center gap-1'
+                  onPointerDown={(event) => {
+                    const target = event.target
+                    if (
+                      !(target instanceof HTMLElement) ||
+                      target.closest('input')
+                    ) {
+                      return
+                    }
+                    if (pagerRef.current?.contains(document.activeElement)) {
+                      skipPageCommitRef.current = true
+                    }
+                  }}
+                >
                   <Button
                     type='button'
                     size='sm'
@@ -618,19 +653,29 @@ export function ResultPreviewGallery({
                       pattern='[0-9]*'
                       value={pageDraft}
                       disabled={pageLoading}
+                      autoFocus={false}
+                      data-dialog-autofocus='skip'
                       aria-label='页码'
                       className='h-8 w-14 px-2 text-center text-xs tabular-nums'
                       onChange={(event) =>
                         setPageDraft(event.target.value.replace(/[^\d]/g, ''))
                       }
-                      onBlur={() => commitPreviewPage()}
+                      onBlur={(event) => {
+                        if (skipPreviewPageCommit(event.relatedTarget)) return
+                        commitPreviewPage()
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') {
                           event.preventDefault()
+                          skipPageCommitRef.current = true
                           commitPreviewPage()
                           event.currentTarget.blur()
+                          return
                         }
                         if (event.key === 'Escape') {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          skipPageCommitRef.current = true
                           setPageDraft(String(currentPage))
                           event.currentTarget.blur()
                         }

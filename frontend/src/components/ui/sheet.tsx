@@ -63,7 +63,7 @@ function SheetContent({
           event.preventDefault()
           const root = event.currentTarget as HTMLElement
           const field = root.querySelector<HTMLElement>(
-            'input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"])'
+            'input:not([type="hidden"]):not([disabled]):not([tabindex="-1"]):not([data-dialog-autofocus="skip"]), textarea:not([disabled]):not([tabindex="-1"]):not([data-dialog-autofocus="skip"]), select:not([disabled]):not([tabindex="-1"]):not([data-dialog-autofocus="skip"])'
           )
           ;(field ?? root).focus({ preventScroll: true })
         }}
