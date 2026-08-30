@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from app.analyzer import SampleMetrics, classify_sample
 from app.core.clock import utc_now
-from app.integrations.grok2api.client import IntegrationError
+from app.integrations.grok2api.client import (
+    IntegrationError,
+    is_model_account_bind_mismatch,
+)
 from app.persistence.probe_repository import AccountSettingsSnapshot, RunExecutionContext
 from app.services.probe_runtime import AccountRestoreError, WorkerRuntime
 
@@ -28,6 +31,7 @@ class ProbeRunState:
     public_model: str = ""
     client_key_id: str = ""
     api_key: str = ""
+    account_bound: bool = True
     cancelled: bool = False
     fatal_error: str = ""
     cleanup_errors: list[str] = field(default_factory=list)
@@ -124,11 +128,38 @@ class ProbeRunExecutor:
             diagnostic_priority=manager.settings.probe_diagnostic_priority,
             diagnostic_max_concurrent=1,
         )
-        state.route_id, state.public_model = await manager.client.create_probe_route(
-            account_id=account_id,
-            upstream_model=str(profile["model"]),
-            allow_temporarily_unavailable=not state.snapshot.enabled,
-        )
+        try:
+            state.route_id, state.public_model = await manager.client.create_probe_route(
+                account_id=account_id,
+                upstream_model=str(profile["model"]),
+                allow_temporarily_unavailable=not state.snapshot.enabled,
+                bind_account=True,
+            )
+        except IntegrationError as exc:
+            if not is_model_account_bind_mismatch(exc):
+                raise
+            if not self._can_pin_with_quality_guard(run, state):
+                raise IntegrationError(
+                    "该账号超出 grok2api 模型绑定窗口，且没有可用出口节点，"
+                    "无法做定向探测"
+                ) from exc
+            self.logger.warning(
+                "probe run %s account %s is outside grok2api model bind "
+                "window; pinning via quality-guard",
+                run_id,
+                account_id,
+            )
+            state.account_bound = False
+            manager.repository.set_upstream_context(
+                run_id=run_id,
+                original_node_id=state.original_node_id,
+                original_mode=state.original_mode,
+                route_id="",
+                public_model="",
+                client_key_id="",
+            )
+            return
+        state.account_bound = True
         manager.repository.set_upstream_context(
             run_id=run_id,
             original_node_id=state.original_node_id,
@@ -282,10 +313,12 @@ class ProbeRunExecutor:
                         f"账号出口在定检期间从节点 {state.original_node_id} 变为 "
                         f"{live_node_id or '未绑定'}，已停止该样本"
                     )
-            else:
+            elif state.account_bound or target.get("kind") != "direct":
                 manager.repository.mark_account_mutation_pending(run_id)
                 await manager.client.set_account_egress(account_id, target)
                 await asyncio.sleep(0.15)
+            if not state.account_bound:
+                return self._quality_guard_factory(account_id, target, state)
 
             def chat_factory() -> Awaitable[Any]:
                 return manager.client.chat_probe(
@@ -301,6 +334,8 @@ class ProbeRunExecutor:
                 )
 
             return chat_factory
+        if not state.account_bound:
+            return self._quality_guard_factory(account_id, target, state)
         egress_node_id = int(target.get("id") or 0)
 
         def quality_factory() -> Awaitable[Any]:
@@ -317,6 +352,52 @@ class ProbeRunExecutor:
             )
 
         return quality_factory
+
+    def _quality_guard_factory(
+        self,
+        account_id: int,
+        target: dict[str, Any],
+        state: ProbeRunState,
+    ) -> Callable[[], Awaitable[Any]]:
+        node_id = self._forced_egress_node_id(target, state)
+
+        def factory() -> Awaitable[Any]:
+            return self.manager.client.quality_guard_probe(
+                account_id=account_id,
+                egress_node_id=node_id,
+            )
+
+        return factory
+
+    @staticmethod
+    def _forced_egress_node_id(
+        target: dict[str, Any],
+        state: ProbeRunState,
+    ) -> int:
+        kind = str(target.get("kind") or "")
+        if kind in {"current", "direct"}:
+            node_id = int(state.original_node_id or 0)
+        else:
+            node_id = int(target.get("id") or 0)
+        if node_id <= 0:
+            raise IntegrationError(
+                "该账号超出 grok2api 模型绑定窗口，且没有可用出口节点，"
+                "无法做定向探测"
+            )
+        return node_id
+
+    @staticmethod
+    def _can_pin_with_quality_guard(
+        run: dict[str, Any],
+        state: ProbeRunState,
+    ) -> bool:
+        if int(state.original_node_id or 0) > 0:
+            return True
+        return any(
+            str(target.get("kind") or "") == "egress"
+            and int(target.get("id") or 0) > 0
+            for target in run.get("proxy_targets") or []
+        )
 
     async def _record_failure(
         self,
@@ -388,6 +469,7 @@ class ProbeRunExecutor:
                 operation=(
                     "chat"
                     if str(run.get("execution_mode") or "chat") == "chat"
+                    and state.account_bound
                     else "quality_test"
                 ),
                 reasoning_tokens_reported=result.reasoning_tokens_reported,

@@ -1009,6 +1009,9 @@ class FakeGrokClient:
         self.chat_egress_override = 0
         self.account_egress_node_id: int | None = None
         self.account_egress_mode = ""
+        self.bind_mismatch = False
+        self.create_probe_route_calls: list[dict[str, Any]] = []
+        self.quality_guard_calls: list[dict[str, Any]] = []
 
     async def get_account(self, account_id: int) -> dict[str, Any]:
         return {
@@ -1040,7 +1043,15 @@ class FakeGrokClient:
             "pageSize": 500,
         }
 
-    async def create_probe_route(self, **_: Any) -> tuple[str, str]:
+    async def create_probe_route(self, **kwargs: Any) -> tuple[str, str]:
+        self.create_probe_route_calls.append(kwargs)
+        if self.bind_mismatch and kwargs.get("bind_account", True):
+            raise IntegrationError(
+                "grok2api 返回 HTTP 400: 模型参数无效: "
+                "账号 4725 不存在或与模型来源不匹配",
+                status_code=400,
+                error_code="modelCreateFailed",
+            )
         return "route-1", "grokiq-probe-test"
 
     async def create_probe_client_key(self, _: str, **__: Any) -> tuple[str, str]:
@@ -1104,6 +1115,42 @@ class FakeGrokClient:
             usage={"completion_tokens": 100},
         )
 
+    async def quality_guard_probe(self, **kwargs: Any) -> ChatProbeResult:
+        self.quality_guard_calls.append(kwargs)
+        self.probe_calls += 1
+        if self.probe_errors:
+            raise self.probe_errors.pop(0)
+        if self.probe_error is not None:
+            raise self.probe_error
+        egress_id = kwargs["egress_node_id"]
+        return ChatProbeResult(
+            request_id="guard-request-1",
+            audit_id=3,
+            verified_account_id=10,
+            verified_egress_node_id=egress_id,
+            status_code=200,
+            response_text="",
+            reasoning_text="",
+            response_sha256="guard-digest",
+            output_tokens=80,
+            reasoning_tokens=12,
+            reasoning_tokens_reported=True,
+            visible_tokens=68,
+            chunk_count=2,
+            first_token_ms=300,
+            duration_ms=1200,
+            generation_ms=900,
+            first_token_share=0.25,
+            tps=66.6,
+            expected_matched=True,
+            usage={
+                "completion_tokens": 80,
+                "quality_test": True,
+                "quality_guard": True,
+                "account_bind_skipped": True,
+            },
+        )
+
     async def quality_probe(self, **kwargs: Any) -> ChatProbeResult:
         egress_id = kwargs["egress_node_id"]
         return ChatProbeResult(
@@ -1132,11 +1179,13 @@ class FakeGrokClient:
     async def restore_account_egress(self, *_: Any) -> None:
         self.restored = True
 
-    async def delete_probe_client_key(self, _: str) -> None:
-        self.deleted_key = True
+    async def delete_probe_client_key(self, key_id: str) -> None:
+        if key_id:
+            self.deleted_key = True
 
-    async def delete_probe_route(self, _: str) -> None:
-        self.deleted_route = True
+    async def delete_probe_route(self, route_id: str) -> None:
+        if route_id:
+            self.deleted_route = True
 
     async def cleanup_stale_resources(self) -> dict[str, int]:
         return {"routes": 0, "clientKeys": 0}
@@ -1961,5 +2010,93 @@ async def test_quality_test_pins_account_and_node_without_changing_binding(tmp_p
         assert client.bindings == []
         assert client.restored is False
         assert client.deleted_route and client.deleted_key
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_bind_window_fallback_pins_via_quality_guard(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.account_enabled = False
+    client.account_egress_node_id = 110
+    client.bind_mismatch = True
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        sample = detail["samples"][0]
+        assert detail["run"]["status"] == "completed"
+        route_call = client.create_probe_route_calls[0]
+        assert len(client.create_probe_route_calls) == 1
+        assert route_call["account_id"] == 10
+        assert route_call["bind_account"] is True
+        assert route_call["allow_temporarily_unavailable"] is True
+        assert client.quality_guard_calls == [
+            {"account_id": 10, "egress_node_id": 110}
+        ]
+        assert client.bindings == []
+        assert client.deleted_route is False
+        assert client.deleted_key is False
+        assert sample["request_id"] == "guard-request-1"
+        assert sample["verified_account_id"] == 10
+        assert sample["verified_egress_node_id"] == 110
+        assert sample["usage"]["quality_guard"] is True
+        assert sample["usage"]["account_bind_skipped"] is True
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_bind_window_fallback_requires_egress_node(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    probe_repository = ProbeRepository(database)
+    client = FakeGrokClient()
+    client.bind_mismatch = True
+    manager = ProbeManager(
+        settings=Settings(
+            database_path=tmp_path / "grokiq.db",
+            scheduler_enabled=False,
+            probe_worker_concurrency=1,
+            probe_step_delay_seconds=0,
+        ),
+        repository=probe_repository,
+        accounts=AccountRepository(database),
+        client=client,  # type: ignore[arg-type]
+        thresholds=Thresholds(),
+    )
+    await manager.start()
+    try:
+        run_id = await manager.enqueue_manual(
+            account_id=10,
+            profile_id="quality-marker",
+            rounds=1,
+            proxy_targets=[{"kind": "direct", "id": None}],
+        )
+        detail = await wait_for_terminal_run(probe_repository, run_id)
+        assert detail["run"]["status"] == "failed"
+        assert "没有可用出口节点" in str(detail["run"]["error"] or "")
+        assert client.quality_guard_calls == []
+        assert client.deleted_route is False
     finally:
         await manager.stop()

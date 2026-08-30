@@ -452,3 +452,48 @@ async def test_quality_probe_only_sends_explicit_output_limit(
     )
 
     assert request_body.get("maxOutputTokens") == expected
+    assert request_body.get("accountId") == "7"
+
+
+@pytest.mark.asyncio
+async def test_quality_guard_probe_pins_account_and_verifies_audit(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = Grok2APIClient(Settings())
+    captured: dict[str, Any] = {}
+
+    async def admin_request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        captured["method"] = method
+        captured["path"] = path
+        captured["json"] = kwargs["json"]
+        return {
+            "requestId": "guard-1",
+            "statusCode": 200,
+            "durationMs": 1200,
+            "firstTokenMs": 300,
+            "generationMs": 900,
+            "outputTokens": 80,
+            "reasoningTokens": 12,
+            "visibleTokens": 68,
+            "expectedMatched": True,
+            "outputTokensPerSecond": 66.6,
+        }
+
+    async def find_audit(_: str) -> dict[str, Any]:
+        return {"id": "3", "accountId": "4725", "egressNodeId": "110"}
+
+    monkeypatch.setattr(client, "admin_request", admin_request)
+    monkeypatch.setattr(client, "find_audit", find_audit)
+
+    result = await client.quality_guard_probe(account_id=4725, egress_node_id=110)
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == (
+        "/api/admin/v1/egress-quality-guard/nodes/110/test"
+    )
+    assert captured["json"] == {"accountId": "4725"}
+    assert result.request_id == "guard-1"
+    assert result.verified_account_id == 4725
+    assert result.verified_egress_node_id == 110
+    assert result.usage["quality_guard"] is True
+    assert result.usage["account_bind_skipped"] is True

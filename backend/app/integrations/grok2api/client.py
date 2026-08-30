@@ -65,6 +65,7 @@ TRANSIENT_GATEWAY_CODES = frozenset(
         "upstream_saturated",
     }
 )
+MODEL_ACCOUNT_BIND_MISMATCH_HINT = "不存在或与模型来源不匹配"
 ADMIN_REFRESH_COOKIE = "grok2api_admin_refresh"
 ADMIN_TOKEN_REFRESH_SKEW_SECONDS = 30.0
 ACCOUNT_BATCH_UPDATE_SIZE = 10_000
@@ -72,6 +73,24 @@ ACCOUNT_BATCH_FALLBACK_CONCURRENCY = 8
 ACCOUNT_BATCH_FALLBACK_STATUSES = frozenset({400, 404, 405, 409, 422})
 
 logger = logging.getLogger(__name__)
+
+
+def is_model_account_bind_mismatch(error: BaseException) -> bool:
+    """Return whether grok2api refused a model account bind.
+
+    grok2api validates bound accounts by listing the newest 1000 grok_build
+    rows. Older IDs still exist, but ``POST /models`` with ``accountIds``
+    returns HTTP 400. Those probes must pin the account another way.
+    """
+
+    if not isinstance(error, IntegrationError) or error.status_code != 400:
+        return False
+    haystack = " ".join(
+        part
+        for part in (error.error_code, str(error), error.response_body)
+        if part
+    )
+    return MODEL_ACCOUNT_BIND_MISMATCH_HINT in haystack
 
 
 def is_transient_gateway_error(*, status_code: int, error_code: str) -> bool:
@@ -872,19 +891,22 @@ class Grok2APIClient:
         account_id: int,
         upstream_model: str,
         allow_temporarily_unavailable: bool = False,
+        bind_account: bool = True,
     ) -> tuple[str, str]:
         public_id = f"{self.settings.probe_route_prefix}-{account_id}-{uuid.uuid4().hex[:12]}"
+        body: dict[str, Any] = {
+            "publicId": public_id,
+            "provider": "grok_build",
+            "upstreamModel": upstream_model,
+            "capability": "responses",
+            "enabled": True,
+        }
+        if bind_account:
+            body["accountIds"] = [str(account_id)]
         route = await self.admin_request(
             "POST",
             "/api/admin/v1/models",
-            json={
-                "publicId": public_id,
-                "provider": "grok_build",
-                "upstreamModel": upstream_model,
-                "capability": "responses",
-                "enabled": True,
-                "accountIds": [str(account_id)],
-            },
+            json=body,
         )
         route_id = str(route.get("id") or "")
         if not route_id:
@@ -1004,6 +1026,7 @@ class Grok2APIClient:
             "model": public_model,
             "prompt": prompt,
             "expected": expected,
+            "accountId": str(account_id),
         }
         if max_output_tokens > 0:
             request_body["maxOutputTokens"] = max_output_tokens
@@ -1013,21 +1036,79 @@ class Grok2APIClient:
             json=request_body,
             timeout=300,
         )
+        result = self._quality_result_from_payload(payload)
+        return await self._verify_quality_probe_account(result, account_id=account_id)
+
+    async def quality_guard_probe(
+        self,
+        *,
+        account_id: int,
+        egress_node_id: int,
+    ) -> ChatProbeResult:
+        """Pin an old account through grok2api quality-guard without model bind."""
+
+        if egress_node_id <= 0:
+            raise IntegrationError("定向质量探测需要账号当前出口节点")
+        try:
+            payload = await self.admin_request(
+                "POST",
+                (
+                    "/api/admin/v1/egress-quality-guard/nodes/"
+                    f"{egress_node_id}/test"
+                ),
+                json={"accountId": str(account_id)},
+                timeout=300,
+            )
+        except IntegrationError as exc:
+            raise IntegrationError(
+                "超出 grok2api 模型绑定窗口后，质量守护定向探测失败: "
+                f"{exc}",
+                status_code=exc.status_code,
+                error_code=exc.error_code,
+                error_type=exc.error_type,
+                retry_after_seconds=exc.retry_after_seconds,
+                response_body=exc.response_body,
+                request_id=exc.request_id,
+            ) from exc
+        result = self._quality_result_from_payload(
+            payload,
+            extra_usage={
+                "quality_guard": True,
+                "account_bind_skipped": True,
+            },
+        )
+        return await self._verify_quality_probe_account(
+            result,
+            account_id=account_id,
+        )
+
+    def _quality_result_from_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        extra_usage: dict[str, Any] | None = None,
+    ) -> ChatProbeResult:
         request_id = str(payload.get("requestId") or "")
         if not request_id:
             raise IntegrationError("出口质量探针响应缺少 requestId")
         duration_ms = int(payload.get("durationMs") or 0)
         first_token_ms = int(payload.get("firstTokenMs") or 0)
-        generation_ms = int(payload.get("generationMs") or max(duration_ms - first_token_ms, 0))
+        generation_ms = int(
+            payload.get("generationMs") or max(duration_ms - first_token_ms, 0)
+        )
         output_tokens = int(payload.get("outputTokens") or 0)
         reasoning_tokens = int(payload.get("reasoningTokens") or 0)
         visible_tokens = int(payload.get("visibleTokens") or 0)
         usage = {
             "completion_tokens": output_tokens,
-            "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
+            "completion_tokens_details": {
+                "reasoning_tokens": reasoning_tokens,
+            },
             "quality_test": True,
         }
-        result = ChatProbeResult(
+        if extra_usage:
+            usage.update(extra_usage)
+        return ChatProbeResult(
             request_id=request_id,
             audit_id=None,
             verified_account_id=None,
@@ -1044,16 +1125,25 @@ class Grok2APIClient:
             first_token_ms=first_token_ms,
             duration_ms=duration_ms,
             generation_ms=generation_ms,
-            first_token_share=first_token_ms / duration_ms if duration_ms > 0 else 0.0,
+            first_token_share=(
+                first_token_ms / duration_ms if duration_ms > 0 else 0.0
+            ),
             tps=float(payload.get("outputTokensPerSecond") or 0.0),
             expected_matched=bool(payload.get("expectedMatched")),
             usage=usage,
         )
-        audit = await self.find_audit(request_id)
+
+    async def _verify_quality_probe_account(
+        self,
+        result: ChatProbeResult,
+        *,
+        account_id: int,
+    ) -> ChatProbeResult:
+        audit = await self.find_audit(result.request_id)
         if audit is None:
             error = IntegrationError(
                 "出口质量探针审计未落库，未能核验实际账号和出口",
-                request_id=request_id,
+                request_id=result.request_id,
             )
             error.probe_result = result
             raise error
@@ -1068,7 +1158,7 @@ class Grok2APIClient:
         if verified_account_id != account_id:
             error = IntegrationError(
                 f"请求实际命中账号 {verified_account_id}，目标账号为 {account_id}",
-                request_id=request_id,
+                request_id=result.request_id,
             )
             error.audit_id = result.audit_id
             error.verified_account_id = verified_account_id
