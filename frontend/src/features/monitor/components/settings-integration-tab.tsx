@@ -116,26 +116,28 @@ export function SettingsIntegrationTab({
             ) : null}
           </div>
 
+          <a
+            href={GROK_REGISTER_REPOSITORY_URL}
+            target='_blank'
+            rel='noopener noreferrer'
+            className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+            aria-label='在 GitHub 新标签页打开 grok-register 项目'
+          >
+            <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background'>
+              <IconGithub className='size-4' />
+            </div>
+            <div className='min-w-0 flex-1'>
+              <div className='text-sm font-medium'>查看配套注册项目</div>
+              <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+                github.com/kaibush/grok-register
+              </div>
+            </div>
+            <ExternalLink className='size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground' />
+          </a>
+
           <div className='grid gap-2 md:grid-cols-2'>
-            <a
-              href={GROK_REGISTER_REPOSITORY_URL}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
-              aria-label='在 GitHub 新标签页打开 grok-register 项目'
-            >
-              <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground text-background'>
-                <IconGithub className='size-4' />
-              </div>
-              <div className='min-w-0 flex-1'>
-                <div className='text-sm font-medium'>查看配套注册项目</div>
-                <div className='mt-0.5 truncate text-xs text-muted-foreground'>
-                  github.com/kaibush/grok-register
-                </div>
-              </div>
-              <ExternalLink className='size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground' />
-            </a>
             <WebhookContractDialog />
+            <NotifyContractDialog />
           </div>
 
           <IntegrationFlow
@@ -202,44 +204,43 @@ export function SettingsIntegrationTab({
         description='类似支付异步通知：探针结束或确认降智后，向注册机 POST 回调通知，方便注册侧处理降智账号。'
       >
         <div className='space-y-4'>
-          <NotifyContractDialog />
-        <SettingList>
-          <SettingListItem
-            label='启用回调通知'
-            description='与导入 Webhook 共用联动令牌。每个导入事件只发送一次终态回调通知；失败会写入 Outbox 并退避重试。'
-            checked={form.registerCallbackEnabled}
-            onCheckedChange={(value) => set('registerCallbackEnabled', value)}
-          >
-            <div className='grid gap-4 md:grid-cols-2'>
-              <Field
-                label='通知地址'
-                hint='对应支付系统的 notify_url。统一 Compose 内使用 grok-register 容器名。'
-              >
-                <Input
-                  value={form.registerCallbackUrl}
-                  placeholder={REGISTER_CALLBACK_PLACEHOLDER_URL}
+          <SettingList>
+            <SettingListItem
+              label='启用回调通知'
+              description='与导入 Webhook 共用联动令牌。每个导入事件只发送一次终态回调通知；失败会写入 Outbox 并退避重试。'
+              checked={form.registerCallbackEnabled}
+              onCheckedChange={(value) => set('registerCallbackEnabled', value)}
+            >
+              <div className='grid gap-4 md:grid-cols-2'>
+                <Field
+                  label='通知地址'
+                  hint='对应支付系统的 notify_url。统一 Compose 内使用 grok-register 容器名。'
+                >
+                  <Input
+                    value={form.registerCallbackUrl}
+                    placeholder={REGISTER_CALLBACK_PLACEHOLDER_URL}
+                    disabled={!form.registerCallbackEnabled}
+                    onChange={(event) =>
+                      set('registerCallbackUrl', event.target.value)
+                    }
+                  />
+                </Field>
+                <NumberField
+                  label='请求超时'
+                  hint='单次投递超时；失败后由持久 Outbox 退避重试。'
+                  value={form.registerCallbackTimeoutSeconds}
+                  min={1}
+                  max={60}
+                  step={1}
+                  suffix='秒'
                   disabled={!form.registerCallbackEnabled}
-                  onChange={(event) =>
-                    set('registerCallbackUrl', event.target.value)
+                  onChange={(value) =>
+                    set('registerCallbackTimeoutSeconds', value)
                   }
                 />
-              </Field>
-              <NumberField
-                label='请求超时'
-                hint='单次投递超时；失败后由持久 Outbox 退避重试。'
-                value={form.registerCallbackTimeoutSeconds}
-                min={1}
-                max={60}
-                step={1}
-                suffix='秒'
-                disabled={!form.registerCallbackEnabled}
-                onChange={(value) =>
-                  set('registerCallbackTimeoutSeconds', value)
-                }
-              />
-            </div>
-          </SettingListItem>
-        </SettingList>
+              </div>
+            </SettingListItem>
+          </SettingList>
         </div>
       </SettingsCard>
       </TabsContent>

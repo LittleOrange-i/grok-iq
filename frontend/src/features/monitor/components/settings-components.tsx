@@ -4,7 +4,8 @@ import {
   Copy,
   Eye,
   EyeOff,
-  SquareCode,
+  Send,
+  Webhook,
   type Database,
   type MessageSquareText,
   type Network,
@@ -173,15 +174,15 @@ export function WebhookContractDialog() {
         <button
           type='button'
           className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
-          aria-label='查看 grok-register 请求协议'
+          aria-label='查看 Webhook 协议'
         >
           <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-            <SquareCode className='size-4' />
+            <Webhook className='size-4' />
           </div>
           <div className='min-w-0 flex-1'>
-            <div className='text-sm font-medium'>查看请求协议</div>
+            <div className='text-sm font-medium'>查看 Webhook 协议</div>
             <div className='mt-0.5 truncate text-xs text-muted-foreground'>
-              POST JSON · 请求体示例与可选字段
+              POST /account-imported · 注册机导入账号
             </div>
           </div>
           <ArrowRight className='size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
@@ -189,9 +190,9 @@ export function WebhookContractDialog() {
       </DialogTrigger>
       <DialogContent size='wide' className='gap-0 overflow-hidden p-0 sm:p-0'>
         <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
-          <DialogTitle>grok-register 请求协议</DialogTitle>
+          <DialogTitle>Webhook 协议</DialogTitle>
           <DialogDescription>
-            POST JSON；必填字段只有 email，获取到 SSO 时建议一并传入。
+            注册机向 GrokIQ 投递账号导入事件。POST JSON；必填字段只有 email，获取到 SSO 时建议一并传入。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 overflow-y-auto'>
@@ -319,15 +320,15 @@ export function NotifyContractDialog() {
         <button
           type='button'
           className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
-          aria-label='查看回调通知协议'
+          aria-label='查看回调协议'
         >
           <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
-            <SquareCode className='size-4' />
+            <Send className='size-4' />
           </div>
           <div className='min-w-0 flex-1'>
-            <div className='text-sm font-medium'>查看回调通知协议</div>
+            <div className='text-sm font-medium'>查看回调协议</div>
             <div className='mt-0.5 truncate text-xs text-muted-foreground'>
-              POST /notify · 请求体字段与处理约定
+              POST /notify · 检测结果回传注册机
             </div>
           </div>
           <ArrowRight className='size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
@@ -335,7 +336,7 @@ export function NotifyContractDialog() {
       </DialogTrigger>
       <DialogContent size='wide' className='gap-0 overflow-hidden p-0 sm:p-0'>
         <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
-          <DialogTitle>回调通知协议</DialogTitle>
+          <DialogTitle>回调协议</DialogTitle>
           <DialogDescription>
             类似支付异步通知。GrokIQ 检测完成后向注册机 POST，注册机返回 2xx 即表示已接收。
           </DialogDescription>
