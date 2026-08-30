@@ -191,7 +191,7 @@ export function WebhookContractDialog() {
         <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
           <DialogTitle>grok-register 请求协议</DialogTitle>
           <DialogDescription>
-            注册机导入账号用 inbound Webhook；GrokIQ 检测完成后按同一令牌发送回调通知。
+            POST JSON；必填字段只有 email，获取到 SSO 时建议一并传入。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 overflow-y-auto'>
@@ -308,25 +308,176 @@ function WebhookContract() {
           表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
         </p>
       </div>
+    </section>
+  )
+}
 
-      <div className='border-t bg-muted/20 px-4 py-3 sm:px-6'>
-        <div className='text-sm font-medium'>回调通知</div>
-        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
-          类似支付异步通知：GrokIQ 在确认降智或注册探针结束后，向注册机 POST
-          同一令牌的回调通知。注册机应 2xx 表示已接收，并读取{' '}
-          <code className='font-mono'>degraded</code> 判断是否降智。
+export function NotifyContractDialog() {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          type='button'
+          className='group flex min-w-0 items-center gap-3 rounded-xl border bg-muted/15 p-3.5 text-start transition-colors hover:border-primary/30 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+          aria-label='查看回调通知协议'
+        >
+          <div className='flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+            <SquareCode className='size-4' />
+          </div>
+          <div className='min-w-0 flex-1'>
+            <div className='text-sm font-medium'>查看回调通知协议</div>
+            <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+              POST /notify · 请求体字段与处理约定
+            </div>
+          </div>
+          <ArrowRight className='size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
+        </button>
+      </DialogTrigger>
+      <DialogContent size='wide' className='gap-0 overflow-hidden p-0 sm:p-0'>
+        <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
+          <DialogTitle>回调通知协议</DialogTitle>
+          <DialogDescription>
+            类似支付异步通知。GrokIQ 检测完成后向注册机 POST，注册机返回 2xx 即表示已接收。
+          </DialogDescription>
+        </DialogHeader>
+        <div className='min-h-0 overflow-y-auto'>
+          <NotifyContract />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function NotifyContract() {
+  const copyBody = (body: string, label: string) =>
+    void copyText(body)
+      .then(() => toast.success(`已复制${label}`))
+      .catch((error) => toast.error(getErrorMessage(error)))
+
+  const fields = [
+    {
+      name: 'event_id',
+      type: 'string',
+      description: '与导入 Webhook 相同的事件 ID，用于幂等；每个导入事件只通知一次终态。',
+    },
+    {
+      name: 'event_type',
+      type: 'string',
+      description: '固定为 grokiq.notify。',
+    },
+    {
+      name: 'registration_id',
+      type: 'string',
+      description: '注册机自己的账号记录 ID；接收方应优先按此匹配。',
+    },
+    {
+      name: 'email',
+      type: 'string',
+      description: '账号邮箱；registration_id 匹配失败时按邮箱匹配。',
+    },
+    {
+      name: 'account_id',
+      type: 'integer | null',
+      description: 'GrokIQ / grok2api 账号 ID。',
+    },
+    {
+      name: 'occurred_at',
+      type: 'string',
+      description: '通知时间，ISO 8601。',
+    },
+    {
+      name: 'degraded',
+      type: 'boolean',
+      description: '是否降智。注册机应以此字段为准处理账号。',
+    },
+    {
+      name: 'verdict',
+      type: 'string',
+      description:
+        'normal、degraded、suspect、high_risk、quarantined、insufficient_samples、probe_failed、imported。',
+    },
+    {
+      name: 'monitor_status',
+      type: 'string',
+      description: 'GrokIQ 当前监控状态，例如 healthy、high_risk、quarantined。',
+    },
+    {
+      name: 'risk_score',
+      type: 'number',
+      description: '风险分。',
+    },
+    {
+      name: 'risk_reasons',
+      type: 'string[]',
+      description: '风险原因摘要。',
+    },
+    {
+      name: 'isolated',
+      type: 'boolean',
+      description: '是否已隔离。',
+    },
+    {
+      name: 'probe_outcome',
+      type: 'string',
+      description:
+        'passed、failed、insufficient、empty、skipped、confirmed_degraded。',
+    },
+    {
+      name: 'run_ids',
+      type: 'string[]',
+      description: '本次注册探针任务 ID。',
+    },
+    {
+      name: 'source',
+      type: 'string',
+      description: 'register_probe 表示探针结论；grok-register 表示注册机确认降智。',
+    },
+  ]
+
+  return (
+    <section className='bg-background'>
+      <div className='flex flex-col gap-2 border-b bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6'>
+        <p className='text-xs leading-5 text-muted-foreground'>
+          开启回调通知并填写通知地址后，GrokIQ 在确认降智或注册探针结束后投递；失败会写入 Outbox 退避重试。
         </p>
-        <div className='mt-2 flex flex-wrap gap-2 text-xs'>
+        <div className='flex flex-wrap gap-2 text-xs'>
           <Badge variant='outline'>POST /api/integrations/grokiq/notify</Badge>
+          <Badge variant='outline'>Content-Type: application/json</Badge>
           <Badge variant='outline'>x-grokiq-token: 联动令牌</Badge>
         </div>
       </div>
+
       <WebhookBodyExample
         title='回调通知请求体'
-        description='每个导入事件只通知一次终态；失败会写入 Outbox 并退避重试。'
+        description='注册机返回 HTTP 2xx 表示已接收。处理时读取 degraded，不要自动删号。'
         body={REGISTER_CALLBACK_EXAMPLE_BODY}
         onCopy={() => copyBody(REGISTER_CALLBACK_EXAMPLE_BODY, '回调通知请求体')}
       />
+
+      <div className='border-t px-4 py-3 sm:px-6'>
+        <div className='mb-2 text-xs font-medium'>字段说明</div>
+        <div className='grid gap-x-5 gap-y-2 md:grid-cols-2'>
+          {fields.map((field) => (
+            <div
+              key={field.name}
+              className='grid min-w-0 grid-cols-[minmax(7rem,auto)_1fr] gap-3 text-xs leading-5'
+            >
+              <div className='min-w-0'>
+                <code className='font-mono break-all text-foreground'>
+                  {field.name}
+                </code>
+                <div className='text-[11px] text-muted-foreground'>
+                  {field.type}
+                </div>
+              </div>
+              <p className='text-muted-foreground'>{field.description}</p>
+            </div>
+          ))}
+        </div>
+        <p className='mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground'>
+          触发时机：注册机确认降智（bot_risk 且 bfs 为 1/2）后立即通知；否则等该导入事件的注册探针全部结束后再通知。关闭注册后探针时，导入完成也会通知一次。
+        </p>
+      </div>
     </section>
   )
 }

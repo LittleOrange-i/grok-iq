@@ -35,6 +35,7 @@ import {
   Field,
   FixedProbeSetting,
   IntegrationFlow,
+  NotifyContractDialog,
   NumberField,
   SecretField,
   SettingList,
@@ -200,6 +201,8 @@ export function SettingsIntegrationTab({
         title='检测回调通知'
         description='类似支付异步通知：探针结束或确认降智后，向注册机 POST 回调通知，方便注册侧处理降智账号。'
       >
+        <div className='space-y-4'>
+          <NotifyContractDialog />
         <SettingList>
           <SettingListItem
             label='启用回调通知'
@@ -237,6 +240,7 @@ export function SettingsIntegrationTab({
             </div>
           </SettingListItem>
         </SettingList>
+        </div>
       </SettingsCard>
       </TabsContent>
 

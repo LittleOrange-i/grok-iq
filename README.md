@@ -271,7 +271,69 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 - 如果账号暂时还没出现在 Grok2API，本项目会继续重试匹配；关闭自动探针时仍会保留导入事件。
 - 开启注册后探针时，匹配到账号会立即降低 grok2api 优先级；全部注册探针通过后恢复原值。恢复失败由联动后台定时重试，探针未通过则保持低优先级。
 - `grok-register` 的账号详情会显示投递状态、尝试次数、接收时间和最近错误，方便查联动问题。
-- 开启回调通知后，GrokIQ 会在确认降智或注册探针结束后，向注册机 `POST /api/integrations/grokiq/notify`。请求头仍是 `x-grokiq-token`，每个导入事件只通知一次终态；注册机应读取 `degraded` 判断是否降智。
+### 回调通知
+
+类似支付异步通知。GrokIQ 检测完成后向注册机 `POST /api/integrations/grokiq/notify`，请求头仍是 `x-grokiq-token`。注册机返回 HTTP `2xx` 表示已接收。
+
+统一 Compose 中的通知地址：
+
+```text
+http://grok-register:8787/api/integrations/grokiq/notify
+```
+
+1. 在本项目打开“系统设置 → 注册联动”，开启“回调通知”并填写通知地址。
+2. 两边使用同一个联动 Token。
+3. 注册机按 `registration_id` 匹配账号，找不到再按邮箱；读取 `degraded` 判断是否降智，不要自动删号。
+4. 账号中心列表和详情会显示 GrokIQ 检测结果。
+
+触发时机：
+
+- 注册机确认降智（`bot_risk=true` 且 `bfs` 为 `1` 或 `2`）后立即通知。
+- 否则等该导入事件的注册探针全部结束后再通知。
+- 关闭注册后探针时，导入完成也会通知一次。
+- 每个导入事件只通知一次终态；失败会写入 Outbox 并退避重试。
+
+请求体示例：
+
+```json
+{
+  "event_id": "registration:123:grok2api-imported",
+  "event_type": "grokiq.notify",
+  "registration_id": "123",
+  "email": "user@example.com",
+  "account_id": 17,
+  "occurred_at": "2026-08-30T12:00:00Z",
+  "verdict": "degraded",
+  "degraded": true,
+  "monitor_status": "quarantined",
+  "risk_score": 85,
+  "risk_reasons": ["grok-register 确认降智"],
+  "isolated": true,
+  "probe_outcome": "confirmed_degraded",
+  "run_ids": [],
+  "source": "grok-register"
+}
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `event_id` | string | 与导入 Webhook 相同的事件 ID，用于幂等 |
+| `event_type` | string | 固定 `grokiq.notify` |
+| `registration_id` | string | 注册机账号记录 ID，优先按此匹配 |
+| `email` | string | 账号邮箱；ID 匹配失败时按邮箱匹配 |
+| `account_id` | integer | GrokIQ / grok2api 账号 ID |
+| `occurred_at` | string | 通知时间，ISO 8601 |
+| `degraded` | boolean | 是否降智，注册机应以此为准 |
+| `verdict` | string | `normal` / `degraded` / `suspect` / `high_risk` / `quarantined` / `insufficient_samples` / `probe_failed` / `imported` |
+| `monitor_status` | string | GrokIQ 监控状态 |
+| `risk_score` | number | 风险分 |
+| `risk_reasons` | string[] | 风险原因 |
+| `isolated` | boolean | 是否已隔离 |
+| `probe_outcome` | string | `passed` / `failed` / `insufficient` / `empty` / `skipped` / `confirmed_degraded` |
+| `run_ids` | string[] | 注册探针任务 ID |
+| `source` | string | `register_probe` 或 `grok-register` |
+
+页面“系统设置 → 注册联动 → 检测回调通知”里也可以打开同样的协议说明。
 
 ### 三个服务一起跑
 
