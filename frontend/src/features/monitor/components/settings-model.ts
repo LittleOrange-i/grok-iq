@@ -702,13 +702,16 @@ export function validateSettings(form: SettingsForm) {
     if (!url) {
       throw new Error('开启回调通知前请填写通知地址')
     }
-    let parsed: URL
+    let parsed: URL | undefined
     try {
       parsed = new URL(url)
-    } catch (error) {
-      throw new Error('回调通知地址必须是有效的 HTTP(S) URL', { cause: error })
+    } catch {
+      parsed = undefined
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    if (
+      parsed == null ||
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+    ) {
       throw new Error('回调通知地址必须是有效的 HTTP(S) URL')
     }
     if (
