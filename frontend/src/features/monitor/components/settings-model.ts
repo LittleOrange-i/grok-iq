@@ -26,6 +26,9 @@ export type SettingsForm = {
   registerProbeSwitchOnDegradation: boolean
   registerPriorityHoldEnabled: boolean
   registerPriorityHold: number
+  registerCallbackEnabled: boolean
+  registerCallbackUrl: string
+  registerCallbackTimeoutSeconds: number
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecret: string
@@ -259,6 +262,25 @@ export const REGISTER_WEBHOOK_RECOMMENDED_BODY = `{
   "email": "user@example.com",
   "sso": "sso=..."
 }`
+export const REGISTER_CALLBACK_PLACEHOLDER_URL =
+  'http://grok-register:8787/api/integrations/grokiq/account-result'
+export const REGISTER_CALLBACK_EXAMPLE_BODY = `{
+  "event_id": "registration:123:grok2api-imported",
+  "event_type": "grokiq.account_result",
+  "registration_id": "123",
+  "email": "user@example.com",
+  "account_id": 17,
+  "occurred_at": "2026-08-30T12:00:00Z",
+  "verdict": "degraded",
+  "degraded": true,
+  "monitor_status": "quarantined",
+  "risk_score": 85,
+  "risk_reasons": ["grok-register 确认降智"],
+  "isolated": true,
+  "probe_outcome": "confirmed_degraded",
+  "run_ids": [],
+  "source": "grok-register"
+}`
 export const WECHAT_TEMPLATE_BODY = `{{first.DATA}}
 账号：{{account.DATA}}
 状态：{{status.DATA}}
@@ -299,6 +321,9 @@ export function toSettingsForm(
       settings.registerProbeSwitchOnDegradation ?? true,
     registerPriorityHoldEnabled: settings.registerPriorityHoldEnabled ?? true,
     registerPriorityHold: settings.registerPriorityHold ?? -1_000_000,
+    registerCallbackEnabled: settings.registerCallbackEnabled ?? false,
+    registerCallbackUrl: settings.registerCallbackUrl ?? '',
+    registerCallbackTimeoutSeconds: settings.registerCallbackTimeoutSeconds ?? 10,
     wechatNotificationEnabled: settings.wechatNotificationEnabled,
     wechatAppId: settings.wechatAppId,
     wechatAppSecret: settings.wechatAppSecret,
@@ -424,6 +449,9 @@ export function buildSettingsPayload(
     registerProbeSwitchOnDegradation: form.registerProbeSwitchOnDegradation,
     registerPriorityHoldEnabled: form.registerPriorityHoldEnabled,
     registerPriorityHold: form.registerPriorityHold,
+    registerCallbackEnabled: form.registerCallbackEnabled,
+    registerCallbackUrl: form.registerCallbackUrl.trim(),
+    registerCallbackTimeoutSeconds: form.registerCallbackTimeoutSeconds,
     wechatNotificationEnabled: form.wechatNotificationEnabled,
     wechatAppId: form.wechatAppId.trim(),
     wechatOpenid: form.wechatOpenid.trim(),
@@ -668,5 +696,29 @@ export function validateSettings(form: SettingsForm) {
     form.registerPriorityHold > 0
   ) {
     throw new Error('注册账号临时优先级需在 -2000000000–0 之间')
+  }
+  if (form.registerCallbackEnabled) {
+    const url = form.registerCallbackUrl.trim()
+    if (!url) {
+      throw new Error('开启结果回传前请填写回调地址')
+    }
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('结果回传地址必须是有效的 HTTP(S) URL')
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('结果回传')) {
+        throw error
+      }
+      throw new Error('结果回传地址必须是有效的 HTTP(S) URL')
+    }
+    if (
+      !Number.isFinite(form.registerCallbackTimeoutSeconds) ||
+      form.registerCallbackTimeoutSeconds < 1 ||
+      form.registerCallbackTimeoutSeconds > 60
+    ) {
+      throw new Error('结果回传超时需在 1–60 秒之间')
+    }
   }
 }

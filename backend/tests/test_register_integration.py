@@ -29,6 +29,7 @@ class RegisterRepository:
         self.failed: tuple[str, str] | None = None
         self.bound: tuple[str, int] | None = None
         self.events: dict[str, dict[str, Any]] = {}
+        self.callbacks: dict[str, dict[str, Any]] = {}
 
     def bind_account(self, event_id: str, account_id: int) -> None:
         self.bound = (event_id, account_id)
@@ -96,6 +97,51 @@ class RegisterRepository:
         event = self.events.setdefault(event_id, {"event_id": event_id})
         event["priority_hold_status"] = "kept"
         event["priority_hold_error"] = error
+
+    def enqueue_callback(self, event_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        existing = self.callbacks.get(event_id)
+        if existing and existing.get("status") == "delivered":
+            return dict(existing)
+        row = {
+            "event_id": event_id,
+            "status": "pending",
+            "attempts": int((existing or {}).get("attempts") or 0),
+            "payload": dict(payload),
+            "last_error": "",
+        }
+        self.callbacks[event_id] = row
+        return dict(row)
+
+    def recover_callback_processing(self) -> int:
+        return 0
+
+    def claim_callback_due(self) -> dict[str, Any] | None:
+        for row in self.callbacks.values():
+            if row.get("status") == "pending":
+                row["status"] = "processing"
+                row["attempts"] = int(row.get("attempts") or 0) + 1
+                return dict(row)
+        return None
+
+    def retry_callback(self, event_id: str, error: str, delay_seconds: float) -> None:
+        row = self.callbacks.setdefault(event_id, {"event_id": event_id})
+        row["status"] = "pending"
+        row["last_error"] = error
+        row["delay_seconds"] = delay_seconds
+
+    def fail_callback(self, event_id: str, error: str) -> None:
+        row = self.callbacks.setdefault(event_id, {"event_id": event_id})
+        row["status"] = "failed"
+        row["last_error"] = error
+
+    def complete_callback(self, event_id: str) -> None:
+        row = self.callbacks.setdefault(event_id, {"event_id": event_id})
+        row["status"] = "delivered"
+        row["last_error"] = ""
+
+    def get_callback(self, event_id: str) -> dict[str, Any] | None:
+        row = self.callbacks.get(event_id)
+        return dict(row) if row is not None else None
 
 
 class RegisterAccountService:
@@ -771,3 +817,183 @@ async def test_bot_risk_without_confirmed_bfs_still_enqueues_probe():
     assert account_service.quarantines == []
     assert accounts.marked[0]["bfs"] == 3
 
+
+
+def _callback_settings(**values: Any) -> Settings:
+    return Settings(
+        register_callback_enabled=True,
+        register_callback_url="http://grok-register:8787/api/integrations/grokiq/account-result",
+        grok_register_webhook_token="shared-token",
+        **values,
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirmed_degradation_enqueues_callback_once():
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    accounts = FakeAccountRepository()
+    service = RegisterIntegrationService(
+        settings=_callback_settings(initial_probe_on_register=True),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=accounts,  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+
+    payload = {
+        "event_id": "event-callback-bfs",
+        "attempts": 1,
+        "grok2api_account_id": 17,
+        "email": "risk@example.test",
+        "bot_risk": True,
+        "bfs": 1,
+        "registration_id": "123",
+    }
+    await service._process_claimed(payload)
+    await service._process_claimed(payload)
+
+    assert probes.values is None
+    assert "event-callback-bfs" in repository.callbacks
+    callback = repository.callbacks["event-callback-bfs"]["payload"]
+    assert callback["degraded"] is True
+    assert callback["verdict"] == "degraded"
+    assert callback["probe_outcome"] == "confirmed_degraded"
+    assert callback["isolated"] is True
+    assert callback["event_type"] == "grokiq.account_result"
+    assert callback["registration_id"] == "123"
+
+
+@pytest.mark.asyncio
+async def test_callback_waits_until_register_probes_are_terminal():
+    repository = RegisterRepository()
+    account_service = RegisterAccountService()
+    probes = RegisterProbeManager()
+    accounts = FakeAccountRepository()
+    service = RegisterIntegrationService(
+        settings=_callback_settings(
+            initial_probe_on_register=True,
+            register_probe_stabilization_seconds=0,
+        ),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=accounts,  # type: ignore[arg-type]
+        account_service=account_service,  # type: ignore[arg-type]
+        probes=probes,  # type: ignore[arg-type]
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-callback-pending",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+            "registration_id": "88",
+        }
+    )
+    assert repository.callbacks == {}
+    repository.events["event-callback-pending"].update(
+        {
+            "email": "new@example.test",
+            "registration_id": "88",
+        }
+    )
+
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-callback-pending",
+            "status": "running",
+            "summary": {},
+        }
+    ]
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-callback-pending"}
+    )
+    assert repository.callbacks == {}
+
+    probes.repository.runs = [
+        {
+            "id": "run-1",
+            "source_event_id": "event-callback-pending",
+            "status": "completed",
+            "summary": {"anomaly_count": 2, "warning_count": 0, "sample_count": 2},
+        }
+    ]
+    accounts.assessments[17] = {
+        "monitor_status": "high_risk",
+        "risk_score": 80,
+        "risk_reasons": ["强降智信号"],
+        "quarantine_until": None,
+    }
+    await service.maybe_restore_priority_hold(
+        {"source_event_id": "event-callback-pending"}
+    )
+    callback = repository.callbacks["event-callback-pending"]["payload"]
+    assert callback["degraded"] is True
+    assert callback["verdict"] == "high_risk"
+    assert callback["probe_outcome"] == "failed"
+    assert callback["source"] == "register_probe"
+
+
+@pytest.mark.asyncio
+async def test_callback_http_retry_then_success(monkeypatch: pytest.MonkeyPatch):
+    repository = RegisterRepository()
+    service = RegisterIntegrationService(
+        settings=_callback_settings(),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=UnusedAccountRepository(),  # type: ignore[arg-type]
+        account_service=RegisterAccountService(),  # type: ignore[arg-type]
+        probes=RegisterProbeManager(),  # type: ignore[arg-type]
+    )
+    calls = {"count": 0}
+
+    async def flaky_post(payload: dict[str, Any]) -> None:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("connection reset")
+
+    monkeypatch.setattr(service, "_post_callback", flaky_post)
+    repository.callbacks["event-http"] = {
+        "event_id": "event-http",
+        "status": "pending",
+        "attempts": 0,
+        "payload": {"event_id": "event-http", "degraded": True},
+    }
+    first = repository.claim_callback_due()
+    assert first is not None
+    await service._deliver_callback(first)
+    assert repository.callbacks["event-http"]["status"] == "pending"
+    second = repository.claim_callback_due()
+    assert second is not None
+    await service._deliver_callback(second)
+    assert repository.callbacks["event-http"]["status"] == "delivered"
+    assert calls["count"] == 2
+
+
+
+@pytest.mark.asyncio
+async def test_callback_after_import_without_probe():
+    repository = RegisterRepository()
+    service = RegisterIntegrationService(
+        settings=_callback_settings(initial_probe_on_register=False),
+        repository=repository,  # type: ignore[arg-type]
+        accounts=FakeAccountRepository(),  # type: ignore[arg-type]
+        account_service=RegisterAccountService(),  # type: ignore[arg-type]
+        probes=RegisterProbeManager(),  # type: ignore[arg-type]
+    )
+    await service._process_claimed(
+        {
+            "event_id": "event-imported-only",
+            "attempts": 1,
+            "grok2api_account_id": 17,
+            "email": "new@example.test",
+            "bot_risk": False,
+            "registration_id": "55",
+        }
+    )
+    callback = repository.callbacks["event-imported-only"]["payload"]
+    assert callback["degraded"] is False
+    assert callback["probe_outcome"] == "skipped"
+    assert callback["verdict"] == "imported"
+    assert callback["email"] == "new@example.test"

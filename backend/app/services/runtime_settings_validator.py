@@ -25,6 +25,7 @@ class RuntimeSettingsValidator:
         self._validate_scheduler(candidate)
         self._validate_route_prefix(candidate)
         self._normalize_register_strategy(candidate)
+        self._normalize_register_callback(candidate)
         self._normalize_wechat(candidate)
         self._normalize_sso_proxy(candidate)
         return candidate
@@ -133,6 +134,15 @@ class RuntimeSettingsValidator:
     def _validate_route_prefix(candidate: Settings) -> None:
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}", candidate.probe_route_prefix):
             raise ValueError("临时资源前缀需为 2-48 位字母、数字、下划线或连字符")
+
+    @staticmethod
+    def _normalize_register_callback(candidate: Settings) -> None:
+        candidate.register_callback_url = candidate.register_callback_url.strip()
+        if not candidate.register_callback_enabled:
+            return
+        parsed = urlsplit(candidate.register_callback_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("开启结果回传前请填写有效的 HTTP(S) 回调地址")
 
     def _normalize_register_strategy(self, candidate: Settings) -> None:
         profile_ids = list(

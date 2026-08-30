@@ -355,6 +355,18 @@ class RuntimeSettingsInput(BaseModel):
         ge=-2_000_000_000,
         le=0,
     )
+    register_callback_enabled: bool | None = Field(
+        default=None, alias="registerCallbackEnabled"
+    )
+    register_callback_url: str | None = Field(
+        default=None, alias="registerCallbackUrl", max_length=2000
+    )
+    register_callback_timeout_seconds: int | None = Field(
+        default=None,
+        alias="registerCallbackTimeoutSeconds",
+        ge=1,
+        le=60,
+    )
     wechat_notification_enabled: bool | None = Field(
         default=None, alias="wechatNotificationEnabled"
     )

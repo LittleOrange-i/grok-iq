@@ -1310,6 +1310,9 @@ export type RuntimeSettings = {
   registerProbeSwitchOnDegradation: boolean
   registerPriorityHoldEnabled: boolean
   registerPriorityHold: number
+  registerCallbackEnabled: boolean
+  registerCallbackUrl: string
+  registerCallbackTimeoutSeconds: number
   wechatNotificationEnabled: boolean
   wechatAppId: string
   wechatAppSecretConfigured: boolean
@@ -1420,6 +1423,9 @@ export type RuntimeSettingsUpdate = Partial<
     | 'registerProbeSwitchOnDegradation'
     | 'registerPriorityHoldEnabled'
     | 'registerPriorityHold'
+    | 'registerCallbackEnabled'
+    | 'registerCallbackUrl'
+    | 'registerCallbackTimeoutSeconds'
     | 'wechatNotificationEnabled'
     | 'wechatAppId'
     | 'wechatOpenid'
@@ -1534,6 +1540,9 @@ type RuntimeSettingsWire = Omit<
   | 'registerProbeSwitchOnDegradation'
   | 'registerPriorityHoldEnabled'
   | 'registerPriorityHold'
+  | 'registerCallbackEnabled'
+  | 'registerCallbackUrl'
+  | 'registerCallbackTimeoutSeconds'
   | 'ssoProxyConfigured'
   | 'autoQuarantineRecoveryEnabled'
   | 'autoIsolationEnabled'
@@ -1595,6 +1604,9 @@ type RuntimeSettingsWire = Omit<
   registerProbeSwitchOnDegradation?: boolean
   registerPriorityHoldEnabled?: boolean
   registerPriorityHold?: number
+  registerCallbackEnabled?: boolean
+  registerCallbackUrl?: string
+  registerCallbackTimeoutSeconds?: number
   ssoProxyConfigured?: boolean
   autoQuarantineRecoveryEnabled?: boolean
   autoIsolationEnabled?: boolean
@@ -1723,6 +1735,9 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
       value.registerProbeSwitchOnDegradation ?? true,
     registerPriorityHoldEnabled: value.registerPriorityHoldEnabled ?? true,
     registerPriorityHold: value.registerPriorityHold ?? -1_000_000,
+    registerCallbackEnabled: value.registerCallbackEnabled ?? false,
+    registerCallbackUrl: value.registerCallbackUrl ?? '',
+    registerCallbackTimeoutSeconds: value.registerCallbackTimeoutSeconds ?? 10,
     probeCurrentEgressIntervalSeconds:
       value.probeCurrentEgressIntervalSeconds ?? 10,
     quarantineRecoveryEnabled: value.quarantineRecoveryEnabled ?? true,

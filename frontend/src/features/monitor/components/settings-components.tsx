@@ -38,6 +38,7 @@ import {
 import { InfoTooltip } from '@/components/info-tooltip'
 import { TitledCard } from '@/components/titled-card'
 import {
+  REGISTER_CALLBACK_EXAMPLE_BODY,
   REGISTER_WEBHOOK_MINIMAL_BODY,
   REGISTER_WEBHOOK_RECOMMENDED_BODY,
   secretMetadata,
@@ -75,12 +76,15 @@ export function IntegrationFlow({
   tokenConfigured,
   automaticProbe,
   priorityHold,
+  callbackEnabled,
 }: {
   tokenConfigured: boolean
   automaticProbe: boolean
   priorityHold: boolean
+  callbackEnabled: boolean
 }) {
   const holdActive = tokenConfigured && automaticProbe && priorityHold
+  const callbackActive = tokenConfigured && callbackEnabled
   const steps = [
     {
       label: '注册完成',
@@ -113,6 +117,13 @@ export function IntegrationFlow({
         : '无需调整上游优先级',
       active: holdActive,
     },
+    {
+      label: '结果回传',
+      detail: callbackActive
+        ? '检测完成后把降智结果回调给注册机'
+        : '开启结果回传后通知注册机',
+      active: callbackActive,
+    },
   ]
 
   return (
@@ -125,7 +136,7 @@ export function IntegrationFlow({
           接收成功即与注册机解耦
         </span>
       </div>
-      <ol className='grid gap-2 sm:grid-cols-2 xl:grid-cols-5'>
+      <ol className='grid gap-2 sm:grid-cols-2 xl:grid-cols-6'>
         {steps.map((step, index) => (
           <li
             key={step.label}
@@ -180,7 +191,7 @@ export function WebhookContractDialog() {
         <DialogHeader className='border-b bg-muted/15 px-5 py-4 pe-14 sm:px-6 sm:py-5 sm:pe-14'>
           <DialogTitle>grok-register 请求协议</DialogTitle>
           <DialogDescription>
-            POST JSON；必填字段只有 email，获取到 SSO 时建议一并传入。
+            注册机导入账号用 inbound Webhook；GrokIQ 检测完成后可按同一令牌回传结果。
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 overflow-y-auto'>
@@ -297,6 +308,25 @@ function WebhookContract() {
           表示事件已持久接收；账号匹配、重试和探针执行随后在后台完成。
         </p>
       </div>
+
+      <div className='border-t bg-muted/20 px-4 py-3 sm:px-6'>
+        <div className='text-sm font-medium'>结果回传</div>
+        <p className='mt-1 text-xs leading-5 text-muted-foreground'>
+          GrokIQ 在确认降智或注册探针结束后，向注册机 POST
+          同一令牌的检测结果。注册机应把{' '}
+          <code className='font-mono'>degraded</code> 作为是否降智的判断字段。
+        </p>
+        <div className='mt-2 flex flex-wrap gap-2 text-xs'>
+          <Badge variant='outline'>POST /api/integrations/grokiq/account-result</Badge>
+          <Badge variant='outline'>x-grokiq-token: 联动令牌</Badge>
+        </div>
+      </div>
+      <WebhookBodyExample
+        title='结果回传请求体'
+        description='每个导入事件只回传一次终态结果；失败会写入 Outbox 并退避重试。'
+        body={REGISTER_CALLBACK_EXAMPLE_BODY}
+        onCopy={() => copyBody(REGISTER_CALLBACK_EXAMPLE_BODY, '结果回传请求体')}
+      />
     </section>
   )
 }

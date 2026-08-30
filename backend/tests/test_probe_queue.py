@@ -191,6 +191,12 @@ def test_monitor_schema_does_not_copy_upstream_account_or_egress_tables(tmp_path
         "ix_register_webhook_resolved_sso_received",
         "ix_register_webhook_upstream_sso_received",
     } <= register_event_indexes
+    assert "register_callback_deliveries" in tables
+    callback_columns = {
+        value["name"]
+        for value in inspect(database.engine).get_columns("register_callback_deliveries")
+    }
+    assert {"event_id", "status", "payload", "next_attempt_at"} <= callback_columns
     sso_report_columns = {
         value["name"] for value in inspect(database.engine).get_columns("sso_reports")
     }

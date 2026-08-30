@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.clock import utc_now
 
 from .database import Database
-from .models import RegisterWebhookEvent, model_dict
+from .models import RegisterCallbackDelivery, RegisterWebhookEvent, model_dict
 
 PRIORITY_HOLD_NONE = "none"
 PRIORITY_HOLD_HELD = "held"
@@ -422,3 +422,104 @@ class RegisterEventRepository:
             event.priority_hold_status = PRIORITY_HOLD_KEPT
             event.priority_hold_error = str(error)[:4000]
             event.updated_at = now
+
+    def enqueue_callback(
+        self, event_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            row = session.get(RegisterCallbackDelivery, event_id)
+            if row is None:
+                row = RegisterCallbackDelivery(
+                    event_id=event_id,
+                    status="pending",
+                    attempts=0,
+                    last_error="",
+                    payload=dict(payload),
+                    next_attempt_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+                return model_dict(row)
+            if row.status == "delivered":
+                return model_dict(row)
+            row.payload = dict(payload)
+            if row.status == "failed":
+                row.status = "pending"
+                row.next_attempt_at = now
+                row.last_error = ""
+            row.updated_at = now
+            return model_dict(row)
+
+    def recover_callback_processing(self) -> int:
+        now = utc_now()
+        with self.database.transaction() as session:
+            result = session.execute(
+                update(RegisterCallbackDelivery)
+                .where(RegisterCallbackDelivery.status == "processing")
+                .values(status="pending", next_attempt_at=now, updated_at=now)
+            )
+            return int(result.rowcount or 0)
+
+    def claim_callback_due(self) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            row = session.scalar(
+                select(RegisterCallbackDelivery)
+                .where(
+                    RegisterCallbackDelivery.status == "pending",
+                    RegisterCallbackDelivery.next_attempt_at <= now,
+                )
+                .order_by(
+                    RegisterCallbackDelivery.next_attempt_at.asc(),
+                    RegisterCallbackDelivery.created_at.asc(),
+                )
+                .limit(1)
+            )
+            if row is None:
+                return None
+            row.status = "processing"
+            row.attempts += 1
+            row.updated_at = now
+            return model_dict(row)
+
+    def retry_callback(
+        self, event_id: str, error: str, delay_seconds: float
+    ) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            row = session.get(RegisterCallbackDelivery, event_id)
+            if row is None or row.status == "delivered":
+                return
+            row.status = "pending"
+            row.last_error = str(error)[:4000]
+            row.next_attempt_at = now + timedelta(seconds=max(delay_seconds, 1))
+            row.updated_at = now
+
+    def fail_callback(self, event_id: str, error: str) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            row = session.get(RegisterCallbackDelivery, event_id)
+            if row is None or row.status == "delivered":
+                return
+            row.status = "failed"
+            row.last_error = str(error)[:4000]
+            row.updated_at = now
+            row.completed_at = now
+
+    def complete_callback(self, event_id: str) -> None:
+        now = utc_now()
+        with self.database.transaction() as session:
+            row = session.get(RegisterCallbackDelivery, event_id)
+            if row is None:
+                return
+            row.status = "delivered"
+            row.last_error = ""
+            row.updated_at = now
+            row.completed_at = now
+
+    def get_callback(self, event_id: str) -> dict[str, Any] | None:
+        with self.database.session() as session:
+            row = session.get(RegisterCallbackDelivery, event_id)
+            return model_dict(row) if row is not None else None

@@ -677,6 +677,39 @@ def test_register_priority_hold_setting_is_persisted(tmp_path: Path):
     assert reloaded_settings.register_priority_hold == -500
 
 
+def test_register_callback_setting_requires_url_and_is_persisted(tmp_path: Path):
+    _database, settings, service = build_service(tmp_path)
+    with pytest.raises(ValueError, match="回调地址"):
+        service.update({"register_callback_enabled": True})
+
+    changed = service.update(
+        {
+            "register_callback_enabled": True,
+            "register_callback_url": (
+                "http://grok-register:8787/api/integrations/grokiq/account-result"
+            ),
+            "register_callback_timeout_seconds": 8,
+        }
+    )
+    assert changed == [
+        "register_callback_enabled",
+        "register_callback_timeout_seconds",
+        "register_callback_url",
+    ]
+    public = service.public_view()
+    assert public["registerCallbackEnabled"] is True
+    assert public["registerCallbackUrl"].endswith("/account-result")
+    assert public["registerCallbackTimeoutSeconds"] == 8
+
+    reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")
+    reloaded = RuntimeSettingsService(
+        reloaded_settings, SettingsRepository(_database, reloaded_settings)
+    )
+    reloaded.load()
+    assert reloaded_settings.register_callback_enabled is True
+    assert reloaded_settings.register_callback_timeout_seconds == 8
+
+
 def test_wechat_notifications_require_the_four_test_account_values(tmp_path: Path):
     database, settings, service = build_service(tmp_path)
     with pytest.raises(ValueError, match="AppID、AppSecret、OpenID"):

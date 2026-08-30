@@ -166,3 +166,39 @@ def test_register_event_priority_hold_roundtrip(tmp_path: Path):
     assert restored["priority_hold_error"] == ""
     assert repository.list_unresolved_priority_holds() == []
     database.dispose()
+
+
+
+def test_register_callback_outbox_is_idempotent_until_delivered(tmp_path: Path):
+    database = Database(tmp_path / "grokiq.db")
+    database.initialize()
+    repository = RegisterEventRepository(database)
+
+    first = repository.enqueue_callback(
+        "event-1",
+        {"event_id": "event-1", "degraded": False, "verdict": "imported"},
+    )
+    second = repository.enqueue_callback(
+        "event-1",
+        {"event_id": "event-1", "degraded": True, "verdict": "degraded"},
+    )
+    assert first is not None
+    assert second is not None
+    assert first["status"] == "pending"
+    assert second["payload"]["degraded"] is True
+
+    claimed = repository.claim_callback_due()
+    assert claimed is not None
+    assert claimed["attempts"] == 1
+    assert claimed["payload"]["verdict"] == "degraded"
+    assert repository.claim_callback_due() is None
+
+    repository.complete_callback("event-1")
+    ignored = repository.enqueue_callback(
+        "event-1",
+        {"event_id": "event-1", "degraded": False, "verdict": "normal"},
+    )
+    assert ignored is not None
+    assert ignored["status"] == "delivered"
+    assert ignored["payload"]["verdict"] == "degraded"
+    database.dispose()

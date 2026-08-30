@@ -7,6 +7,7 @@ import {
   Layers3,
   MessageSquareText,
   Power,
+  Send,
   ShieldCheck,
   Webhook,
   Workflow,
@@ -43,6 +44,7 @@ import {
 } from './settings-components'
 import {
   GROK_REGISTER_REPOSITORY_URL,
+  REGISTER_CALLBACK_PLACEHOLDER_URL,
   moveOrderedId,
   syncRegisterProbeProfileRounds,
   type SettingsForm,
@@ -139,6 +141,7 @@ export function SettingsIntegrationTab({
             tokenConfigured={registerTokenReady}
             automaticProbe={automaticProbe}
             priorityHold={form.registerPriorityHoldEnabled}
+            callbackEnabled={form.registerCallbackEnabled}
           />
         </div>
       </SettingsCard>
@@ -190,6 +193,50 @@ export function SettingsIntegrationTab({
             </div>
           </Field>
         </div>
+      </SettingsCard>
+
+      <SettingsCard
+        icon={Send}
+        title='检测结果回传'
+        description='探针结束或确认降智后，把账号检测结果回调给注册机，方便注册侧处理降智账号。'
+      >
+        <SettingList>
+          <SettingListItem
+            label='启用结果回传'
+            description='与导入 Webhook 共用联动令牌。每个导入事件只回传一次终态；失败会写入 Outbox 并退避重试。'
+            checked={form.registerCallbackEnabled}
+            onCheckedChange={(value) => set('registerCallbackEnabled', value)}
+          >
+            <div className='grid gap-4 md:grid-cols-2'>
+              <Field
+                label='回调地址'
+                hint='统一 Compose 内使用 grok-register 容器名；独立部署可填写注册机内网地址。'
+              >
+                <Input
+                  value={form.registerCallbackUrl}
+                  placeholder={REGISTER_CALLBACK_PLACEHOLDER_URL}
+                  disabled={!form.registerCallbackEnabled}
+                  onChange={(event) =>
+                    set('registerCallbackUrl', event.target.value)
+                  }
+                />
+              </Field>
+              <NumberField
+                label='请求超时'
+                hint='单次投递超时；失败后由持久 Outbox 退避重试。'
+                value={form.registerCallbackTimeoutSeconds}
+                min={1}
+                max={60}
+                step={1}
+                suffix='秒'
+                disabled={!form.registerCallbackEnabled}
+                onChange={(value) =>
+                  set('registerCallbackTimeoutSeconds', value)
+                }
+              />
+            </div>
+          </SettingListItem>
+        </SettingList>
       </SettingsCard>
       </TabsContent>
 

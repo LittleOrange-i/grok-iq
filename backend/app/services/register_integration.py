@@ -6,6 +6,8 @@ import math
 from datetime import datetime, timedelta
 from typing import Any
 
+from curl_cffi.requests import AsyncSession as CurlAsyncSession
+
 from app.core.clock import ensure_utc, utc_now
 from app.core.config import (
     DEFAULT_REGISTER_PROBE_STABILIZATION_SECONDS,
@@ -80,6 +82,12 @@ class RegisterIntegrationService:
         recovered = self.repository.recover_processing()
         if recovered:
             logger.info("recovered register webhook events count=%s", recovered)
+        recovered_callbacks = self.repository.recover_callback_processing()
+        if recovered_callbacks:
+            logger.info(
+                "recovered register callback deliveries count=%s",
+                recovered_callbacks,
+            )
         self._task = asyncio.create_task(
             self._worker(), name="grok-register-integration"
         )
@@ -121,14 +129,19 @@ class RegisterIntegrationService:
         while True:
             await self._maybe_scan_priority_holds()
             event = self.repository.claim_due()
-            if event is None:
-                self._wake.clear()
-                try:
-                    await asyncio.wait_for(self._wake.wait(), timeout=2)
-                except TimeoutError:
-                    pass
+            if event is not None:
+                await self._process_claimed(event)
                 continue
-            await self._process_claimed(event)
+            if self.settings.register_callback_enabled:
+                delivery = self.repository.claim_callback_due()
+                if delivery is not None:
+                    await self._deliver_callback(delivery)
+                    continue
+            self._wake.clear()
+            try:
+                await asyncio.wait_for(self._wake.wait(), timeout=2)
+            except TimeoutError:
+                pass
 
     async def _process_claimed(self, event: dict[str, Any]) -> None:
         event_id = str(event["event_id"])
@@ -144,6 +157,16 @@ class RegisterIntegrationService:
             ):
                 await self._quarantine_confirmed_register_account(event, account)
                 self.repository.complete(event_id, account_id, [])
+                await self.maybe_enqueue_register_callback(
+                    event_id,
+                    confirmed_degraded=True,
+                    event={
+                        **event,
+                        "status": "completed",
+                        "resolved_account_id": account_id,
+                        "run_ids": [],
+                    },
+                )
                 logger.info(
                     "register webhook completed event_id=%s account_id=%s "
                     "confirmed_degradation=1 runs=0",
@@ -156,6 +179,16 @@ class RegisterIntegrationService:
                 self._ensure_initial_probe_ready(event, account)
             run_ids = await self._enqueue_initial_probe(event_id, account)
             self.repository.complete(event_id, account_id, run_ids)
+            if not run_ids:
+                await self.maybe_enqueue_register_callback(
+                    event_id,
+                    event={
+                        **event,
+                        "status": "completed",
+                        "resolved_account_id": account_id,
+                        "run_ids": run_ids,
+                    },
+                )
             logger.info(
                 "register webhook completed event_id=%s account_id=%s runs=%s",
                 event_id,
@@ -338,6 +371,7 @@ class RegisterIntegrationService:
         if not event_id:
             return
         await self._restore_priority_hold_if_ready(event_id)
+        await self.maybe_enqueue_register_callback(event_id)
 
     async def scan_priority_holds(self) -> None:
         for event in self.repository.list_unresolved_priority_holds():
@@ -528,6 +562,179 @@ class RegisterIntegrationService:
             account_id,
             original,
         )
+
+    async def maybe_enqueue_register_callback(
+        self,
+        event_id: str,
+        *,
+        confirmed_degraded: bool = False,
+        event: dict[str, Any] | None = None,
+    ) -> None:
+        if not self.settings.register_callback_enabled:
+            return
+        if not str(self.settings.register_callback_url or "").strip():
+            return
+        stored = self.repository.get_event(event_id) or {}
+        event = {**stored, **(event or {}), "event_id": event_id}
+        if confirmed_degraded:
+            probe_outcome = "confirmed_degraded"
+        else:
+            probe_outcome = self._register_probe_outcome(event)
+            if probe_outcome == "pending":
+                return
+            if str(event.get("status") or "") not in {"completed", "failed"}:
+                return
+            if probe_outcome == "empty" and not self.settings.initial_probe_on_register:
+                probe_outcome = "skipped"
+        payload = self._callback_payload(
+            event,
+            probe_outcome=probe_outcome,
+        )
+        stored = self.repository.enqueue_callback(event_id, payload)
+        if stored is not None and str(stored.get("status") or "") == "pending":
+            self._wake.set()
+
+    def _callback_payload(
+        self,
+        event: dict[str, Any],
+        *,
+        probe_outcome: str,
+    ) -> dict[str, Any]:
+        account_id = int(
+            event.get("resolved_account_id") or event.get("grok2api_account_id") or 0
+        )
+        getter = getattr(self.accounts, "get_assessment", None)
+        assessment = (
+            getter(account_id) if callable(getter) and account_id > 0 else None
+        )
+        if not isinstance(assessment, dict):
+            assessment = {}
+        monitor_status = str(assessment.get("monitor_status") or "")
+        isolated = monitor_status == "quarantined" and assessment.get(
+            "quarantine_until"
+        ) is None
+        if probe_outcome == "confirmed_degraded":
+            isolated = True
+            monitor_status = monitor_status or "quarantined"
+        risk_reasons = assessment.get("risk_reasons")
+        if not isinstance(risk_reasons, list):
+            risk_reasons = []
+        run_ids = event.get("run_ids")
+        if not isinstance(run_ids, list):
+            run_ids = []
+        degraded = (
+            probe_outcome in {"confirmed_degraded", "failed"}
+            or isolated
+            or monitor_status in {"high_risk", "quarantined"}
+        )
+        verdict = self._callback_verdict(
+            probe_outcome=probe_outcome,
+            monitor_status=monitor_status,
+            isolated=isolated,
+        )
+        source = (
+            "grok-register"
+            if probe_outcome == "confirmed_degraded"
+            else "register_probe"
+        )
+        return {
+            "event_id": str(event.get("event_id") or ""),
+            "event_type": "grokiq.account_result",
+            "registration_id": str(event.get("registration_id") or ""),
+            "email": str(event.get("email") or ""),
+            "account_id": account_id or None,
+            "occurred_at": utc_now().isoformat().replace("+00:00", "Z"),
+            "verdict": verdict,
+            "degraded": degraded,
+            "monitor_status": monitor_status,
+            "risk_score": float(assessment.get("risk_score") or 0),
+            "risk_reasons": [str(item) for item in risk_reasons if str(item).strip()],
+            "isolated": isolated,
+            "probe_outcome": probe_outcome,
+            "run_ids": [str(item) for item in run_ids if str(item).strip()],
+            "source": source,
+        }
+
+    @staticmethod
+    def _callback_verdict(
+        *,
+        probe_outcome: str,
+        monitor_status: str,
+        isolated: bool,
+    ) -> str:
+        if probe_outcome == "confirmed_degraded":
+            return "degraded"
+        if isolated or monitor_status == "quarantined":
+            return "quarantined"
+        if monitor_status == "high_risk":
+            return "high_risk"
+        if monitor_status in {"suspect", "watch"}:
+            return "suspect"
+        if probe_outcome == "insufficient":
+            return "insufficient_samples"
+        if probe_outcome == "failed":
+            return "probe_failed"
+        if probe_outcome in {"empty", "skipped"}:
+            return "imported"
+        if probe_outcome == "passed":
+            return "normal"
+        return "imported"
+
+    async def _deliver_callback(self, delivery: dict[str, Any]) -> None:
+        event_id = str(delivery.get("event_id") or "")
+        attempts = int(delivery.get("attempts") or 1)
+        try:
+            await self._post_callback(delivery.get("payload") or {})
+            self.repository.complete_callback(event_id)
+            logger.info("register callback delivered event_id=%s", event_id)
+        except Exception as exc:
+            if attempts >= MAX_EVENT_ATTEMPTS:
+                self.repository.fail_callback(event_id, str(exc))
+                logger.warning(
+                    "register callback failed event_id=%s error=%s",
+                    event_id,
+                    exc,
+                )
+                return
+            delay = RETRY_DELAYS[min(max(attempts - 1, 0), len(RETRY_DELAYS) - 1)]
+            self.repository.retry_callback(event_id, str(exc), delay)
+            logger.info(
+                "register callback deferred event_id=%s attempts=%s retry_in=%.1fs reason=%s",
+                event_id,
+                attempts,
+                delay,
+                exc,
+            )
+
+    async def _post_callback(self, payload: dict[str, Any]) -> None:
+        url = str(self.settings.register_callback_url or "").strip()
+        if not url:
+            raise RuntimeError("结果回调地址未配置")
+        timeout = max(1, min(int(self.settings.register_callback_timeout_seconds or 10), 60))
+        try:
+            async with CurlAsyncSession(trust_env=False) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "x-grokiq-token": str(
+                            self.settings.grok_register_webhook_token or ""
+                        ).strip(),
+                    },
+                    json=payload,
+                    timeout=timeout,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"结果回调请求失败: {exc}") from exc
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        if status_code < 200 or status_code >= 300:
+            detail = str(getattr(response, "text", "") or "").strip()[:1000]
+            raise RuntimeError(
+                f"结果回调返回 HTTP {status_code}: {detail or '空响应'}"
+            )
 
     @staticmethod
     def _account_priority(account: dict[str, Any]) -> int:

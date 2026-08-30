@@ -603,6 +603,31 @@ class RegisterWebhookEvent(Base):
     priority_restored_at: Mapped[datetime | None] = mapped_column(AppDateTime())
 
 
+class RegisterCallbackDelivery(Base):
+    """Durable outbox for grok-register account-result callbacks."""
+
+    __tablename__ = "register_callback_deliveries"
+    __table_args__ = (
+        Index("ix_register_callback_due", "status", "next_attempt_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        AppDateTime(), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(AppDateTime())
+
+
 def model_dict(value: Any) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for column in value.__table__.columns:

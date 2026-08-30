@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     register_probe_switch_on_degradation: bool = True
     register_priority_hold_enabled: bool = True
     register_priority_hold: int = Field(default=-1_000_000, ge=-2_000_000_000, le=0)
+    register_callback_enabled: bool = False
+    register_callback_url: str = ""
+    register_callback_timeout_seconds: int = Field(default=10, ge=1, le=60)
 
     # The WeChat public-platform test account uses the same template-message
     # API as a normal public account, which keeps local development independent
@@ -254,6 +257,9 @@ class Settings(BaseSettings):
         "register_probe_switch_on_degradation",
         "register_priority_hold_enabled",
         "register_priority_hold",
+        "register_callback_enabled",
+        "register_callback_url",
+        "register_callback_timeout_seconds",
         "wechat_notification_enabled",
         "wechat_app_id",
         "wechat_app_secret",
