@@ -1035,6 +1035,38 @@ async def test_isolation_zone_filters_match_account_probe_filters(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_isolation_zone_filters_by_disposition_source(tmp_path: Path):
+    _database, _accounts, _probes, _client, service = _isolation_service(tmp_path)
+    await service.isolate_account(1, note="探针隔离", source="probe")
+    await service.isolate_account(
+        2,
+        note="grok2api 请求拦截二次命中降智后停用",
+        source="quality_retry",
+    )
+
+    grok2api = await service.list_isolation_zone(
+        page=1, page_size=50, source="grok2api"
+    )
+    grokiq = await service.list_isolation_zone(
+        page=1, page_size=50, source="grokiq"
+    )
+    probe = await service.list_isolation_zone(
+        page=1, page_size=50, source="probe"
+    )
+    quality = await service.list_isolation_zone(
+        page=1, page_size=50, source="quality_retry"
+    )
+
+    assert {int(item["id"]) for item in grok2api["items"]} == {2}
+    assert {int(item["id"]) for item in grokiq["items"]} == {1}
+    assert {int(item["id"]) for item in probe["items"]} == {1}
+    assert {int(item["id"]) for item in quality["items"]} == {2}
+    item = quality["items"][0]
+    assert item["assessment"]["disposition"]["origin"] == "grok2api"
+    assert item["assessment"]["disposition"]["originLabel"] == "grok2api"
+
+
+@pytest.mark.asyncio
 async def test_restore_reenables_when_previous_upstream_enabled(tmp_path: Path):
     _database, accounts, _probes, client, service = _isolation_service(tmp_path)
 

@@ -25,6 +25,7 @@ from app.services.auth_service import AuthService
 from app.services.chat_service import ChatService
 from app.services.egress_service import EgressService
 from app.services.probe_manager import ProbeManager
+from app.services.quality_retry_isolation import QualityRetryIsolationService
 from app.services.register_integration import RegisterIntegrationService
 from app.services.request_audit_service import RequestAuditService
 from app.services.scheduler import SchedulerService
@@ -100,12 +101,18 @@ request_audit_service = RequestAuditService(
     probes=probe_repository,
     account_service=account_service,
 )
+quality_retry_isolation_service = QualityRetryIsolationService(
+    settings=settings,
+    client=grok_client,
+    account_service=account_service,
+)
 scheduler_service = SchedulerService(
     settings=settings,
     repository=probe_repository,
     probes=probe_manager,
     recovery_callback=account_service.recover_due_quarantines,
     request_audit_callback=request_audit_service.scan_scheduled,
+    quality_retry_callback=quality_retry_isolation_service.scan,
 )
 register_integration_service = RegisterIntegrationService(
     settings=settings,

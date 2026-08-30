@@ -567,6 +567,15 @@ class RuntimeSettingsInput(BaseModel):
     auto_isolation_min_status: Literal["watch", "suspect", "high_risk"] | None = Field(
         default=None, alias="autoIsolationMinStatus"
     )
+    quality_retry_isolation_enabled: bool | None = Field(
+        default=None, alias="qualityRetryIsolationEnabled"
+    )
+    quality_retry_isolation_interval_seconds: int | None = Field(
+        default=None,
+        alias="qualityRetryIsolationIntervalSeconds",
+        ge=15,
+        le=600,
+    )
     quarantine_minutes: int | None = Field(default=None, alias="quarantineMinutes", ge=1, le=7 * 24 * 60)
     clear_secrets: list[SecretSettingName] = Field(default_factory=list, alias="clearSecrets")
 

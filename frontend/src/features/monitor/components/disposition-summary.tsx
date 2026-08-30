@@ -14,6 +14,24 @@ export function hasDisposition(
   return Boolean(value && (value.source || value.reason))
 }
 
+export function dispositionOrigin(value?: AccountDisposition | null): {
+  origin: string
+  originLabel: string
+} {
+  if (!value) return { origin: '', originLabel: '' }
+  if (value.origin) {
+    return {
+      origin: value.origin,
+      originLabel: value.originLabel || value.origin,
+    }
+  }
+  const origin = value.source === 'quality_retry' ? 'grok2api' : 'grokiq'
+  return {
+    origin,
+    originLabel: origin === 'grok2api' ? 'grok2api' : 'GrokIQ',
+  }
+}
+
 export function DispositionBanner({
   disposition,
   sampleReasons = [],
@@ -22,6 +40,7 @@ export function DispositionBanner({
   sampleReasons?: string[]
 }) {
   if (!hasDisposition(disposition) && sampleReasons.length === 0) return null
+  const origin = dispositionOrigin(disposition)
   return (
     <div className='rounded-lg border border-amber-500/25 bg-amber-500/5 p-3'>
       {hasDisposition(disposition) ? (
@@ -30,6 +49,16 @@ export function DispositionBanner({
             <div className='text-sm font-medium text-amber-700 dark:text-amber-300'>
               停用原因
             </div>
+            {origin.originLabel ? (
+              <Badge
+                variant={
+                  origin.origin === 'grok2api' ? 'secondary' : 'outline'
+                }
+                className='h-5 px-1.5 text-[10px]'
+              >
+                {origin.originLabel}
+              </Badge>
+            ) : null}
             <Badge variant='outline' className='h-5 px-1.5 text-[10px]'>
               {disposition.sourceLabel || disposition.source}
             </Badge>
@@ -99,8 +128,9 @@ export function DispositionSummary({
   ) {
     return <span className='text-muted-foreground'>—</span>
   }
+  const origin = dispositionOrigin(disposition)
   const summary = showDisposition
-    ? `${disposition.sourceLabel || disposition.source} · ${disposition.actionLabel || '隔离停用'}`
+    ? `${origin.originLabel ? `${origin.originLabel} · ` : ''}${disposition.sourceLabel || disposition.source}`
     : hardCount > 0
       ? `硬信号 ${hardCount}`
       : anomalyCount > 0
@@ -126,6 +156,7 @@ export function DispositionSummary({
           <div className='mt-1 text-[11px] leading-5 text-muted-foreground'>
             {showDisposition
               ? [
+                  origin.originLabel,
                   disposition.sourceLabel || disposition.source,
                   disposition.actionLabel,
                   disposition.at ? formatDate(disposition.at) : '',

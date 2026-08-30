@@ -304,6 +304,8 @@ export type OperatorNote = {
 export type AccountDisposition = {
   source: string
   sourceLabel: string
+  origin?: string
+  originLabel?: string
   action: string
   actionLabel: string
   reason: string
@@ -1384,6 +1386,8 @@ export type RuntimeSettings = {
   autoQuarantineRecoveryEnabled: boolean
   autoIsolationEnabled: boolean
   autoIsolationMinStatus: AutoIsolationMinStatus
+  qualityRetryIsolationEnabled: boolean
+  qualityRetryIsolationIntervalSeconds: number
   quarantineMinutes: number
   bootstrap: {
     host: string
@@ -1495,6 +1499,8 @@ export type RuntimeSettingsUpdate = Partial<
     | 'autoQuarantineRecoveryEnabled'
     | 'autoIsolationEnabled'
     | 'autoIsolationMinStatus'
+    | 'qualityRetryIsolationEnabled'
+    | 'qualityRetryIsolationIntervalSeconds'
     | 'quarantineMinutes'
   >
 > & {
@@ -1547,6 +1553,8 @@ type RuntimeSettingsWire = Omit<
   | 'autoQuarantineRecoveryEnabled'
   | 'autoIsolationEnabled'
   | 'autoIsolationMinStatus'
+  | 'qualityRetryIsolationEnabled'
+  | 'qualityRetryIsolationIntervalSeconds'
   | 'requestAuditEnabled'
   | 'requestAuditAutoScanEnabled'
   | 'requestAuditAdaptiveScanEnabled'
@@ -1611,6 +1619,8 @@ type RuntimeSettingsWire = Omit<
   autoQuarantineRecoveryEnabled?: boolean
   autoIsolationEnabled?: boolean
   autoIsolationMinStatus?: AutoIsolationMinStatus
+  qualityRetryIsolationEnabled?: boolean
+  qualityRetryIsolationIntervalSeconds?: number
   requestAuditEnabled?: boolean
   requestAuditAutoScanEnabled?: boolean
   requestAuditAdaptiveScanEnabled?: boolean
@@ -1746,6 +1756,9 @@ function normalizeRuntimeSettings(value: RuntimeSettingsWire): RuntimeSettings {
     autoIsolationMinStatus: normalizeAutoIsolationMinStatus(
       value.autoIsolationMinStatus
     ),
+    qualityRetryIsolationEnabled: value.qualityRetryIsolationEnabled ?? false,
+    qualityRetryIsolationIntervalSeconds:
+      value.qualityRetryIsolationIntervalSeconds ?? 60,
     scheduledProbeRegisterCooldownMinutes:
       value.scheduledProbeRegisterCooldownMinutes ?? 360,
     requestAuditEnabled: value.requestAuditEnabled ?? true,

@@ -17,7 +17,7 @@ from app.core.disposition import (
 )
 
 MAX_STATS_RANGE_DAYS = 90
-SOURCE_ORDER = ("probe", "request_audit", "register", "manual", "sso", "unknown")
+SOURCE_ORDER = ("quality_retry", "probe", "request_audit", "register", "manual", "sso", "unknown")
 
 
 def resolve_stats_range(

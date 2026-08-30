@@ -94,6 +94,8 @@ export type SettingsForm = {
   autoQuarantineRecoveryEnabled: boolean
   autoIsolationEnabled: boolean
   autoIsolationMinStatus: AutoIsolationMinStatus
+  qualityRetryIsolationEnabled: boolean
+  qualityRetryIsolationIntervalSeconds: number
   quarantineMinutes: number
 }
 
@@ -422,6 +424,10 @@ export function toSettingsForm(
       settings.autoQuarantineRecoveryEnabled ?? true,
     autoIsolationEnabled: settings.autoIsolationEnabled ?? false,
     autoIsolationMinStatus: settings.autoIsolationMinStatus ?? 'high_risk',
+    qualityRetryIsolationEnabled:
+      settings.qualityRetryIsolationEnabled ?? false,
+    qualityRetryIsolationIntervalSeconds:
+      settings.qualityRetryIsolationIntervalSeconds ?? 60,
     quarantineMinutes: settings.quarantineMinutes,
   }
 }
@@ -520,6 +526,9 @@ export function buildSettingsPayload(
     autoQuarantineRecoveryEnabled: form.autoQuarantineRecoveryEnabled,
     autoIsolationEnabled: form.autoIsolationEnabled,
     autoIsolationMinStatus: form.autoIsolationMinStatus,
+    qualityRetryIsolationEnabled: form.qualityRetryIsolationEnabled,
+    qualityRetryIsolationIntervalSeconds:
+      form.qualityRetryIsolationIntervalSeconds,
     quarantineMinutes: form.quarantineMinutes,
     clearSecrets,
   }

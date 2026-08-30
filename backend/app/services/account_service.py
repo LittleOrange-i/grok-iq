@@ -7,7 +7,7 @@ from typing import Any
 
 from app.core.clock import app_isoformat, to_app_timezone, utc_now
 from app.core.config import Settings
-from app.core.disposition import evidence_from
+from app.core.disposition import evidence_from, matches_disposition_source
 from app.integrations.grok2api.client import Grok2APIClient, IntegrationError
 from app.persistence.account_repository import AccountRepository
 from app.persistence.probe_repository import ProbeRepository
@@ -1107,6 +1107,7 @@ class AccountService:
         upstream_status: str = "",
         sso_risk: str = "",
         egress_node_id: str = "",
+        source: str = "",
     ) -> dict[str, Any]:
         assessments = self.accounts.list_isolation_zone()
         account_ids = [int(item["account_id"]) for item in assessments]
@@ -1142,6 +1143,7 @@ class AccountService:
                     sso_available=sso_available,
                     sso_risk=sso_risk,
                 )
+                and self._matches_source(overlaid, source)
             ):
                 values.append(overlaid)
         start = (page - 1) * page_size
@@ -1540,6 +1542,19 @@ class AccountService:
             recommendation = overlay.get("egressRecommendation") or {}
             return recommendation.get("type") == "change_egress"
         return overlay.get("ssoRiskStatus") == requested
+
+    @staticmethod
+    def _matches_source(overlaid: dict[str, Any], source: str) -> bool:
+        assessment = overlaid.get("assessment")
+        disposition = (
+            assessment.get("disposition")
+            if isinstance(assessment, dict)
+            else {}
+        )
+        current = ""
+        if isinstance(disposition, dict):
+            current = str(disposition.get("source") or "")
+        return matches_disposition_source(current, source)
 
     @staticmethod
     def _overlay(

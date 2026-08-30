@@ -817,6 +817,30 @@ function IsolationZonePanel({
             </div>
           ) : null}
         </SettingListItem>
+        <SettingListItem
+          label='同步 grok2api 降智停用'
+          description='开启后定期把 grok2api 因降智二次命中而停用的账号移入隔离区，方便和 GrokIQ 自己隔离的账号区分。不依赖自动移入开关，也不会再次停用上游。'
+          checked={form.qualityRetryIsolationEnabled}
+          onCheckedChange={(value) =>
+            set('qualityRetryIsolationEnabled', value)
+          }
+        >
+          {form.qualityRetryIsolationEnabled ? (
+            <div className='max-w-xs'>
+              <NumberField
+                label='同步间隔'
+                hint='15–600 秒。只同步 grok2api 已永久降智停用的账号。'
+                value={form.qualityRetryIsolationIntervalSeconds}
+                min={15}
+                max={600}
+                suffix='秒'
+                onChange={(value) =>
+                  set('qualityRetryIsolationIntervalSeconds', value)
+                }
+              />
+            </div>
+          ) : null}
+        </SettingListItem>
       </SettingList>
     </SettingsCard>
   )

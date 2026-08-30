@@ -128,3 +128,29 @@ def test_compute_isolation_stats_keeps_sub_hour_timing():
     assert stats["timing"]["sampleCount"] == 1
     assert stats["timing"]["medianHours"] == 0.2
     assert stats["timing"]["avgHours"] == 0.2
+
+
+
+def test_compute_isolation_stats_includes_quality_retry_source():
+    now = utc_now()
+    start = now - timedelta(hours=2)
+    end = now + timedelta(hours=1)
+    stats = compute_isolation_stats(
+        assessments=[
+            {
+                "account_id": 9,
+                "monitor_status": "quarantined",
+                "quarantine_until": None,
+                "disposition": {
+                    "source": "quality_retry",
+                    "at": app_isoformat(now - timedelta(minutes=10)),
+                },
+            }
+        ],
+        register_events=[],
+        start=start,
+        end=end,
+    )
+    assert stats["zone"]["bySource"] == [
+        {"source": "quality_retry", "label": "grok2api 降智停用", "count": 1},
+    ]

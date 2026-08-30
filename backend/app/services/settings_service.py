@@ -322,6 +322,10 @@ class RuntimeSettingsService:
             "autoQuarantineRecoveryEnabled": s.auto_quarantine_recovery_enabled,
             "autoIsolationEnabled": s.auto_isolation_enabled,
             "autoIsolationMinStatus": s.auto_isolation_min_status,
+            "qualityRetryIsolationEnabled": s.quality_retry_isolation_enabled,
+            "qualityRetryIsolationIntervalSeconds": (
+                s.quality_retry_isolation_interval_seconds
+            ),
             "quarantineMinutes": s.quarantine_minutes,
             "bootstrap": {
                 "host": s.host,

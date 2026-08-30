@@ -138,6 +138,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
         upstream_status: str = Query(default="", alias="status"),
         sso_risk: str = Query(default="", alias="ssoRisk"),
         egress_node_id: str = Query(default="", alias="egressNodeId"),
+        source: str = "",
     ) -> dict[str, Any]:
         return await service.list_isolation_zone(
             page=page,
@@ -146,6 +147,7 @@ def build_accounts_router(service: AccountService) -> APIRouter:
             upstream_status=upstream_status,
             sso_risk=sso_risk,
             egress_node_id=egress_node_id,
+            source=source,
         )
 
     @router.delete("/accounts/quarantine/local")

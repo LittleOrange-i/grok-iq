@@ -13,6 +13,7 @@ DISPOSITION_SOURCE_ALIASES = {
     "manual": "manual",
     "sso": "sso",
     "sso_report": "sso",
+    "quality_retry": "quality_retry",
 }
 
 DISPOSITION_SOURCE_LABELS = {
@@ -21,6 +22,14 @@ DISPOSITION_SOURCE_LABELS = {
     "register": "注册联动",
     "manual": "手动操作",
     "sso": "SSO 检测",
+    "quality_retry": "grok2api 降智停用",
+}
+
+DISPOSITION_ORIGIN_GROK2API = "grok2api"
+DISPOSITION_ORIGIN_GROKIQ = "grokiq"
+DISPOSITION_ORIGIN_LABELS = {
+    DISPOSITION_ORIGIN_GROK2API: "grok2api",
+    DISPOSITION_ORIGIN_GROKIQ: "GrokIQ",
 }
 
 DISPOSITION_ACTION_LABELS = {
@@ -35,6 +44,7 @@ DEFAULT_DISPOSITION_REASONS = {
     "register": "注册联动确认降智后自动隔离",
     "sso": "SSO 检测发现风险后自动停用",
     "manual": "手动移入隔离区",
+    "quality_retry": "grok2api 请求拦截二次命中降智后停用",
 }
 
 
@@ -50,6 +60,30 @@ def disposition_source_label(source: str | None) -> str:
     return DISPOSITION_SOURCE_LABELS.get(normalized, normalized)
 
 
+def disposition_origin(source: str | None) -> str:
+    if normalize_disposition_source(source) == "quality_retry":
+        return DISPOSITION_ORIGIN_GROK2API
+    return DISPOSITION_ORIGIN_GROKIQ
+
+
+def disposition_origin_label(source: str | None) -> str:
+    origin = disposition_origin(source)
+    return DISPOSITION_ORIGIN_LABELS.get(origin, origin)
+
+
+def matches_disposition_source(source: str | None, requested: str | None) -> bool:
+    needle = str(requested or "").strip().lower()
+    if not needle or needle == "all":
+        return True
+    actual = normalize_disposition_source(source)
+    origin = disposition_origin(actual)
+    if needle in {DISPOSITION_ORIGIN_GROK2API, "quality_retry"}:
+        return actual == "quality_retry" or origin == DISPOSITION_ORIGIN_GROK2API
+    if needle == DISPOSITION_ORIGIN_GROKIQ:
+        return origin == DISPOSITION_ORIGIN_GROKIQ
+    return actual == needle
+
+
 def disposition_action_label(action: str | None) -> str:
     normalized = str(action or "").strip() or "isolate"
     return DISPOSITION_ACTION_LABELS.get(normalized, normalized)
@@ -57,6 +91,8 @@ def disposition_action_label(action: str | None) -> str:
 
 def infer_disposition_source(note: str | None) -> str:
     text = str(note or "")
+    if "请求拦截二次命中" in text or "grok2api 降智停用" in text:
+        return "quality_retry"
     if "请求审计" in text:
         return "request_audit"
     if "grok-register" in text or text.startswith("registration:"):
@@ -124,6 +160,8 @@ def build_disposition(
     return {
         "source": normalized_source,
         "sourceLabel": disposition_source_label(normalized_source),
+        "origin": disposition_origin(normalized_source),
+        "originLabel": disposition_origin_label(normalized_source),
         "action": normalized_action,
         "actionLabel": disposition_action_label(normalized_action),
         "reason": display_disposition_reason(reason, normalized_source),

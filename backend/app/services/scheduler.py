@@ -17,6 +17,7 @@ from app.persistence.probe_repository import ProbeRepository
 from .probe_manager import ProbeManager
 
 RequestAuditCallback = Callable[[], Awaitable[dict[str, Any]]]
+QualityRetryCallback = Callable[[], Awaitable[dict[str, Any]]]
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,14 @@ class SchedulerService:
         probes: ProbeManager,
         recovery_callback: Callable[[], Awaitable[dict[str, Any]]],
         request_audit_callback: RequestAuditCallback | None = None,
+        quality_retry_callback: QualityRetryCallback | None = None,
     ):
         self.settings = settings
         self.repository = repository
         self.probes = probes
         self.recovery_callback = recovery_callback
         self.request_audit_callback = request_audit_callback
+        self.quality_retry_callback = quality_retry_callback
         self.scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
 
     async def start(self) -> None:
@@ -92,6 +95,8 @@ class SchedulerService:
             # carries a busy/normal/idle recommendation, so upstream traffic
             # controls the next interval instead of a fixed five-minute cron.
             self._schedule_request_audit(5)
+        if self._quality_retry_schedule_enabled():
+            self._schedule_quality_retry(5)
 
     def _request_audit_schedule_enabled(self) -> bool:
         return bool(
@@ -99,6 +104,18 @@ class SchedulerService:
             and self.settings.request_audit_enabled
             and self.settings.request_audit_auto_scan_enabled
             and self.request_audit_callback is not None
+        )
+
+    def _quality_retry_schedule_enabled(self) -> bool:
+        return bool(
+            self.settings.quality_retry_isolation_enabled
+            and self.quality_retry_callback is not None
+        )
+
+    def _quality_retry_delay(self) -> int:
+        return max(
+            15,
+            min(int(self.settings.quality_retry_isolation_interval_seconds), 600),
         )
 
     def _schedule_request_audit(self, delay_seconds: int) -> None:
@@ -113,6 +130,24 @@ class SchedulerService:
             ),
             id="system:request-audit-scan",
             name="请求审计风险扫描",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.settings.scheduler_misfire_grace_seconds,
+        )
+
+    def _schedule_quality_retry(self, delay_seconds: int) -> None:
+        if not self.scheduler.running or not self._quality_retry_schedule_enabled():
+            return
+        delay = max(5, min(int(delay_seconds), 24 * 60 * 60))
+        self.scheduler.add_job(
+            self._run_quality_retry_isolation,
+            DateTrigger(
+                run_date=utc_now() + timedelta(seconds=delay),
+                timezone=ZoneInfo(self.settings.scheduler_timezone),
+            ),
+            id="system:quality-retry-isolation",
+            name="grok2api 降智停用同步",
             replace_existing=True,
             coalesce=True,
             max_instances=1,
@@ -288,6 +323,50 @@ class SchedulerService:
         finally:
             self._schedule_request_audit(self._request_audit_delay(result))
 
+    async def _run_quality_retry_isolation(self) -> None:
+        if self.quality_retry_callback is None:
+            return
+        execution_id = self.repository.start_schedule_execution(
+            "system:quality-retry-isolation"
+        )
+        result: dict[str, Any] = {}
+        try:
+            result = await self.quality_retry_callback()
+            skipped = bool(result.get("skipped"))
+            ok = bool(result.get("ok", True))
+            if skipped:
+                status = "skipped"
+                message = str(result.get("error") or "grok2api 降智停用同步已跳过")
+            elif ok:
+                status = "succeeded"
+                isolated = int(result.get("isolated") or 0)
+                already = int(result.get("alreadyIsolated") or 0)
+                failed = int(result.get("failed") or 0)
+                message = f"新隔离 {isolated} 个"
+                if already:
+                    message += f"，已在隔离区 {already} 个"
+                if failed:
+                    message += f"，失败 {failed} 个"
+            else:
+                status = "failed"
+                message = str(result.get("error") or "grok2api 降智停用同步失败")
+            self.repository.finish_schedule_execution(
+                execution_id,
+                status=status,
+                message=message,
+                detail=result,
+            )
+        except Exception as exc:
+            self.repository.finish_schedule_execution(
+                execution_id,
+                status="failed",
+                message=str(exc),
+                detail={},
+            )
+            logger.exception("quality retry isolation scan failed")
+        finally:
+            self._schedule_quality_retry(self._quality_retry_delay())
+
     def status(self) -> dict[str, Any]:
         jobs = {
             job.id: {
@@ -304,6 +383,9 @@ class SchedulerService:
             "enabled": self.settings.scheduler_enabled,
             "plansEnabled": self.settings.scheduler_enabled,
             "systemRecoveryEnabled": self.settings.quarantine_recovery_enabled,
+            "qualityRetryIsolationEnabled": (
+                self.settings.quality_retry_isolation_enabled
+            ),
             "running": self.scheduler.running,
             "plans": plans,
             "systemJobs": [value for key, value in jobs.items() if key.startswith("system:")],

@@ -112,6 +112,7 @@ import {
 import {
   DispositionBanner,
   DispositionSummary,
+  dispositionOrigin,
 } from '@/features/monitor/components/disposition-summary'
 import {
   buildEgressNodeNameMap,
@@ -158,6 +159,15 @@ function parseRestorePriority(value: string): {
 }
 
 const QUARANTINE_VIEW_STORAGE_KEY = 'grokiq.monitor.quarantine-view.v1'
+type IsolationSourceFilter =
+  | 'all'
+  | 'grok2api'
+  | 'probe'
+  | 'request_audit'
+  | 'register'
+  | 'manual'
+  | 'sso'
+
 const defaultQuarantineView = {
   page: 1,
   pageSize: 50,
@@ -165,6 +175,7 @@ const defaultQuarantineView = {
   upstreamStatus: 'all' as IsolationUpstreamStatusFilter,
   ssoRisk: 'all' as SsoRiskFilter,
   egressNodeId: 'all',
+  source: 'all' as IsolationSourceFilter,
 }
 
 const isolationUpstreamStatusOptions: {
@@ -173,6 +184,19 @@ const isolationUpstreamStatusOptions: {
 }[] = [
   ...ACCOUNT_UPSTREAM_STATUS_OPTIONS,
   { value: 'missing', label: '上游缺失' },
+]
+
+const isolationSourceOptions: {
+  value: IsolationSourceFilter
+  label: string
+}[] = [
+  { value: 'all', label: '全部来源' },
+  { value: 'grok2api', label: 'grok2api 降智停用' },
+  { value: 'probe', label: 'GrokIQ 探针' },
+  { value: 'request_audit', label: 'GrokIQ 请求审计' },
+  { value: 'register', label: 'GrokIQ 注册联动' },
+  { value: 'manual', label: 'GrokIQ 手动' },
+  { value: 'sso', label: 'GrokIQ SSO' },
 ]
 
 const ssoRiskLabels: Record<SsoRiskFilter, string> = {
@@ -740,6 +764,7 @@ export function QuarantinePage() {
     upstreamStatus = 'all',
     ssoRisk = 'all',
     egressNodeId = 'all',
+    source = 'all',
   } = view.value
   const updateView = (patch: Partial<typeof defaultQuarantineView>) =>
     view.setValue((current) => ({ ...current, ...patch }))
@@ -752,8 +777,17 @@ export function QuarantinePage() {
       upstreamStatus,
       ssoRisk,
       egressNodeId,
+      source,
     }),
-    [deferredSearch, egressNodeId, page, pageSize, ssoRisk, upstreamStatus]
+    [
+      deferredSearch,
+      egressNodeId,
+      page,
+      pageSize,
+      source,
+      ssoRisk,
+      upstreamStatus,
+    ]
   )
   const tableQuery = usePaintDeferredValue(committedQuery)
   const [selected, setSelected] = useState<number[]>([])
@@ -784,7 +818,8 @@ export function QuarantinePage() {
     tableQuery.search !== committedQuery.search ||
     tableQuery.upstreamStatus !== committedQuery.upstreamStatus ||
     tableQuery.ssoRisk !== committedQuery.ssoRisk ||
-    tableQuery.egressNodeId !== committedQuery.egressNodeId
+    tableQuery.egressNodeId !== committedQuery.egressNodeId ||
+    tableQuery.source !== committedQuery.source
   const query = useQuery({
     queryKey: [
       'accounts',
@@ -795,6 +830,7 @@ export function QuarantinePage() {
       tableQuery.upstreamStatus,
       tableQuery.ssoRisk,
       tableQuery.egressNodeId,
+      tableQuery.source,
     ],
     queryFn: ({ signal }) =>
       api.quarantineAccounts(
@@ -809,6 +845,7 @@ export function QuarantinePage() {
           ssoRisk: tableQuery.ssoRisk === 'all' ? '' : tableQuery.ssoRisk,
           egressNodeId:
             tableQuery.egressNodeId === 'all' ? '' : tableQuery.egressNodeId,
+          source: tableQuery.source === 'all' ? '' : tableQuery.source,
         },
         signal
       ),
@@ -825,6 +862,7 @@ export function QuarantinePage() {
     tableQuery.upstreamStatus,
     tableQuery.ssoRisk,
     tableQuery.egressNodeId,
+    tableQuery.source,
   ].join('|')
   const appliedFilterKeyRef = useRef(tableFilterKey)
   useEffect(() => {
@@ -1191,6 +1229,8 @@ export function QuarantinePage() {
     upstreamStatusLabel,
     ssoRiskLabels[ssoRisk],
     egressNodeId === 'all' ? '全部出口绑定' : `出口节点 ${egressNodeId}`,
+    isolationSourceOptions.find((item) => item.value === source)?.label ??
+      '全部来源',
     `第 ${page} 页 · 每页 ${pageSize} 条`,
   ]
     .filter(Boolean)
@@ -1199,6 +1239,7 @@ export function QuarantinePage() {
     upstreamStatus !== 'all',
     ssoRisk !== 'all',
     egressNodeId !== 'all',
+    source !== 'all',
   ].filter(Boolean).length
   const egressFilterLabel =
     egressNodeId === 'unbound'
@@ -1218,7 +1259,7 @@ export function QuarantinePage() {
               账号。可查看样本，恢复上游需确认，也可只删除本系统记录。
             </p>
             <p>
-              来源包括人工移入、请求审计永久停用，以及探针按监控判定自动隔离。请求审计页面的「高风险」不会直接把账号送进这里，要达到停用次数后才会进来。
+              来源包括人工移入、请求审计永久停用、探针按监控判定自动隔离，以及 grok2api 降智二次命中后的停用同步。请求审计页面的「高风险」不会直接把账号送进这里，要达到停用次数后才会进来。
             </p>
             <p>
               探针到期停用是另一条可恢复链路；隔离区账号不会走到期自动恢复。
@@ -1370,6 +1411,7 @@ export function QuarantinePage() {
                               upstreamStatus: 'all',
                               ssoRisk: 'all',
                               egressNodeId: 'all',
+                              source: 'all',
                               page: 1,
                             })
                           }
@@ -1427,6 +1469,32 @@ export function QuarantinePage() {
                           {(egressData?.items ?? []).map((node) => (
                             <SelectItem key={node.id} value={String(node.id)}>
                               {node.name || `节点 #${node.id}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className='space-y-2'>
+                      <div className='text-[11px] font-semibold tracking-wide text-muted-foreground uppercase'>
+                        隔离来源
+                      </div>
+                      <Select
+                        value={source}
+                        onValueChange={(value) =>
+                          updateView({
+                            source: value as IsolationSourceFilter,
+                            page: 1,
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <ShieldBan className='size-4 text-muted-foreground' />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {isolationSourceOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1493,6 +1561,16 @@ export function QuarantinePage() {
                   <FilterChip
                     label={`出口：${egressFilterLabel}`}
                     onClear={() => updateView({ egressNodeId: 'all', page: 1 })}
+                  />
+                )}
+                {source !== 'all' && (
+                  <FilterChip
+                    label={`来源：${
+                      isolationSourceOptions.find(
+                        (item) => item.value === source
+                      )?.label ?? source
+                    }`}
+                    onClear={() => updateView({ source: 'all', page: 1 })}
                   />
                 )}
               </div>
@@ -2022,6 +2100,7 @@ function QuarantineRow({
     createdAt: account.createdAt,
     accountLabel,
   })
+  const origin = dispositionOrigin(assessment?.disposition)
   return (
     <TableRow rowId={id}>
       <TableCell>
@@ -2034,7 +2113,19 @@ function QuarantineRow({
       <TableCell>
         <div className='flex items-start gap-1'>
           <div className='min-w-0'>
-            <div className='font-medium'>{accountLabel}</div>
+            <div className='flex flex-wrap items-center gap-1.5'>
+              <div className='font-medium'>{accountLabel}</div>
+              {origin.originLabel ? (
+                <Badge
+                  variant={
+                    origin.origin === 'grok2api' ? 'secondary' : 'outline'
+                  }
+                  className='h-5 px-1.5 text-[10px]'
+                >
+                  {origin.originLabel}
+                </Badge>
+              ) : null}
+            </div>
             <div
               className='max-w-80 text-xs text-muted-foreground'
               title={secondaryAccountLabel}
