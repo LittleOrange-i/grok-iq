@@ -822,7 +822,7 @@ async def test_bot_risk_without_confirmed_bfs_still_enqueues_probe():
 def _callback_settings(**values: Any) -> Settings:
     return Settings(
         register_callback_enabled=True,
-        register_callback_url="http://grok-register:8787/api/integrations/grokiq/account-result",
+        register_callback_url="http://grok-register:8787/api/integrations/grokiq/notify",
         grok_register_webhook_token="shared-token",
         **values,
     )
@@ -861,7 +861,7 @@ async def test_confirmed_degradation_enqueues_callback_once():
     assert callback["verdict"] == "degraded"
     assert callback["probe_outcome"] == "confirmed_degraded"
     assert callback["isolated"] is True
-    assert callback["event_type"] == "grokiq.account_result"
+    assert callback["event_type"] == "grokiq.notify"
     assert callback["registration_id"] == "123"
 
 

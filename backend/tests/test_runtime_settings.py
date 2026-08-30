@@ -679,14 +679,14 @@ def test_register_priority_hold_setting_is_persisted(tmp_path: Path):
 
 def test_register_callback_setting_requires_url_and_is_persisted(tmp_path: Path):
     _database, settings, service = build_service(tmp_path)
-    with pytest.raises(ValueError, match="回调地址"):
+    with pytest.raises(ValueError, match="通知地址"):
         service.update({"register_callback_enabled": True})
 
     changed = service.update(
         {
             "register_callback_enabled": True,
             "register_callback_url": (
-                "http://grok-register:8787/api/integrations/grokiq/account-result"
+                "http://grok-register:8787/api/integrations/grokiq/notify"
             ),
             "register_callback_timeout_seconds": 8,
         }
@@ -698,7 +698,7 @@ def test_register_callback_setting_requires_url_and_is_persisted(tmp_path: Path)
     ]
     public = service.public_view()
     assert public["registerCallbackEnabled"] is True
-    assert public["registerCallbackUrl"].endswith("/account-result")
+    assert public["registerCallbackUrl"].endswith("/notify")
     assert public["registerCallbackTimeoutSeconds"] == 8
 
     reloaded_settings = Settings(database_path=tmp_path / "grokiq.db")

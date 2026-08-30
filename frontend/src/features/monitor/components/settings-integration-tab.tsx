@@ -197,20 +197,20 @@ export function SettingsIntegrationTab({
 
       <SettingsCard
         icon={Send}
-        title='检测结果回传'
-        description='探针结束或确认降智后，把账号检测结果回调给注册机，方便注册侧处理降智账号。'
+        title='检测回调通知'
+        description='类似支付异步通知：探针结束或确认降智后，向注册机 POST 回调通知，方便注册侧处理降智账号。'
       >
         <SettingList>
           <SettingListItem
-            label='启用结果回传'
-            description='与导入 Webhook 共用联动令牌。每个导入事件只回传一次终态；失败会写入 Outbox 并退避重试。'
+            label='启用回调通知'
+            description='与导入 Webhook 共用联动令牌。每个导入事件只发送一次终态回调通知；失败会写入 Outbox 并退避重试。'
             checked={form.registerCallbackEnabled}
             onCheckedChange={(value) => set('registerCallbackEnabled', value)}
           >
             <div className='grid gap-4 md:grid-cols-2'>
               <Field
-                label='回调地址'
-                hint='统一 Compose 内使用 grok-register 容器名；独立部署可填写注册机内网地址。'
+                label='通知地址'
+                hint='对应支付系统的 notify_url。统一 Compose 内使用 grok-register 容器名。'
               >
                 <Input
                   value={form.registerCallbackUrl}

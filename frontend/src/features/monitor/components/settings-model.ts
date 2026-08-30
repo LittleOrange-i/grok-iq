@@ -263,10 +263,10 @@ export const REGISTER_WEBHOOK_RECOMMENDED_BODY = `{
   "sso": "sso=..."
 }`
 export const REGISTER_CALLBACK_PLACEHOLDER_URL =
-  'http://grok-register:8787/api/integrations/grokiq/account-result'
+  'http://grok-register:8787/api/integrations/grokiq/notify'
 export const REGISTER_CALLBACK_EXAMPLE_BODY = `{
   "event_id": "registration:123:grok2api-imported",
-  "event_type": "grokiq.account_result",
+  "event_type": "grokiq.notify",
   "registration_id": "123",
   "email": "user@example.com",
   "account_id": 17,
@@ -700,25 +700,25 @@ export function validateSettings(form: SettingsForm) {
   if (form.registerCallbackEnabled) {
     const url = form.registerCallbackUrl.trim()
     if (!url) {
-      throw new Error('开启结果回传前请填写回调地址')
+      throw new Error('开启回调通知前请填写通知地址')
     }
     try {
       const parsed = new URL(url)
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error('结果回传地址必须是有效的 HTTP(S) URL')
+        throw new Error('回调通知地址必须是有效的 HTTP(S) URL')
       }
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith('结果回传')) {
+      if (error instanceof Error && error.message.startsWith('回调通知')) {
         throw error
       }
-      throw new Error('结果回传地址必须是有效的 HTTP(S) URL')
+      throw new Error('回调通知地址必须是有效的 HTTP(S) URL')
     }
     if (
       !Number.isFinite(form.registerCallbackTimeoutSeconds) ||
       form.registerCallbackTimeoutSeconds < 1 ||
       form.registerCallbackTimeoutSeconds > 60
     ) {
-      throw new Error('结果回传超时需在 1–60 秒之间')
+      throw new Error('回调通知超时需在 1–60 秒之间')
     }
   }
 }

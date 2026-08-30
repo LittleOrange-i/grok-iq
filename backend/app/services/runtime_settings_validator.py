@@ -142,7 +142,7 @@ class RuntimeSettingsValidator:
             return
         parsed = urlsplit(candidate.register_callback_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("开启结果回传前请填写有效的 HTTP(S) 回调地址")
+            raise ValueError("开启回调通知前请填写有效的 HTTP(S) 通知地址")
 
     def _normalize_register_strategy(self, candidate: Settings) -> None:
         profile_ids = list(

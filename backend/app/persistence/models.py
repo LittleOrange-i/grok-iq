@@ -604,7 +604,7 @@ class RegisterWebhookEvent(Base):
 
 
 class RegisterCallbackDelivery(Base):
-    """Durable outbox for grok-register account-result callbacks."""
+    """Durable outbox for grok-register notify callbacks."""
 
     __tablename__ = "register_callback_deliveries"
     __table_args__ = (

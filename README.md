@@ -156,7 +156,7 @@ GrokIQ 将日常账号巡检集中到一个界面中：从账号筛选、批量�
 - **风险标记**：按风险周期内全部出口样本的异常占比、连续异常、强信号和预期内容匹配情况计算账号状态；次数、占比、权重、封顶和状态保底分都能热更新。
 - **任务控制**：查看队列和 Worker，支持停止、重试、删除以及批量操作。
 - **结果回看**：从账号、任务或样本详情里直接看指标和原始输出，长内容按需展开。
-- **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可保存 SSO、记录注册风险，并可选自动创建探针任务；检测完成后可把降智结果回调给注册机。
+- **注册联动**：接收 [grok-register](https://github.com/kaibush/grok-register) 的 Webhook，账号导入后可保存 SSO、记录注册风险，并可选自动创建探针任务；检测完成后可向注册机发送回调通知。
 - **SSO 报告**：仅 `bot=0` 记为正常，其他值记为风控标记；持久报告不保存 SSO、哈希或会话 ID。
 
 ## 风险因子怎么调
@@ -271,7 +271,7 @@ http://grokiq-backend:8090/api/integrations/grok-register/account-imported
 - 如果账号暂时还没出现在 Grok2API，本项目会继续重试匹配；关闭自动探针时仍会保留导入事件。
 - 开启注册后探针时，匹配到账号会立即降低 grok2api 优先级；全部注册探针通过后恢复原值。恢复失败由联动后台定时重试，探针未通过则保持低优先级。
 - `grok-register` 的账号详情会显示投递状态、尝试次数、接收时间和最近错误，方便查联动问题。
-- 开启结果回传后，GrokIQ 会在确认降智或注册探针结束后，向注册机 `POST /api/integrations/grokiq/account-result`。请求头仍是 `x-grokiq-token`，每个导入事件只回传一次终态；注册机应读取 `degraded` 判断是否降智。
+- 开启回调通知后，GrokIQ 会在确认降智或注册探针结束后，向注册机 `POST /api/integrations/grokiq/notify`。请求头仍是 `x-grokiq-token`，每个导入事件只通知一次终态；注册机应读取 `degraded` 判断是否降智。
 
 ### 三个服务一起跑
 
@@ -292,7 +292,7 @@ docker compose -f compose.yaml -f compose.grokiq.yaml pull
 docker compose -f compose.yaml -f compose.grokiq.yaml up -d
 ```
 
-默认端口：`grok-register` 使用 `8787`，本项目 Web 页面使用 `8091`。探针配置只在本项目维护；注册机负责导入成功后发送事件，也可接收 GrokIQ 回传的检测结果。
+默认端口：`grok-register` 使用 `8787`，本项目 Web 页面使用 `8091`。探针配置只在本项目维护；注册机负责导入成功后发送事件，也可接收 GrokIQ 的检测回调通知。
 
 新账号首次探针默认等待 `15` 秒，可通过 `GROKIQ_REGISTER_PROBE_STABILIZATION_SECONDS` 或“注册联动”调整；设为 `0` 可关闭等待。
 

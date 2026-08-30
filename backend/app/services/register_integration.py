@@ -639,7 +639,7 @@ class RegisterIntegrationService:
         )
         return {
             "event_id": str(event.get("event_id") or ""),
-            "event_type": "grokiq.account_result",
+            "event_type": "grokiq.notify",
             "registration_id": str(event.get("registration_id") or ""),
             "email": str(event.get("email") or ""),
             "account_id": account_id or None,
@@ -709,7 +709,7 @@ class RegisterIntegrationService:
     async def _post_callback(self, payload: dict[str, Any]) -> None:
         url = str(self.settings.register_callback_url or "").strip()
         if not url:
-            raise RuntimeError("结果回调地址未配置")
+            raise RuntimeError("回调通知地址未配置")
         timeout = max(1, min(int(self.settings.register_callback_timeout_seconds or 10), 60))
         try:
             async with CurlAsyncSession(trust_env=False) as client:
@@ -728,12 +728,12 @@ class RegisterIntegrationService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            raise RuntimeError(f"结果回调请求失败: {exc}") from exc
+            raise RuntimeError(f"回调通知请求失败: {exc}") from exc
         status_code = int(getattr(response, "status_code", 0) or 0)
         if status_code < 200 or status_code >= 300:
             detail = str(getattr(response, "text", "") or "").strip()[:1000]
             raise RuntimeError(
-                f"结果回调返回 HTTP {status_code}: {detail or '空响应'}"
+                f"回调通知返回 HTTP {status_code}: {detail or '空响应'}"
             )
 
     @staticmethod
