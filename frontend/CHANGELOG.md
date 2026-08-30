@@ -329,6 +329,18 @@ but introduces breaking changes.
 - update sidebar logo and title
 - **ui**: remove unnecessary spacing
 - remove unused files
+## v0.7.1 (2026-08-30)
+
+### Feat
+
+- notify grok-register after probe or isolation, like a payment callback
+- document inbound webhook and notify callback contracts together
+
+### Refactor
+
+- rename the register result callback to notify wording
+- group webhook and notify protocol buttons in register settings
+
 ## v0.7.0 (2026-08-29)
 
 ### Feat
