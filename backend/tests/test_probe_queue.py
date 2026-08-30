@@ -1012,6 +1012,7 @@ class FakeGrokClient:
         self.bind_mismatch = False
         self.create_probe_route_calls: list[dict[str, Any]] = []
         self.quality_guard_calls: list[dict[str, Any]] = []
+        self.quality_probe_calls: list[dict[str, Any]] = []
 
     async def get_account(self, account_id: int) -> dict[str, Any]:
         return {
@@ -1152,7 +1153,16 @@ class FakeGrokClient:
         )
 
     async def quality_probe(self, **kwargs: Any) -> ChatProbeResult:
+        self.quality_probe_calls.append(kwargs)
+        self.probe_calls += 1
+        if self.probe_errors:
+            raise self.probe_errors.pop(0)
+        if self.probe_error is not None:
+            raise self.probe_error
         egress_id = kwargs["egress_node_id"]
+        usage = {"completion_tokens": 120, "quality_test": True}
+        if kwargs.get("pin_account"):
+            usage["account_bind_skipped"] = True
         return ChatProbeResult(
             request_id="quality-request-1",
             audit_id=2,
@@ -1173,7 +1183,7 @@ class FakeGrokClient:
             first_token_share=2 / 7,
             tps=120,
             expected_matched=True,
-            usage={"completion_tokens": 120, "quality_test": True},
+            usage=usage,
         )
 
     async def restore_account_egress(self, *_: Any) -> None:
@@ -2015,7 +2025,7 @@ async def test_quality_test_pins_account_and_node_without_changing_binding(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_bind_window_fallback_pins_via_quality_guard(tmp_path: Path):
+async def test_bind_window_fallback_pins_via_quality_test(tmp_path: Path):
     database = Database(tmp_path / "grokiq.db")
     database.initialize()
     probe_repository = ProbeRepository(database)
@@ -2046,22 +2056,29 @@ async def test_bind_window_fallback_pins_via_quality_guard(tmp_path: Path):
         detail = await wait_for_terminal_run(probe_repository, run_id)
         sample = detail["samples"][0]
         assert detail["run"]["status"] == "completed"
-        route_call = client.create_probe_route_calls[0]
-        assert len(client.create_probe_route_calls) == 1
-        assert route_call["account_id"] == 10
-        assert route_call["bind_account"] is True
-        assert route_call["allow_temporarily_unavailable"] is True
-        assert client.quality_guard_calls == [
-            {"account_id": 10, "egress_node_id": 110}
-        ]
+        assert len(client.create_probe_route_calls) == 2
+        assert client.create_probe_route_calls[0]["account_id"] == 10
+        assert client.create_probe_route_calls[0]["bind_account"] is True
+        assert client.create_probe_route_calls[0]["allow_temporarily_unavailable"] is True
+        assert client.create_probe_route_calls[1]["bind_account"] is False
+        assert client.quality_guard_calls == []
+        assert len(client.quality_probe_calls) == 1
+        probe_call = client.quality_probe_calls[0]
+        assert probe_call["client_key_id"] == "key-1"
+        assert probe_call["public_model"] == "grokiq-probe-test"
+        assert probe_call["account_id"] == 10
+        assert probe_call["egress_node_id"] == 110
+        assert probe_call["pin_account"] is True
+        assert probe_call["max_output_tokens"] == 0
         assert client.bindings == []
-        assert client.deleted_route is False
-        assert client.deleted_key is False
-        assert sample["request_id"] == "guard-request-1"
+        assert client.deleted_route is True
+        assert client.deleted_key is True
+        assert sample["request_id"] == "quality-request-1"
         assert sample["verified_account_id"] == 10
         assert sample["verified_egress_node_id"] == 110
-        assert sample["usage"]["quality_guard"] is True
+        assert sample["usage"]["quality_test"] is True
         assert sample["usage"]["account_bind_skipped"] is True
+        assert sample["usage"].get("quality_guard") is not True
     finally:
         await manager.stop()
 
@@ -2097,6 +2114,7 @@ async def test_bind_window_fallback_requires_egress_node(tmp_path: Path):
         assert detail["run"]["status"] == "failed"
         assert "没有可用出口节点" in str(detail["run"]["error"] or "")
         assert client.quality_guard_calls == []
+        assert client.quality_probe_calls == []
         assert client.deleted_route is False
     finally:
         await manager.stop()

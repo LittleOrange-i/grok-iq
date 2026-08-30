@@ -452,7 +452,50 @@ async def test_quality_probe_only_sends_explicit_output_limit(
     )
 
     assert request_body.get("maxOutputTokens") == expected
+    assert "accountId" not in request_body
+
+
+@pytest.mark.asyncio
+async def test_quality_probe_sends_account_id_only_when_pinning(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    request_body: dict[str, Any] = {}
+    client = Grok2APIClient(Settings())
+
+    async def admin_request(_: str, __: str, **kwargs: Any) -> dict[str, Any]:
+        request_body.update(kwargs["json"])
+        return {
+            "requestId": "request-2",
+            "statusCode": 200,
+            "durationMs": 1000,
+            "firstTokenMs": 100,
+            "generationMs": 900,
+            "outputTokens": 100,
+            "reasoningTokens": 20,
+            "visibleTokens": 80,
+            "expectedMatched": True,
+        }
+
+    async def find_audit(_: str) -> dict[str, Any]:
+        return {"id": "1", "accountId": "7", "egressNodeId": "2"}
+
+    monkeypatch.setattr(client, "admin_request", admin_request)
+    monkeypatch.setattr(client, "find_audit", find_audit)
+
+    result = await client.quality_probe(
+        client_key_id="3",
+        public_model="model",
+        account_id=7,
+        egress_node_id=2,
+        prompt="prompt",
+        expected="OK",
+        max_output_tokens=0,
+        pin_account=True,
+    )
+
     assert request_body.get("accountId") == "7"
+    assert result.usage["account_bind_skipped"] is True
+    assert result.usage["quality_test"] is True
 
 
 @pytest.mark.asyncio

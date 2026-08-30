@@ -78,9 +78,10 @@ logger = logging.getLogger(__name__)
 def is_model_account_bind_mismatch(error: BaseException) -> bool:
     """Return whether grok2api refused a model account bind.
 
-    grok2api validates bound accounts by listing the newest 1000 grok_build
-    rows. Older IDs still exist, but ``POST /models`` with ``accountIds``
-    returns HTTP 400. Those probes must pin the account another way.
+    Older grok2api builds validated bound accounts by listing the newest 1000
+    grok_build rows, so existing older IDs returned HTTP 400. Current grok2api
+    counts by ID, but probes still fall back to an unbound route plus a
+    quality-test pin when this error appears.
     """
 
     if not isinstance(error, IntegrationError) or error.status_code != 400:
@@ -1016,6 +1017,7 @@ class Grok2APIClient:
         prompt: str,
         expected: str,
         max_output_tokens: int,
+        pin_account: bool = False,
     ) -> ChatProbeResult:
         """Run grok2api's forced-egress quality probe and record its audit."""
 
@@ -1026,8 +1028,11 @@ class Grok2APIClient:
             "model": public_model,
             "prompt": prompt,
             "expected": expected,
-            "accountId": str(account_id),
         }
+        extra_usage: dict[str, Any] | None = None
+        if pin_account:
+            request_body["accountId"] = str(account_id)
+            extra_usage = {"account_bind_skipped": True}
         if max_output_tokens > 0:
             request_body["maxOutputTokens"] = max_output_tokens
         payload = await self.admin_request(
@@ -1036,7 +1041,7 @@ class Grok2APIClient:
             json=request_body,
             timeout=300,
         )
-        result = self._quality_result_from_payload(payload)
+        result = self._quality_result_from_payload(payload, extra_usage=extra_usage)
         return await self._verify_quality_probe_account(result, account_id=account_id)
 
     async def quality_guard_probe(

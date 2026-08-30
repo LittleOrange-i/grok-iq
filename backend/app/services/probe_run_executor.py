@@ -128,6 +128,7 @@ class ProbeRunExecutor:
             diagnostic_priority=manager.settings.probe_diagnostic_priority,
             diagnostic_max_concurrent=1,
         )
+        bind_account = True
         try:
             state.route_id, state.public_model = await manager.client.create_probe_route(
                 account_id=account_id,
@@ -138,28 +139,25 @@ class ProbeRunExecutor:
         except IntegrationError as exc:
             if not is_model_account_bind_mismatch(exc):
                 raise
-            if not self._can_pin_with_quality_guard(run, state):
+            if not self._can_pin_unbound_probe(run, state):
                 raise IntegrationError(
                     "该账号超出 grok2api 模型绑定窗口，且没有可用出口节点，"
                     "无法做定向探测"
                 ) from exc
             self.logger.warning(
                 "probe run %s account %s is outside grok2api model bind "
-                "window; pinning via quality-guard",
+                "window; pinning via unbound quality-test",
                 run_id,
                 account_id,
             )
-            state.account_bound = False
-            manager.repository.set_upstream_context(
-                run_id=run_id,
-                original_node_id=state.original_node_id,
-                original_mode=state.original_mode,
-                route_id="",
-                public_model="",
-                client_key_id="",
+            state.route_id, state.public_model = await manager.client.create_probe_route(
+                account_id=account_id,
+                upstream_model=str(profile["model"]),
+                allow_temporarily_unavailable=not state.snapshot.enabled,
+                bind_account=False,
             )
-            return
-        state.account_bound = True
+            bind_account = False
+        state.account_bound = bind_account
         manager.repository.set_upstream_context(
             run_id=run_id,
             original_node_id=state.original_node_id,
@@ -318,7 +316,7 @@ class ProbeRunExecutor:
                 await manager.client.set_account_egress(account_id, target)
                 await asyncio.sleep(0.15)
             if not state.account_bound:
-                return self._quality_guard_factory(account_id, target, state)
+                return self._pinned_quality_factory(account_id, target, state)
 
             def chat_factory() -> Awaitable[Any]:
                 return manager.client.chat_probe(
@@ -335,7 +333,7 @@ class ProbeRunExecutor:
 
             return chat_factory
         if not state.account_bound:
-            return self._quality_guard_factory(account_id, target, state)
+            return self._pinned_quality_factory(account_id, target, state)
         egress_node_id = int(target.get("id") or 0)
 
         def quality_factory() -> Awaitable[Any]:
@@ -353,7 +351,7 @@ class ProbeRunExecutor:
 
         return quality_factory
 
-    def _quality_guard_factory(
+    def _pinned_quality_factory(
         self,
         account_id: int,
         target: dict[str, Any],
@@ -362,9 +360,15 @@ class ProbeRunExecutor:
         node_id = self._forced_egress_node_id(target, state)
 
         def factory() -> Awaitable[Any]:
-            return self.manager.client.quality_guard_probe(
+            return self.manager.client.quality_probe(
+                client_key_id=state.client_key_id,
+                public_model=state.public_model,
                 account_id=account_id,
                 egress_node_id=node_id,
+                prompt=FAST_QUALITY_PROBE_PROMPT,
+                expected=FAST_QUALITY_PROBE_EXPECTED,
+                max_output_tokens=0,
+                pin_account=True,
             )
 
         return factory
@@ -387,7 +391,7 @@ class ProbeRunExecutor:
         return node_id
 
     @staticmethod
-    def _can_pin_with_quality_guard(
+    def _can_pin_unbound_probe(
         run: dict[str, Any],
         state: ProbeRunState,
     ) -> bool:
