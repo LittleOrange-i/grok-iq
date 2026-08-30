@@ -11,10 +11,12 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from app.analyzer import (
+    MEDIA_INPUT_REASONING_ZERO_REASON,
     Classification,
     Thresholds,
     classify_audit_sample,
     get_risk_rule,
+    media_input_blocks_reasoning_action,
     risk_rule_definitions,
     risk_rule_enabled,
     rule_candidate_min_count,
@@ -973,6 +975,13 @@ class RequestAuditService:
                 if classified.name != "high" or not classified.rule_id:
                     continue
                 if classified.rule_id == "media_input_observe":
+                    continue
+                if (
+                    classified.rule_id == "reasoning_zero"
+                    and media_input_blocks_reasoning_action(
+                        _int_or_zero(row.get("media_input_images"))
+                    )
+                ):
                     continue
                 rule = get_risk_rule(classified.rule_id)
                 if rule is None or not rule.audit_action_mode:
@@ -2497,8 +2506,10 @@ class RequestAuditService:
 
         A single explicitly reported zero remains an observation. Only a
         consecutive sequence for the same account, upstream model and request
-        operation becomes high risk. This keeps row display, filters,
-        aggregation and the SSO action candidate path on one decision source.
+        operation becomes high risk. Media-input rows stay observational and
+        never count toward isolation or auto-disable, even when the model
+        policy is required. This keeps row display, filters, aggregation and
+        the SSO action candidate path on one decision source.
         """
 
         thresholds = self._rule_thresholds()
@@ -2554,8 +2565,10 @@ class RequestAuditService:
             reasoning_detected = bool(
                 applicable and _int_or_zero(row.get("reasoning_tokens")) <= 0
             )
-            media_observe = classification.rule_id == "media_input_observe"
-            if policy.mode != "required" or not applicable or media_observe:
+            has_media = media_input_blocks_reasoning_action(
+                _int_or_zero(row.get("media_input_images"))
+            )
+            if policy.mode != "required" or not applicable or has_media:
                 streaks[group_key] = 0
             elif _int_or_zero(row.get("reasoning_tokens")) > 0:
                 streaks[group_key] = 0
@@ -2565,16 +2578,17 @@ class RequestAuditService:
                 evaluation = replace(evaluation, reasoning_streak=streak)
 
             if reasoning_detected:
-                reason = (
-                    classification.reasons[-1]
-                    if classification.rule_id == "reasoning_zero"
+                if (
+                    classification.rule_id == "reasoning_zero"
                     and classification.reasons
-                    else (
-                        "模型策略要求思考输出，但本次思考 Token 为 0"
-                        if policy.mode == "required"
-                        else "当前模型与请求类型仅观察思考输出为 0"
-                    )
-                )
+                ):
+                    reason = classification.reasons[-1]
+                elif has_media:
+                    reason = MEDIA_INPUT_REASONING_ZERO_REASON
+                elif policy.mode == "required":
+                    reason = "模型策略要求思考输出，但本次思考 Token 为 0"
+                else:
+                    reason = "当前模型与请求类型仅观察思考输出为 0"
                 combined_rule_ids = tuple(
                     dict.fromkeys((*classification.rule_ids, "reasoning_zero"))
                 )
@@ -2585,7 +2599,7 @@ class RequestAuditService:
                     classification = replace(
                         classification,
                         name="watch",
-                        severity=3 if policy.mode == "required" else 1,
+                        severity=3 if policy.mode == "required" and not has_media else 1,
                         anomalous=True,
                         hard=False,
                         rule_id="reasoning_zero",
@@ -2603,7 +2617,7 @@ class RequestAuditService:
                 if (
                     policy.mode == "required"
                     and streak >= policy.min_count
-                    and not media_observe
+                    and not has_media
                 ):
                     promoted_reason = (
                         "同账号、上游模型和请求类型的思考输出连续为 0 "

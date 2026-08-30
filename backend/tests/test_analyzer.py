@@ -97,6 +97,29 @@ def test_media_input_policy_keeps_reasoning_zero_as_observation():
     assert result.rule_id == "media_input_observe"
 
 
+def test_required_media_input_reasoning_zero_stays_observational():
+    result = classify_audit_sample(
+        status_code=200,
+        output_tokens=155,
+        reasoning_tokens=0,
+        first_token_ms=100,
+        duration_ms=1100,
+        tps=40,
+        thresholds=Thresholds(),
+        extra={
+            "media_input_images": 3,
+            "model_upstream_model": "Build/grok-4.6",
+            "operation": "chat",
+            "reasoning_tokens_reported": True,
+        },
+    )
+
+    assert result.name == "watch"
+    assert result.hard is False
+    assert result.rule_id == "reasoning_zero"
+    assert any("不作为隔离或停用依据" in reason for reason in result.reasons)
+
+
 def test_low_tps_buffering_does_not_trigger_buffered_hard():
     result = classify_sample(
         SampleMetrics(

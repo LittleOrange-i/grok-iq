@@ -79,7 +79,7 @@ export function SettingsReasoningPolicyCard({
     <SettingsCard
       icon={BrainCircuit}
       title='思考输出模型策略'
-      description='按实际上游模型和请求类型判断思考 Token 是否应当出现。单次为 0 只形成观察信号，required 策略连续达到次数后才升级高风险。'
+      description='按实际上游模型和请求类型判断思考 Token 是否应当出现。单次为 0 只形成观察信号，required 策略连续达到次数后才升级高风险。含 Media Input 的请求思考为 0 始终只观察，避免误判隔离或停用。'
       descriptionAsHint
     >
       <div className='space-y-4'>
@@ -104,7 +104,7 @@ export function SettingsReasoningPolicyCard({
           />
           <SettingListItem
             label='Media Input 观察规则'
-            description='识别含图片等媒体输入的请求，并允许按策略降为观察。'
+            description='含媒体输入的请求偏高 TPS 和思考为 0 都只观察，不作为隔离或停用依据。'
             checked={form.mediaInputObserveEnabled}
             disabled={!form.requestAuditRiskEnabled}
             onCheckedChange={(value) => {

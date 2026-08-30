@@ -721,18 +721,18 @@ function AuditIsolationPanel({
         <div className='overflow-hidden rounded-xl border'>
           <RiskStatusRule
             status='高风险'
-            description={`窗口内任意一条 high 就会显示。高速 TPS ≥ ${formatNumber(form.strongDegradationTps)} 直接高风险；思考连续为 0 达到策略次数后升为高风险。`}
+            description={`窗口内任意一条 high 就会显示。高速 TPS ≥ ${formatNumber(form.strongDegradationTps)} 直接高风险；无媒体输入时思考连续为 0 达到策略次数后升为高风险。`}
             tone='danger'
           />
           <RiskStatusRule
             status='观察'
-            description={`普通 TPS ≥ ${formatNumber(form.degradationTps)}，以及带 Media Input 的偏高 TPS，只记观察，不单独停用。`}
+            description={`普通 TPS ≥ ${formatNumber(form.degradationTps)}，以及带 Media Input 的偏高 TPS 和思考为 0，只记观察，不单独停用。`}
             tone='warning'
             divided
           />
           <RiskStatusRule
             status='隔离'
-            description={`同一规则达到次数后才永久停用：高速 TPS ${form.requestAuditTpsOnlyMinCount} 次，思考为 0 按模型策略连续次数。页面高风险本身不会停用。`}
+            description={`同一规则达到次数后才永久停用：高速 TPS ${form.requestAuditTpsOnlyMinCount} 次，无媒体输入时思考为 0 按模型策略连续次数。Media Input 不会因此隔离或停用。`}
             tone='danger'
             divided
           />

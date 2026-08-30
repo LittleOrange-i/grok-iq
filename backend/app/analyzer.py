@@ -508,6 +508,17 @@ def reasoning_model_policy(
     )
 
 
+MEDIA_INPUT_REASONING_ZERO_REASON = (
+    "Media Input 请求思考输出为 0，仅观察，不作为隔离或停用依据"
+)
+
+
+def media_input_blocks_reasoning_action(media_input_images: int) -> bool:
+    """Media requests may be watched for thinking gaps, but never isolate."""
+
+    return media_input_images > 0
+
+
 def reasoning_zero_applicable(
     context: RuleContext,
     thresholds: Thresholds,
@@ -532,9 +543,14 @@ def _rule_reasoning_zero(context: RuleContext, thresholds: Thresholds) -> RuleMa
         applicable
         and context.reasoning_tokens <= 0
     ):
-        required = policy.mode == "required"
+        media_observe_only = media_input_blocks_reasoning_action(
+            _media_input_images(context)
+        )
+        required = policy.mode == "required" and not media_observe_only
         classification = "reasoning_zero" if required else "reasoning_zero_observe"
-        if required and context.scope == "audit":
+        if media_observe_only:
+            reason = MEDIA_INPUT_REASONING_ZERO_REASON
+        elif required and context.scope == "audit":
             reason = (
                 "思考输出为 0 候选；同账号、上游模型和请求类型连续 "
                 f"{policy.min_count} 次后升级高风险"
@@ -673,7 +689,10 @@ for _builtin_rule in (
     RiskRule(
         "reasoning_zero",
         "思考输出为 0",
-        "按上游模型、请求类型、字段上报和连续次数识别思考输出为 0",
+        (
+            "按上游模型、请求类型、字段上报和连续次数识别思考输出为 0；"
+            "含 Media Input 的请求只观察，不升级隔离或停用"
+        ),
         _rule_reasoning_zero,
         # Throughput and Media Input rules run first so an observed reasoning
         # gap cannot hide an independently high TPS signal. Consecutive
